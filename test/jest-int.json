@@ -1,0 +1,9 @@
+{
+  "displayName": "int",
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "roots": ["<rootDir>/test/int"],
+  "testMatch": ["**/*.int-spec.ts"],
+  "transform": { "^.+[.]ts$": "ts-jest" },
+  "testEnvironment": "node"
+}

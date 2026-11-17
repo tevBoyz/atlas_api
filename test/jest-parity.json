@@ -1,0 +1,9 @@
+{
+  "displayName": "parity",
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "roots": ["<rootDir>/test/parity"],
+  "testMatch": ["**/*.parity-spec.ts"],
+  "transform": { "^.+[.]ts$": "ts-jest" },
+  "testEnvironment": "node"
+}

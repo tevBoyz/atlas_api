@@ -1,0 +1,20 @@
+# AI docs and agent config — kept locally, never committed (Dawit, 2026-11-17)
+docs/
+AGENTS.md
+CLAUDE.md
+.cursor/
+.claude/
+
+# Local env and build output
+.env
+node_modules/
+dist/
+coverage/
+
+# Env files: never committed, except the key-name template
+.env*
+!.env.example
+
+# Tooling output
+*.tsbuildinfo
+*.log
