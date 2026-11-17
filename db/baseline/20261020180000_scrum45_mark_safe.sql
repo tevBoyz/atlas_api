@@ -335,3 +335,4 @@ comment on function public.get_incident_details(uuid) is
 revoke all on function public.get_incident_details(uuid) from public;
 revoke all on function public.get_incident_details(uuid) from anon;
 grant execute on function public.get_incident_details(uuid) to authenticated;
+-- tampered then npm run db:baseline:verify

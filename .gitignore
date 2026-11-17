@@ -18,3 +18,6 @@ coverage/
 # Tooling output
 *.tsbuildinfo
 *.log
+
+# drizzle-kit introspection scratch output (npm run db:introspect)
+.drizzle-introspect/

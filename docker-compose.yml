@@ -1,0 +1,61 @@
+# Local development services for the Atlas API (API-100-03). Docker runs Postgres and Redis only;
+# the API itself runs with npm. LOCAL USE ONLY: throwaway credentials, ports bound to 127.0.0.1.
+#
+#   docker compose up -d --wait     start (waits for both health checks)
+#   docker compose down             stop, keep data
+#   docker compose down -v          stop and DELETE the local database (fresh baseline next time)
+#
+# Ports are non-default so they never clash with a locally installed PostgreSQL (5432) or Redis.
+#   Postgres  127.0.0.1:54329  ->  postgresql://postgres:postgres@127.0.0.1:54329/postgres
+#   Redis     127.0.0.1:63799  ->  redis://127.0.0.1:63799
+
+name: atlas-api
+
+services:
+  db:
+    # Supabase's Postgres image: PostgreSQL 17.11 (matches the hosted project, epic §18 D1b) with
+    # the Supabase roles (anon, authenticated, service_role, supabase_auth_admin), the auth and
+    # storage schemas, auth.uid()/auth.jwt() and the supabase_realtime publication.
+    image: supabase/postgres:17.11.0.019
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:54329:5432'
+    environment:
+      POSTGRES_PASSWORD: postgres
+      # Local-only value the image's init scripts store as app.settings.jwt_secret. Not a real secret.
+      JWT_SECRET: local-only-jwt-secret-not-used-anywhere-0123456789
+      JWT_EXP: '3600'
+    volumes:
+      - atlas-db:/var/lib/postgresql/data
+      # Local-only shim for the objects GoTrue and storage-api create on a real Supabase project
+      # (auth.users phone/confirmation columns, auth.jwt(), storage tables). Runs once, as
+      # supabase_admin, when the volume is first created. See the file header.
+      - ./db/local/supabase-services-shim.sql:/docker-entrypoint-initdb.d/migrations/99999999999999_atlas_local_shim.sql:ro
+    healthcheck:
+      # Healthy only once the image's init (including the shim) has finished and postgres can log in.
+      test:
+        [
+          'CMD-SHELL',
+          'PGPASSWORD=postgres psql -h localhost -U postgres -d postgres -Atqc "select to_regclass(''storage.buckets'') is not null" | grep -q t',
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+
+  redis:
+    image: redis:7.4.12-alpine
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:63799:6379'
+    volumes:
+      - atlas-redis:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  atlas-db:
+  atlas-redis:

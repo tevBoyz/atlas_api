@@ -17,13 +17,23 @@
     "format:check": "prettier --check .",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.json",
     "test:int": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config test/jest-int.json --passWithNoTests",
-    "test:parity": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config test/jest-parity.json --passWithNoTests"
+    "test:parity": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config test/jest-parity.json --passWithNoTests",
+    "db:setup": "tsx src/db/tooling/cli.ts setup",
+    "db:baseline": "tsx src/db/tooling/cli.ts baseline",
+    "db:baseline:verify": "tsx src/db/tooling/cli.ts verify",
+    "db:baseline:manifest": "tsx src/db/tooling/cli.ts manifest",
+    "db:migrate": "tsx src/db/tooling/cli.ts migrate",
+    "db:seed": "tsx src/db/tooling/cli.ts seed",
+    "db:test:sql": "tsx src/db/tooling/cli.ts test-sql",
+    "db:introspect": "drizzle-kit pull --config drizzle.config.ts && tsx src/db/tooling/assemble-schema.ts && prettier --write src/db/schema.ts"
   },
   "dependencies": {
     "@nestjs/common": "12.3.2",
     "@nestjs/config": "12.1.1",
     "@nestjs/core": "12.3.2",
     "@nestjs/platform-fastify": "12.3.2",
+    "drizzle-orm": "0.45.4",
+    "pg": "8.23.1",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
     "zod": "4.6.7"
@@ -35,12 +45,15 @@
     "@nestjs/testing": "12.3.2",
     "@types/jest": "30.0.0",
     "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "drizzle-kit": "0.31.11",
     "eslint": "10.14.0",
     "eslint-config-prettier": "10.1.8",
     "globals": "17.14.0",
     "jest": "30.5.2",
     "prettier": "3.9.10",
     "ts-jest": "29.4.15",
+    "tsx": "4.23.15",
     "typescript": "6.0.3",
     "typescript-eslint": "8.72.1"
   }
