@@ -105,6 +105,44 @@ Fake only: Ada (circle owner), Ben and Cara (active members), Dan (pending phone
   Supabase it is not a superuser but has `BYPASSRLS`, owns the baseline objects and can read
   `auth.users`, which matches production.
 
+## CI (`.github/workflows/ci.yml`)
+
+GitHub Actions runs on every push and pull request (all branches); any failing step fails the run.
+A newer push to the same branch cancels the older run. No real credentials and no GitHub secrets:
+the jobs read the repository only, and the database is a throwaway container.
+
+| Job        | Steps                                                                                                                                                                                                          |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `checks`   | `npm ci`, `lint`, `format:check`, `typecheck`, `test`, `db:baseline:verify`, OpenAPI diff (`openapi:check`).                                                                                                   |
+| `database` | `docker compose up -d --wait` (same image + shim as local, compose project `atlas-api-ci`), then `db:baseline`, `db:test:sql`, `db:migrate`, `db:seed`, `test:int`, `test:parity`. Runs after `checks` passes. |
+| `docker`   | `docker build` of the `Dockerfile` (build only, nothing pushed). Runs after `checks` passes.                                                                                                                   |
+| `secrets`  | gitleaks (CLI, version and checksum pinned) on the commits the push or pull request adds.                                                                                                                      |
+
+CI sets `NODE_ENV=test`, `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54329/postgres` and
+`REDIS_URL=redis://127.0.0.1:63799` explicitly.
+
+Not built yet (the CI steps already exist):
+
+- **OpenAPI diff**: runs `npm run openapi:check` once that script exists (API-100-12 adds it: it
+  regenerates `openapi.json` and fails on any difference from the committed file). Until then the
+  step logs "OpenAPI diff skipped" and passes.
+- **Integration and parity tests**: `test/int/` and `test/parity/` are empty until the Testcontainers
+  harness (API-100-13); both scripts pass with no tests.
+
+Run the same steps locally (Git Bash, from the repo root; run the lines in order, each stops at its
+first failure):
+
+```sh
+export NODE_ENV=test DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54329/postgres REDIS_URL=redis://127.0.0.1:63799
+npm ci && npm run lint && npm run format:check && npm run typecheck && npm test && npm run db:baseline:verify
+docker compose -p atlas-api-ci up -d --wait   # fresh database, separate from your local atlas-api stack
+npm run db:baseline && npm run db:test:sql && npm run db:migrate && npm run db:seed && npm run test:int && npm run test:parity
+docker compose -p atlas-api-ci down -v
+docker build -t atlas-api:ci .
+```
+
+Stop your local `atlas-api` stack first (`docker compose down`) since both use ports 54329 and 63799.
+
 ## Other scripts
 
 `npm run build` · `npm start` · `npm run start:dev` · `npm run lint` · `npm run format` /
