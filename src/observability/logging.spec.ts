@@ -3,6 +3,7 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { PinoLogger } from 'nestjs-pino';
 import pino from 'pino';
 
+import { Public } from '../common/guards/route-access';
 import { createTestApp, LogCapture } from '../testing/test-app';
 import { rootLoggerOptions } from './logger';
 
@@ -16,7 +17,9 @@ const TOKEN = [
 const PHONE = '+12015550188';
 const PHONE_DIGITS = '2015550188';
 
+/** Public: these routes test logging, not authentication (API-100-08). */
 @Controller('test-logging')
+@Public()
 class LoggingTestController {
   constructor(@Inject(PinoLogger) private readonly logger: PinoLogger) {}
 

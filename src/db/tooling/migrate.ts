@@ -23,6 +23,35 @@ export const MIGRATE_LOCK_KEY = 7_100_003;
 
 const MIGRATION_FILE = /^(\d+)_[a-z0-9][a-z0-9_]*\.sql$/;
 
+/** Supabase API roles that reach `public` tables through default privileges (PostgREST). */
+export const SUPABASE_API_ROLES = ['anon', 'authenticated'] as const;
+
+/**
+ * Creates the tracking table and locks it down like `0001_idempotency_keys.sql`: RLS enabled with
+ * no policy, and no privileges for `public` or the Supabase API roles (only those that exist, so
+ * plain Postgres without Supabase roles works). The owner (the runner / API role) is unaffected.
+ * Idempotent; runs on every `db:migrate`. `0002_lock_down_api_schema_migrations.sql` does the same
+ * for databases created before this was added.
+ */
+export function migrationsTableSql(): string {
+  const roles = SUPABASE_API_ROLES.map((r) => `'${r}'`).join(', ');
+  return `create table if not exists ${MIGRATIONS_TABLE} (
+  id text primary key,
+  applied_at timestamptz not null default now()
+);
+alter table ${MIGRATIONS_TABLE} enable row level security;
+revoke all on table ${MIGRATIONS_TABLE} from public;
+do $lockdown$
+declare
+  r text;
+begin
+  for r in select rolname from pg_roles where rolname in (${roles}) loop
+    execute format('revoke all on table ${MIGRATIONS_TABLE} from %I', r);
+  end loop;
+end
+$lockdown$;`;
+}
+
 export class MigrationError extends Error {
   constructor(message: string) {
     super(message);
@@ -102,12 +131,7 @@ export async function runMigrations(
 
   await client.query('select pg_advisory_lock($1)', [MIGRATE_LOCK_KEY]);
   try {
-    await client.query(
-      `create table if not exists ${MIGRATIONS_TABLE} (
-         id text primary key,
-         applied_at timestamptz not null default now()
-       )`,
-    );
+    await client.query(migrationsTableSql());
     const applied = await client.query<{ id: string }>(
       `select id from ${MIGRATIONS_TABLE} order by id`,
     );

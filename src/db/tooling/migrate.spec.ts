@@ -1,4 +1,10 @@
-import { MigrationError, parseMigrationFiles, planMigrations } from './migrate';
+import {
+  MIGRATIONS_TABLE,
+  MigrationError,
+  migrationsTableSql,
+  parseMigrationFiles,
+  planMigrations,
+} from './migrate';
 
 describe('API migration runner planning (API-100-03)', () => {
   it('orders by number (not text), ignores non-SQL files and derives ids', () => {
@@ -29,5 +35,16 @@ describe('API migration runner planning (API-100-03)', () => {
       pending: [],
       unknownApplied: [],
     });
+  });
+
+  it('creates the tracking table locked down: RLS on, no grants for public/anon/authenticated', () => {
+    const sql = migrationsTableSql();
+    expect(sql).toContain(`create table if not exists ${MIGRATIONS_TABLE}`);
+    expect(sql).toContain(`alter table ${MIGRATIONS_TABLE} enable row level security;`);
+    expect(sql).toContain(`revoke all on table ${MIGRATIONS_TABLE} from public;`);
+    // Supabase roles are revoked only when they exist (plain Postgres has neither).
+    expect(sql).toContain("where rolname in ('anon', 'authenticated')");
+    expect(sql).toContain(`revoke all on table ${MIGRATIONS_TABLE} from %I`);
+    expect(sql).not.toMatch(/create policy|service_role|from postgres/);
   });
 });

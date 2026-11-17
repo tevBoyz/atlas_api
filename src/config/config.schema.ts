@@ -79,6 +79,8 @@ export const configSchema = z.object({
   SUPABASE_JWT_SECRET: z.string().min(32).optional(),
   SUPABASE_JWT_ISSUER: urlWithProtocol(['http:', 'https:']).optional(),
   SUPABASE_JWT_AUDIENCE: z.string().default('authenticated'),
+  // Allowed clock difference when checking `exp` / `nbf` of Supabase JWTs (API-100-08 AC2: <= 30 s).
+  SUPABASE_JWT_CLOCK_SKEW_SECONDS: integerInRange(0, 30).default(30),
   SUPABASE_STORAGE_SERVICE_KEY: z.string().optional(),
   AVATARS_BUCKET: z
     .string()
@@ -116,6 +118,7 @@ const RULES: Record<ConfigKey, string> = {
   SUPABASE_JWT_SECRET: 'must be at least 32 characters',
   SUPABASE_JWT_ISSUER: 'must be an http(s) URL',
   SUPABASE_JWT_AUDIENCE: 'must be a string',
+  SUPABASE_JWT_CLOCK_SKEW_SECONDS: 'must be an integer from 0 to 30',
   SUPABASE_STORAGE_SERVICE_KEY: 'must be a string',
   AVATARS_BUCKET: 'must be a bucket name (lowercase letters, digits, ".", "_", "-")',
   INVITE_URL_BASE: 'must be a URL (any scheme)',

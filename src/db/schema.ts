@@ -21,6 +21,7 @@ import {
   jsonb,
   pgSchema,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -459,6 +460,32 @@ export const safetyCircleMembers = pgTable(
     check(
       'safety_circle_members_activated_shape',
       sql`((status = 'active'::text) AND (activated_at IS NOT NULL)) OR ((status <> 'active'::text) AND (activated_at IS NULL))`,
+    ),
+  ],
+);
+
+export const idempotencyKeys = pgTable(
+  'idempotency_keys',
+  {
+    userId: uuid('user_id').notNull(),
+    key: text().notNull(),
+    method: text().notNull(),
+    path: text().notNull(),
+    requestHash: text('request_hash').notNull(),
+    status: text().notNull(),
+    responseStatus: integer('response_status'),
+    responseBody: jsonb('response_body'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'string' }).notNull(),
+  },
+  (table) => [
+    index('idempotency_keys_expires_at_idx').using('btree', table.expiresAt.asc().nullsLast()),
+    primaryKey({ columns: [table.userId, table.key], name: 'idempotency_keys_pkey' }),
+    check(
+      'idempotency_keys_status_check',
+      sql`status = ANY (ARRAY['in_progress'::text, 'completed'::text])`,
     ),
   ],
 );

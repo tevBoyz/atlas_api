@@ -105,6 +105,10 @@ describe('§11.2 code → HTTP status table', () => {
     expect(httpStatusForCode('idempotency:key_required')).toBe(400);
   });
 
+  it('API-100-10 AC3: Idempotency-Key not a UUID → 422 idempotency:invalid_key', () => {
+    expect(httpStatusForCode('idempotency:invalid_key')).toBe(422);
+  });
+
   it('a full-code row wins over its suffix (locked is not a generic suffix)', () => {
     expect(httpStatusForCode('some_fn:locked')).toBeUndefined();
   });

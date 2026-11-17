@@ -2,6 +2,7 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import type { Logger } from 'pino';
 
 import { API_PREFIX, UNPREFIXED_ROUTES } from './app.constants';
+import { IdempotencyHookInstaller } from './common/idempotency';
 import { fastifyTrustProxy, type TrustProxy } from './config';
 import { genRequestId, installHttpHooks, ROOT_LOGGER } from './observability';
 
@@ -21,5 +22,8 @@ export function createFastifyAdapter(options: { trustProxy?: TrustProxy } = {}):
 /** Shared app setup, used by main.ts and by tests so both see the same routing and hooks. */
 export function configureApp(app: NestFastifyApplication): void {
   app.setGlobalPrefix(API_PREFIX, { exclude: UNPREFIXED_ROUTES });
-  installHttpHooks(app.getHttpAdapter().getInstance(), app.get<Logger>(ROOT_LOGGER));
+  const fastify = app.getHttpAdapter().getInstance();
+  installHttpHooks(fastify, app.get<Logger>(ROOT_LOGGER));
+  // Records responses of `@Idempotent()` routes (API-100-10).
+  app.get(IdempotencyHookInstaller).install(fastify);
 }

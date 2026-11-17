@@ -3,6 +3,7 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { z } from 'zod';
 
 import { setErrorReporter } from '../../observability/error-reporter';
+import { Public } from '../guards/route-access';
 import { createTestApp, type LogCapture } from '../../testing/test-app';
 import { DomainError } from './domain-error';
 import { Operation } from './operation';
@@ -20,7 +21,9 @@ const locationBody = z.object({
   location_lng: z.number().min(-180).max(180).optional(),
 });
 
+/** Public: these routes test the error envelope, not authentication (API-100-08). */
 @Controller('test-errors')
+@Public()
 class ErrorsTestController {
   @Get('domain')
   domain(): never {

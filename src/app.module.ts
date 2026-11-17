@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 
+import { AuthenticationModule } from './common/auth';
 import { ErrorsModule } from './common/errors';
+import { IdempotencyModule } from './common/idempotency';
 import { ApiConfigModule } from './config';
 import { DatabaseModule } from './db';
 import { HealthModule } from './health/health.module';
@@ -16,6 +18,8 @@ import { ScaffoldController } from './scaffold.controller';
     ErrorsModule,
     DatabaseModule,
     RedisModule,
+    AuthenticationModule,
+    IdempotencyModule,
     HealthModule,
     ...FEATURE_MODULES,
   ],

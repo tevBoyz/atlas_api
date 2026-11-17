@@ -1,7 +1,10 @@
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 
+import { randomUUID } from 'node:crypto';
+
 import { FEATURE_MODULES } from './modules';
 import { createTestApp } from './testing/test-app';
+import { authHeader } from './testing/test-tokens';
 
 describe('App scaffold (API-100-01)', () => {
   let app: NestFastifyApplication;
@@ -21,10 +24,21 @@ describe('App scaffold (API-100-01)', () => {
     }
   });
 
-  it('serves REST routes under /v1', async () => {
-    const res = await app.inject({ method: 'GET', url: '/v1/ping' });
+  it('serves REST routes under /v1 (authenticated since API-100-08)', async () => {
+    const userId = randomUUID();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/ping',
+      headers: await authHeader(userId),
+    });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'ok' });
+    expect(res.json()).toEqual({ status: 'ok', user_id: userId });
+  });
+
+  it('answers 401 ping:not_authenticated on /v1/ping without a token', async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/ping' });
+    expect(res.statusCode).toBe(401);
+    expect(res.json<{ error: { code: string } }>().error.code).toBe('ping:not_authenticated');
   });
 
   it('does not serve REST routes without the /v1 prefix', async () => {

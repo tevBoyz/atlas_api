@@ -10,6 +10,7 @@ export {
   isErrorCode,
   PARITY_ERROR_CODES,
   type ParityErrorCode,
+  parityCode,
 } from './error-codes';
 export { messageForCode } from './error-messages';
 export { ErrorsModule } from './errors.module';

@@ -23,6 +23,8 @@ export const INTROSPECTED_TABLES = [
   'incident_events',
   'app_config',
   'login_lockouts',
+  // API-owned (db/migrations/)
+  'idempotency_keys',
 ];
 
 export default defineConfig({

@@ -56,6 +56,7 @@ const SUFFIX_MESSAGES: Record<ErrorSuffix, string> = {
   key_mismatch: 'This Idempotency-Key was already used with a different request.',
   in_progress: 'A request with this Idempotency-Key is still being processed.',
   key_required: 'An Idempotency-Key header is required.',
+  invalid_key: 'The Idempotency-Key header must be a UUID.',
 };
 
 const GENERIC_MESSAGES: Record<GenericErrorCode, string> = {

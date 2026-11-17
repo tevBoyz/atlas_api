@@ -15,6 +15,7 @@ export const FULL_CODE_STATUS: Readonly<Record<string, number>> = {
   'idempotency:key_mismatch': 422,
   'idempotency:in_progress': 409,
   'idempotency:key_required': 400,
+  'idempotency:invalid_key': 422,
   'validation:invalid_request': 422,
   'internal:error': 500,
   'http:bad_request': 400,
