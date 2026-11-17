@@ -4,7 +4,7 @@ import { Test } from '@nestjs/testing';
 
 import type { ApiConfigModule as ApiConfigModuleType } from './api-config.module';
 import type { ApiConfigService as ApiConfigServiceType } from './api-config.service';
-import { fastifyTrustProxy, nestLogLevels } from './bootstrap-config';
+import { fastifyTrustProxy } from './bootstrap-config';
 
 type Loaded = {
   ApiConfigModule: typeof ApiConfigModuleType;
@@ -88,15 +88,6 @@ describe('ApiConfigModule (API-100-02)', () => {
 });
 
 describe('bootstrap helpers', () => {
-  it.each([
-    ['silent', false],
-    ['fatal', ['fatal']],
-    ['info', ['fatal', 'error', 'warn', 'log']],
-    ['trace', ['fatal', 'error', 'warn', 'log', 'debug', 'verbose']],
-  ] as const)('maps LOG_LEVEL=%s to Nest log levels', (level, expected) => {
-    expect(nestLogLevels(level)).toEqual(expected);
-  });
-
   it('passes boolean and address-list TRUST_PROXY through unchanged', () => {
     expect(fastifyTrustProxy(false)).toBe(false);
     expect(fastifyTrustProxy(['10.0.0.0/8'])).toEqual(['10.0.0.0/8']);

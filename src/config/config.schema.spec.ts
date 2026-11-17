@@ -186,6 +186,7 @@ describe('parseConfig (API-100-02)', () => {
       ['LOG_LEVEL', 'verbose'],
       ['SENTRY_DSN', 'not-a-dsn'],
       ['OTEL_EXPORTER_OTLP_ENDPOINT', 'grpc:localhost'],
+      ['GIT_COMMIT', 'not-a-sha'],
       ['CHANNEL_PUSH_ENABLED', 'yes'],
       ['CHANNEL_SMS_ENABLED', '1'],
       ['CHANNEL_EMAIL_ENABLED', 'on'],

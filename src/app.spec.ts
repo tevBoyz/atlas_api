@@ -1,19 +1,13 @@
-import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
-import { Test } from '@nestjs/testing';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 
-import { AppModule } from './app.module';
-import { configureApp } from './app.setup';
 import { FEATURE_MODULES } from './modules';
+import { createTestApp } from './testing/test-app';
 
 describe('App scaffold (API-100-01)', () => {
   let app: NestFastifyApplication;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
-    configureApp(app);
-    await app.init();
-    await app.getHttpAdapter().getInstance().ready();
+    ({ app } = await createTestApp());
   });
 
   afterAll(async () => {

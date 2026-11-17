@@ -86,6 +86,10 @@ export const configSchema = z.object({
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   SENTRY_DSN: urlWithProtocol(['http:', 'https:']).optional(),
   OTEL_EXPORTER_OTLP_ENDPOINT: urlWithProtocol(['http:', 'https:']).optional(),
+  GIT_COMMIT: z
+    .string()
+    .regex(/^[0-9a-f]{7,40}$/i)
+    .optional(),
 
   CHANNEL_PUSH_ENABLED: flag(),
   CHANNEL_SMS_ENABLED: flag(),
@@ -114,6 +118,7 @@ const RULES: Record<ConfigKey, string> = {
   LOG_LEVEL: `must be one of ${LOG_LEVELS.join(', ')}`,
   SENTRY_DSN: 'must be an http(s) URL',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'must be an http(s) URL',
+  GIT_COMMIT: 'must be a git commit hash (7-40 hex characters)',
   CHANNEL_PUSH_ENABLED: 'must be true or false',
   CHANNEL_SMS_ENABLED: 'must be true or false',
   CHANNEL_EMAIL_ENABLED: 'must be true or false',

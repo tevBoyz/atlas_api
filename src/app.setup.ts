@@ -1,8 +1,25 @@
-import type { NestFastifyApplication } from '@nestjs/platform-fastify';
+import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import type { Logger } from 'pino';
 
 import { API_PREFIX, UNPREFIXED_ROUTES } from './app.constants';
+import { fastifyTrustProxy, type TrustProxy } from './config';
+import { genRequestId, installHttpHooks, ROOT_LOGGER } from './observability';
 
-/** Shared app setup, used by main.ts and by tests so both see the same routing. */
+/**
+ * The Fastify adapter used by main.ts and by tests, so both behave the same.
+ * - Request id: incoming `x-request-id` when valid, else a UUID (API-100-06 AC1).
+ * - Fastify's own logger stays off (its default): logging goes through nestjs-pino and `installHttpHooks`.
+ */
+export function createFastifyAdapter(options: { trustProxy?: TrustProxy } = {}): FastifyAdapter {
+  return new FastifyAdapter({
+    trustProxy: fastifyTrustProxy(options.trustProxy ?? false),
+    genReqId: genRequestId,
+    requestIdHeader: false,
+  });
+}
+
+/** Shared app setup, used by main.ts and by tests so both see the same routing and hooks. */
 export function configureApp(app: NestFastifyApplication): void {
   app.setGlobalPrefix(API_PREFIX, { exclude: UNPREFIXED_ROUTES });
+  installHttpHooks(app.getHttpAdapter().getInstance(), app.get<Logger>(ROOT_LOGGER));
 }

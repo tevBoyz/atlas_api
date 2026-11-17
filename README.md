@@ -105,6 +105,64 @@ Fake only: Ada (circle owner), Ben and Cara (active members), Dan (pending phone
   Supabase it is not a superuser but has `BYPASSRLS`, owns the baseline objects and can read
   `auth.users`, which matches production.
 
+## Errors (API-100-05, `src/common/errors`)
+
+Every non-2xx response has one body shape (spec §11.2):
+
+```json
+{
+  "error": {
+    "code": "submit_emergency_alert:invalid_type",
+    "message": "Choose a valid emergency type.",
+    "details": {}
+  }
+}
+```
+
+- **Parity codes** (`fn:code`, spec §7) are typed constants in `error-codes.ts`. Raise them with
+  `throw new DomainError('mark_incident_safe:not_open')`; the HTTP status comes from the central
+  §11.2 table in `http-status.ts`. Messages are fixed English strings (never built from input).
+  `rate_limited` takes `{ retryAfterSeconds }` (sets `Retry-After`); `login_lockout:locked` takes
+  `{ details: LockoutStatus }`.
+- **`@Operation('fn')`** on a route names the SQL function it replaces. A raw database
+  `raise exception 'circle_full'` (the capacity trigger) then becomes `<fn>:circle_full`; a raised
+  `fn:code` from an SQL function maps as-is. Any other database error is a 500.
+- **Validation**: `@ZodBody(schema, codes?)`, `@ZodQuery(...)`, `@ZodParam('id', schema, codes?)`.
+  The first failing field gives 422 with the operation's parity code when declared
+  (`{ fields: { location_source: 'attach_incident_location:invalid_source' } }`, or `fallback` for
+  any failure), else `validation:invalid_request`; `details.field` names the field (dotted path).
+  Declare schema fields in the SQL function's check order (first failing check wins).
+- **Generic codes** (API-only): `validation:invalid_request` 422, `internal:error` 500, and
+  framework errors `http:not_found` 404 (unknown route; Fastify answers 404, not 405, for a wrong
+  method), `http:bad_request` 400 (unreadable/empty JSON), `http:payload_too_large` 413,
+  `http:unsupported_media_type` 415, `http:unauthorized` 401, `http:forbidden` 403, and the other
+  `http:*` codes in `error-codes.ts` (any other 4xx keeps its status as `http:client_error`).
+- **Unexpected errors** (and any deliberate 5xx `HttpException`) → 500 `internal:error`: no
+  message, stack or SQL in the body; logged at `error` with the request id and reported to Sentry.
+
+## Observability (API-100-06, `src/observability`)
+
+- **Logs**: pino JSON on stdout, level from `LOG_LEVEL` (`silent` turns them off). Nest's own
+  logs use the same logger. Every line of a request has `request_id`.
+- **Request id**: the incoming `x-request-id` when it is 1-128 characters of `A-Z a-z 0-9 . _ : -`,
+  otherwise a new UUID. Always returned in the `x-request-id` response header.
+- **Per request**: one `request completed` line with `method`, `route` (template, e.g.
+  `/v1/incidents/:id`; `null` for unknown routes), `status_code` and `duration_ms`. Request and
+  response bodies, headers and query strings are never logged.
+- **Redaction** (`scrubber.ts`, used by the logs and by Sentry): authorization, cookies, tokens,
+  passwords, secrets, OTP codes, `share_payload`, medical/emergency fields, names and invite links
+  are `[REDACTED]`; emails are masked (`a***@***.test`), phones masked (`***01`); coordinates are
+  omitted. Free text is scanned for bearer tokens, JWTs, invite tokens, emails and `+` phones.
+- **Tracing**: OpenTelemetry (HTTP, Fastify, Postgres, ioredis) exported over OTLP/HTTP to
+  `OTEL_EXPORTER_OTLP_ENDPOINT` (`/v1/traces`). Unset = no SDK is loaded or started. Span URLs
+  have no query string and are scrubbed. BullMQ is traced via `bullmq-otel` once queues exist.
+- **Sentry**: unexpected errors only, scrubbed, no request/user data. Unset `SENTRY_DSN` = Sentry is
+  not loaded. Release = git commit: `GIT_COMMIT` env, else `dist/build-info.json` written by
+  `npm run build` (from `GIT_COMMIT` or `git rev-parse HEAD`; `null` if neither). Docker:
+  `docker build --build-arg GIT_COMMIT=$(git rev-parse HEAD) .`
+- Both start in `observability/boot-observability.ts`, imported by `main.ts` right after the config
+  and before Nest, so instrumentation is in place before Fastify, pg and ioredis load.
+
 ## CI (`.github/workflows/ci.yml`)
 
 GitHub Actions runs on every push and pull request (all branches); any failing step fails the run.

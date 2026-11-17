@@ -141,7 +141,7 @@ jobs:
 
       # Build only: no registry login, nothing is pushed.
       - name: Build image
-        run: docker build --pull --tag atlas-api:ci .
+        run: docker build --pull --build-arg GIT_COMMIT="$GITHUB_SHA" --tag atlas-api:ci .
 
   secrets:
     name: Secret scan (gitleaks)

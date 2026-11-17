@@ -1,14 +1,6 @@
 import { existsSync } from 'node:fs';
 
-import type { LogLevel as NestLogLevel } from '@nestjs/common';
-
-import {
-  type Config,
-  ConfigValidationError,
-  type LogLevel,
-  parseConfig,
-  type TrustProxy,
-} from './config.schema';
+import { type Config, ConfigValidationError, parseConfig, type TrustProxy } from './config.schema';
 
 /**
  * Loads `.env` (if present; real environment variables win) and validates the config.
@@ -27,20 +19,6 @@ export function loadConfigOrExit(envFile = '.env'): Config {
     }
     throw error;
   }
-}
-
-const NEST_LEVELS: Record<Exclude<LogLevel, 'silent'>, NestLogLevel[]> = {
-  fatal: ['fatal'],
-  error: ['fatal', 'error'],
-  warn: ['fatal', 'error', 'warn'],
-  info: ['fatal', 'error', 'warn', 'log'],
-  debug: ['fatal', 'error', 'warn', 'log', 'debug'],
-  trace: ['fatal', 'error', 'warn', 'log', 'debug', 'verbose'],
-};
-
-/** Maps LOG_LEVEL to the Nest logger setting (`false` = silent). Structured logging arrives in API-100-06. */
-export function nestLogLevels(level: LogLevel): NestLogLevel[] | false {
-  return level === 'silent' ? false : NEST_LEVELS[level];
 }
 
 /**

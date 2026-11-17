@@ -10,6 +10,9 @@ COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src
+# Git commit for the Sentry release (API-100-06), recorded in dist/build-info.json by postbuild.
+# Pass it with `--build-arg GIT_COMMIT=$(git rev-parse HEAD)`; without it the release is unset.
+ARG GIT_COMMIT=
 RUN npm run build
 
 # ---- deps: production dependencies only ----
