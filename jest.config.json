@@ -4,8 +4,11 @@
   "rootDir": ".",
   "roots": ["<rootDir>/src"],
   "testMatch": ["**/*.spec.ts"],
-  "transform": { "^.+[.]ts$": "ts-jest" },
+  "transform": {
+    "^.+[.]ts$": "ts-jest"
+  },
   "collectCoverageFrom": ["src/**/*.ts"],
   "coverageDirectory": "./coverage",
-  "testEnvironment": "node"
+  "testEnvironment": "node",
+  "setupFiles": ["<rootDir>/src/testing/unit-env.ts"]
 }

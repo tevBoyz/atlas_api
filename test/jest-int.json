@@ -4,6 +4,9 @@
   "rootDir": "..",
   "roots": ["<rootDir>/test/int"],
   "testMatch": ["**/*.int-spec.ts"],
-  "transform": { "^.+[.]ts$": "ts-jest" },
-  "testEnvironment": "node"
+  "transform": {
+    "^.+[.]ts$": "ts-jest"
+  },
+  "testEnvironment": "node",
+  "setupFiles": ["<rootDir>/test/int/setup-env.ts"]
 }

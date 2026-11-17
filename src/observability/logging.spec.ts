@@ -57,7 +57,8 @@ describe('Structured logging (API-100-06)', () => {
     it.each([
       ['an ordinary route', 'POST', '/v1/test-logging/careless/1'],
       ['an unknown route (404)', 'POST', '/v1/no-such-route'],
-      ['an unprefixed route', 'GET', '/healthz'],
+      // /healthz and /readyz log at debug only (API-100-07); see health.controller.spec.ts.
+      ['an unknown unprefixed route (404)', 'GET', '/no-such-root-route'],
     ] as const)('%s', async (_label, method, path) => {
       const res = await app.inject({
         method,

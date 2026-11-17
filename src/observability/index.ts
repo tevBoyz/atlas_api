@@ -4,7 +4,7 @@ export {
   reportError,
   setErrorReporter,
 } from './error-reporter';
-export { installHttpHooks, requestLogger } from './http-hooks';
+export { installHttpHooks, QuietRequestLog, requestLogger } from './http-hooks';
 export { shutdownObservability, startObservability } from './instrument';
 export { createRootLogger, LOG_DESTINATION, REQUEST_ID_LOG_KEY, ROOT_LOGGER } from './logger';
 export { ObservabilityModule } from './observability.module';

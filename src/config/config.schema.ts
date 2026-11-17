@@ -2,6 +2,8 @@ import { isIP } from 'node:net';
 
 import { z } from 'zod';
 
+import { dataStoreProblems } from './data-store-guard';
+
 /**
  * Typed environment configuration (story API-100-02).
  *
@@ -69,6 +71,8 @@ export const configSchema = z.object({
   DATABASE_URL: urlWithProtocol(['postgres:', 'postgresql:']).optional(),
   DATABASE_POOL_MAX: integerInRange(1, 1000).default(10),
   REDIS_URL: urlWithProtocol(['redis:', 'rediss:']).optional(),
+  // Outside production, DATABASE_URL / REDIS_URL must be local unless this is true (API-100-07).
+  ALLOW_REMOTE_DATA_STORES: flag(),
 
   SUPABASE_URL: urlWithProtocol(['http:', 'https:']).optional(),
   SUPABASE_JWT_JWKS_URL: urlWithProtocol(['http:', 'https:']).optional(),
@@ -106,6 +110,7 @@ const RULES: Record<ConfigKey, string> = {
   DATABASE_URL: 'must be a postgres:// or postgresql:// URL',
   DATABASE_POOL_MAX: 'must be an integer from 1 to 1000',
   REDIS_URL: 'must be a redis:// or rediss:// URL',
+  ALLOW_REMOTE_DATA_STORES: 'must be true or false',
   SUPABASE_URL: 'must be an http(s) URL',
   SUPABASE_JWT_JWKS_URL: 'must be an http(s) URL',
   SUPABASE_JWT_SECRET: 'must be at least 32 characters',
@@ -209,6 +214,13 @@ export function parseConfig(env: Record<string, unknown>): Config {
         keys: [...SUPABASE_JWT_VERIFIERS],
         reason: 'at least one is required when NODE_ENV=production',
       });
+    }
+  }
+
+  // Production-safety guard (API-100-07): names key and host only, never credentials.
+  if (result.success) {
+    for (const problem of dataStoreProblems(result.data)) {
+      problems.push({ keys: [problem.key], reason: problem.reason });
     }
   }
 

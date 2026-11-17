@@ -114,7 +114,8 @@ jobs:
       - name: Seed fake data
         run: npm run db:seed
 
-      # Testcontainers suites are added by API-100-13; until then both pass with no tests.
+      # test/int: health/readiness against the compose stack (API-100-07; uses DATABASE_URL and
+      # REDIS_URL above). Testcontainers suites are added by API-100-13. Parity: none yet.
       - name: Integration tests
         run: npm run test:int -- --ci
 

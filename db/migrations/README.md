@@ -12,3 +12,6 @@ Plain SQL migrations owned by the Atlas API, applied **after** the Supabase base
 - Never edit a migration that has been applied anywhere; add a new one.
 - Re-runnable on a fresh database after the baseline (epic §5, definition of done 5).
 - Do not write `create index concurrently` (it cannot run inside a transaction).
+- Readiness (API-100-07): `GET /readyz` reports `migrations` until every file here is recorded in
+  `api_schema_migrations`. `npm run build` records the ids in `dist/migrations-manifest.json` (the
+  Docker image ships that list, not this folder), so rebuild after adding a migration.

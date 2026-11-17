@@ -2,7 +2,7 @@ import { Writable } from 'node:stream';
 
 import type { ModuleMetadata } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
-import { Test } from '@nestjs/testing';
+import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 
 import { AppModule } from '../app.module';
 import { configureApp, createFastifyAdapter } from '../app.setup';
@@ -38,14 +38,19 @@ export interface TestApp {
 
 /**
  * The real AppModule (plus optional extra controllers/providers) on the same Fastify adapter and
- * setup as main.ts, with logs captured instead of written to stdout.
+ * setup as main.ts, with logs captured instead of written to stdout. `override` can replace
+ * providers (e.g. fake data stores) before the module compiles.
  */
-export async function createTestApp(extra: ModuleMetadata = {}): Promise<TestApp> {
+export async function createTestApp(
+  extra: ModuleMetadata = {},
+  override: (builder: TestingModuleBuilder) => TestingModuleBuilder = (builder) => builder,
+): Promise<TestApp> {
   const logs = new LogCapture();
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule], ...extra })
-    .overrideProvider(LOG_DESTINATION)
-    .useValue(logs)
-    .compile();
+  const moduleRef = await override(
+    Test.createTestingModule({ imports: [AppModule], ...extra })
+      .overrideProvider(LOG_DESTINATION)
+      .useValue(logs),
+  ).compile();
   const app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter(), {
     logger: false,
   });

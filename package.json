@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "nest build",
-    "postbuild": "node dist/observability/write-build-info.js",
+    "postbuild": "node dist/observability/write-build-info.js && node dist/health/write-migrations-manifest.js",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -45,6 +45,7 @@
     "@sentry/node": "11.14.0",
     "drizzle-orm": "0.45.4",
     "fastify": "5.12.7",
+    "ioredis": "6.0.0",
     "nestjs-pino": "5.3.2",
     "pg": "8.23.1",
     "pino": "10.4.0",

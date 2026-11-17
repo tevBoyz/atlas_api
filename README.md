@@ -11,7 +11,7 @@ Needs Node 24 (`.nvmrc`) and Docker Desktop. From a fresh clone:
 npm ci
 docker compose up -d --wait   # Postgres 17.11 (Supabase image) on 127.0.0.1:54329, Redis 7 on 127.0.0.1:63799
 npm run db:setup              # baseline (37 migrations) + API migrations + fake seed data
-npm run start:dev             # API on http://localhost:3000 (GET /healthz)
+npm run start:dev             # API on http://localhost:3000 (GET /healthz, GET /readyz)
 ```
 
 `db:*` scripts use the local docker database automatically when `DATABASE_URL` is not set. To
@@ -105,6 +105,53 @@ Fake only: Ada (circle owner), Ben and Cara (active members), Dan (pending phone
   Supabase it is not a superuser but has `BYPASSRLS`, owns the baseline objects and can read
   `auth.users`, which matches production.
 
+## Health and readiness (API-100-07, `src/health`)
+
+| Route          | Answers                                                                                                                                  |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /healthz` | Always `200 {"status":"ok"}` while the process runs. No dependency checks.                                                               |
+| `GET /readyz`  | `200 {"status":"ok"}` when a DB query, a Redis `PING` and the migrations check pass; else `503 {"status":"unavailable","failed":[...]}`. |
+
+- Both are at the root (no `/v1`), send `cache-control: no-store`, and are marked `@Public()` and
+  `@SkipRateLimit()` (`src/common/guards/route-access.ts`). **The JWT guard (API-100-08) and the
+  rate limiter (API-100-11) must skip routes carrying that metadata** (`isPublicRoute`,
+  `skipsRateLimit`).
+- `failed` lists only the failing checks, always in the order `db`, `redis`, `migrations`.
+- **Exemption from the error envelope**: the 503 body is exactly `{"status","failed"}`, not
+  `{"error":{...}}`. The controller sets the status and returns the body; nothing is thrown, so the
+  global filter never sees it. Every other non-2xx response still uses the envelope.
+- Each check has a 1.5 s timeout and they run in parallel, so `/readyz` answers within ~1.5 s even
+  when a dependency hangs.
+- **Migrations check**: every API migration in `db/migrations/` must be recorded in
+  `public.api_schema_migrations`. With no migration files it passes without querying (the table
+  may not exist). The built app reads the list from `dist/migrations-manifest.json`, written by
+  `npm run build` (the Docker image copies `db/migrations/` into the build stage for this only);
+  running from source (tests) reads `db/migrations/` directly. When DB is down and migrations
+  exist, both `db` and `migrations` are reported.
+- **Logging**: their `request completed` line is written at **debug** (any status), so load
+  balancer polling does not flood the logs at `LOG_LEVEL=info`. Readiness logs only **changes**:
+  `readiness: unavailable` (warn, with `failed` and per-check `reasons`) and `readiness: ready`
+  (info). Redis logs `redis unavailable, reconnecting in the background` (warn) once per outage
+  and `redis connection restored` (info).
+
+### Data stores (`src/db/database.service.ts`, `src/redis/redis.service.ts`)
+
+- `DatabaseService`: node-postgres `Pool` (max `DATABASE_POOL_MAX`, 5 s connect timeout) with
+  Drizzle (`.db`, schema `src/db/schema.ts`) and `.query(sql, params)`. Opens connections only when
+  used.
+- `RedisService`: one ioredis client (`.client`). Connects after startup without blocking it,
+  reconnects in the background, offline queue off (commands fail at once while disconnected).
+  BullMQ (jobs story) uses its own connections.
+- Fail-soft: the API boots and `/healthz` answers while Postgres or Redis is down; `/readyz` reports
+  it. With `DATABASE_URL` / `REDIS_URL` unset (development/test only) `/readyz` reports `db` /
+  `redis` as failed. Both are closed on shutdown (`enableShutdownHooks`).
+- **Production safety**: outside `NODE_ENV=production` the API refuses to start when
+  `DATABASE_URL` or `REDIS_URL` names a host other than `localhost`, `127.0.0.1` or `::1` (or a
+  database URL with `host`/`hostaddr`/`port`/`service` parameters). The error names the key and the
+  host only. `ALLOW_REMOTE_DATA_STORES=true` lifts the rule, only on Dawit's instruction.
+- Unit tests (`npm test`) never connect: `src/testing/unit-env.ts` removes the URLs. Integration
+  tests (`npm run test:int`) use the local docker stack (env URLs, else the local defaults).
+
 ## Errors (API-100-05, `src/common/errors`)
 
 Every non-2xx response has one body shape (spec §11.2):
@@ -148,7 +195,8 @@ Every non-2xx response has one body shape (spec §11.2):
   otherwise a new UUID. Always returned in the `x-request-id` response header.
 - **Per request**: one `request completed` line with `method`, `route` (template, e.g.
   `/v1/incidents/:id`; `null` for unknown routes), `status_code` and `duration_ms`. Request and
-  response bodies, headers and query strings are never logged.
+  response bodies, headers and query strings are never logged. `/healthz` and `/readyz` write
+  this line at debug only (API-100-07).
 - **Redaction** (`scrubber.ts`, used by the logs and by Sentry): authorization, cookies, tokens,
   passwords, secrets, OTP codes, `share_payload`, medical/emergency fields, names and invite links
   are `[REDACTED]`; emails are masked (`a***@***.test`), phones masked (`***01`); coordinates are
@@ -184,8 +232,9 @@ Not built yet (the CI steps already exist):
 - **OpenAPI diff**: runs `npm run openapi:check` once that script exists (API-100-12 adds it: it
   regenerates `openapi.json` and fails on any difference from the committed file). Until then the
   step logs "OpenAPI diff skipped" and passes.
-- **Integration and parity tests**: `test/int/` and `test/parity/` are empty until the Testcontainers
-  harness (API-100-13); both scripts pass with no tests.
+- **Integration and parity tests**: `test/int/` holds the health/readiness tests against the compose
+  stack (API-100-07); the Testcontainers harness (API-100-13) adds more. `test/parity/` is empty
+  until then and passes with no tests.
 
 Run the same steps locally (Git Bash, from the repo root; run the lines in order, each stops at its
 first failure):
