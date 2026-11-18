@@ -125,8 +125,11 @@ describe('AuthGuard (API-100-08)', () => {
       expect401(res, 'get_my_open_incident:not_authenticated');
     });
 
-    it('the scaffold ping route is authenticated too (ping:not_authenticated)', async () => {
-      expect401(await app.inject({ method: 'GET', url: '/v1/ping' }), 'ping:not_authenticated');
+    it('the emergency submit route is authenticated too', async () => {
+      expect401(
+        await app.inject({ method: 'POST', url: '/v1/incidents' }),
+        'submit_emergency_alert:not_authenticated',
+      );
     });
 
     it('never writes the token to the logs', async () => {

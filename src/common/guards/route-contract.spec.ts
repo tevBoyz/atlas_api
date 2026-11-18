@@ -108,10 +108,11 @@ describe('RouteContractCheck at boot', () => {
           skipRateLimit: true,
         },
         {
-          name: 'ScaffoldController.ping',
+          name: 'IncidentsController.submit',
           isPublic: false,
-          operation: 'ping',
-          idempotency: undefined,
+          operation: 'submit_emergency_alert',
+          idempotency: 'required',
+          rateLimitScope: 'user',
         },
       ]),
     );

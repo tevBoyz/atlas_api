@@ -24,41 +24,41 @@ let handlerRuns = 0;
 @Controller('test-rl')
 class RateLimitIntController {
   @Get('limited')
-  @Operation('ping')
+  @Operation('get_my_open_incident')
   @RateLimit({ name: 'test_limited', max: LIMIT, windowSeconds: 60, scope: 'user' })
   limited(@CurrentUser() user: AuthenticatedUser) {
     return { user_id: user.id };
   }
 
   @Get('window')
-  @Operation('ping')
+  @Operation('get_my_open_incident')
   @RateLimit({ name: 'test_window', max: 3, windowSeconds: 1, scope: 'user' })
   window() {
     return { ok: true };
   }
 
   @Get('default')
-  @Operation('ping')
+  @Operation('get_my_open_incident')
   defaultPolicy() {
     return { ok: true };
   }
 
   @Get('emergency')
-  @Operation('ping')
+  @Operation('get_my_open_incident')
   @RateLimit('emergency_write')
   emergency() {
     return { ok: true };
   }
 
   @Post('incidents/:id/location')
-  @Operation('ping')
+  @Operation('get_my_open_incident')
   @RateLimit({ name: 'test_ping', max: 2, windowSeconds: 60, scope: 'user_incident' })
   location(@Param('id') id: string) {
     return { id };
   }
 
   @Post('idempotent')
-  @Operation('ping')
+  @Operation('get_my_open_incident')
   @Idempotent('required')
   @RateLimit({ name: 'test_idempotent', max: 1, windowSeconds: 60, scope: 'user' })
   idempotent(@Body() body: { label: string }) {
@@ -74,7 +74,7 @@ class RateLimitIntController {
   }
 
   @Get('skipped')
-  @Operation('ping')
+  @Operation('get_my_open_incident')
   @SkipRateLimit()
   skipped() {
     return { ok: true };
@@ -301,7 +301,9 @@ describe('Rate limiting against Redis (API-100-11)', () => {
       for (let i = 0; i < 5; i++) {
         const res = await get('/v1/test-rl/default', badToken);
         expect(res.statusCode).toBe(401);
-        expect(res.json()).toMatchObject({ error: { code: 'ping:not_authenticated' } });
+        expect(res.json()).toMatchObject({
+          error: { code: 'get_my_open_incident:not_authenticated' },
+        });
       }
       const refused = await get('/v1/test-rl/default', badToken);
       expect(refused.statusCode).toBe(429);

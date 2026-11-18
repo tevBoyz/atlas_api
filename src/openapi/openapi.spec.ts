@@ -82,7 +82,7 @@ class SampleController {
 @Controller('no-contract')
 class NoContractController {
   @Get()
-  @Operation('ping')
+  @Operation('get_my_open_incident')
   get() {
     return {};
   }
@@ -91,7 +91,7 @@ class NoContractController {
 @Controller('bad')
 class CamelCaseController {
   @Get()
-  @Operation('ping')
+  @Operation('get_my_open_incident')
   @ApiContract({
     operationId: 'badCase',
     summary: 'S',
@@ -106,14 +106,14 @@ class CamelCaseController {
 @Controller('dup')
 class DuplicateIdController {
   @Get('a')
-  @Operation('ping')
+  @Operation('get_my_open_incident')
   @ApiContract({ operationId: 'sameId', summary: 'S', tag: 't', responses: {} })
   a() {
     return {};
   }
 
   @Get('b')
-  @Operation('ping')
+  @Operation('get_my_open_incident')
   @ApiContract({ operationId: 'sameId', summary: 'S', tag: 't', responses: {} })
   b() {
     return {};
@@ -173,24 +173,26 @@ describe('OpenAPI document (API-100-12)', () => {
       expect(doc.components.schemas.ErrorBody.required).toEqual(['code', 'message', 'details']);
     });
 
-    it('lists only real routes: health, ping and openapi', () => {
+    it('lists only real routes: health, openapi and incidents', () => {
       expect(Object.keys(appDocument().paths).sort()).toEqual([
         '/healthz',
         '/readyz',
+        '/v1/incidents',
         '/v1/openapi.json',
-        '/v1/ping',
       ]);
     });
 
     it('an authenticated route: bearer, 401 with its parity code, 429 with Retry-After', () => {
-      const ping = appDocument().paths['/v1/ping'].get;
-      expect(ping.security).toEqual([{ bearerAuth: [] }]);
-      expect(ping.responses['401']['x-error-codes']).toEqual(['ping:not_authenticated']);
-      expect(ping.responses['401'].content['application/json'].example.error.code).toBe(
-        'ping:not_authenticated',
+      const submit = appDocument().paths['/v1/incidents'].post;
+      expect(submit.security).toEqual([{ bearerAuth: [] }]);
+      expect(submit.responses['401']['x-error-codes']).toEqual([
+        'submit_emergency_alert:not_authenticated',
+      ]);
+      expect(submit.responses['401'].content['application/json'].example.error.code).toBe(
+        'submit_emergency_alert:not_authenticated',
       );
-      expect(ping.responses['429']['x-error-codes']).toEqual(['rate_limit:exceeded']);
-      expect(ping.responses['429'].headers['Retry-After']).toBeDefined();
+      expect(submit.responses['429']['x-error-codes']).toEqual(['rate_limit:exceeded']);
+      expect(submit.responses['429'].headers['Retry-After']).toBeDefined();
     });
 
     it('health routes: public and never 429', () => {
@@ -277,7 +279,12 @@ describe('OpenAPI document (API-100-12)', () => {
       const ids = Object.values(appDocument().paths).flatMap((path: any) =>
         Object.values(path).map((op: any) => op.operationId as string),
       );
-      expect(ids.sort()).toEqual(['getHealth', 'getOpenApiDocument', 'getReadiness', 'ping']);
+      expect(ids.sort()).toEqual([
+        'getHealth',
+        'getOpenApiDocument',
+        'getReadiness',
+        'submitEmergencyAlert',
+      ]);
     });
   });
 

@@ -205,8 +205,6 @@ Every non-2xx response has one body shape (spec §11.2):
   `@Operation('<fn>')` with a `<fn>:not_authenticated` catalogue code, and `@Idempotent()` routes
   are not public. A violation stops the app from starting.
 - Handlers get the caller with `@CurrentUser() user: AuthenticatedUser` (`id` = `sub`).
-- `GET /v1/ping` (scaffold) is authenticated (`ping:not_authenticated`) and returns
-  `{"status":"ok","user_id":"<sub>"}`.
 - **Local test tokens**: set `SUPABASE_JWT_SECRET` in `.env` to a random local value (32+
   characters, never the real project's secret), restart the API, then
   `npm run auth:test-token -- [--sub <uuid>] [--minutes 60] [--expired] [--role anon]` prints a
@@ -268,6 +266,19 @@ null), `incident.resident`, `incident.memberView`, `incident.eventsView`, `incid
   API connects as, which owns the table (epic §18 D10). Closed to `anon` / `authenticated`.
 - `detail` is sanitized (`audit.detail.ts`): medical and share fields, tokens, phone numbers,
   coordinates and free text are left out, and a warning names the keys. There is no read endpoint.
+
+## Emergency submit (API-100-15, `src/modules/incidents`)
+
+- `POST /v1/incidents` with `{"emergency_type": "..."}` and a required `Idempotency-Key`. **201**
+  `created` or `promoted` (legacy `activating` row), **200** `renotified` when an alert is already
+  open. The body is IncidentSend plus `submit_outcome`.
+- One transaction with the locks of `submit_emergency_alert`, in its order: the profile row, then
+  the open incident. SQL and API callers can run side by side on the same database.
+- The audit row is written inside the transaction. Post-commit hooks
+  (`INCIDENT_POST_COMMIT_HOOKS`, empty until API-100-41 and API-100-48) run only after the commit,
+  are not awaited, and can never fail an alert that has committed.
+- Audit `detail` holds `recipient_count` and `submit_outcome` only. Database errors are replaced
+  before they are logged, so query parameters and row values never reach the logs.
 
 ## OpenAPI and the Dart client (API-100-12, `src/openapi`, `clients/dart`)
 

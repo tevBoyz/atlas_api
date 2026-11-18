@@ -64,7 +64,7 @@ describe('Rate limit policies (API-100-11 AC2)', () => {
 });
 
 describe('Route contract for rate limits (API-100-11)', () => {
-  const route = { name: 'C.m', operation: 'ping' as const };
+  const route = { name: 'C.m', operation: 'get_my_open_incident' as const };
 
   it('refuses a per-user limit on a public route', () => {
     const problems = routeContractProblems([

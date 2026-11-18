@@ -1,16 +1,29 @@
-import type { NestFastifyApplication } from '@nestjs/platform-fastify';
-
 import { randomUUID } from 'node:crypto';
 
+import { Controller, Get } from '@nestjs/common';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
+
+import { type AuthenticatedUser, CurrentUser } from './common/auth';
+import { Operation } from './common/errors';
 import { FEATURE_MODULES } from './modules';
 import { createTestApp } from './testing/test-app';
 import { authHeader } from './testing/test-tokens';
+
+/** Test-only route: proves the `/v1` prefix and authentication without touching a data store. */
+@Controller('test-app')
+class WhoAmIController {
+  @Get('whoami')
+  @Operation('get_my_open_incident')
+  whoami(@CurrentUser() user: AuthenticatedUser) {
+    return { user_id: user.id };
+  }
+}
 
 describe('App scaffold (API-100-01)', () => {
   let app: NestFastifyApplication;
 
   beforeAll(async () => {
-    ({ app } = await createTestApp());
+    ({ app } = await createTestApp({ controllers: [WhoAmIController] }));
   });
 
   afterAll(async () => {
@@ -28,21 +41,23 @@ describe('App scaffold (API-100-01)', () => {
     const userId = randomUUID();
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/ping',
+      url: '/v1/test-app/whoami',
       headers: await authHeader(userId),
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'ok', user_id: userId });
+    expect(res.json()).toEqual({ user_id: userId });
   });
 
-  it('answers 401 ping:not_authenticated on /v1/ping without a token', async () => {
-    const res = await app.inject({ method: 'GET', url: '/v1/ping' });
+  it('answers 401 with the operation code on a /v1 route without a token', async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/test-app/whoami' });
     expect(res.statusCode).toBe(401);
-    expect(res.json<{ error: { code: string } }>().error.code).toBe('ping:not_authenticated');
+    expect(res.json<{ error: { code: string } }>().error.code).toBe(
+      'get_my_open_incident:not_authenticated',
+    );
   });
 
   it('does not serve REST routes without the /v1 prefix', async () => {
-    const res = await app.inject({ method: 'GET', url: '/ping' });
+    const res = await app.inject({ method: 'GET', url: '/test-app/whoami' });
     expect(res.statusCode).toBe(404);
   });
 

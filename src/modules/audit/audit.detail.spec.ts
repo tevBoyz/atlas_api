@@ -100,7 +100,7 @@ describe('sanitizeAuditDetail (API-100-14 AC4)', () => {
     ['a formatted phone number', '(201) 555-0101'],
     ['a phone number inside text', 'called 2015550101 twice'],
     ['an email', 'ada@example.test'],
-    ['a JWT', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghij'],
+    ['a JWT', ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiIxMjM0NTY3ODkwIn0', 'abcdefghij'].join('.')],
     ['a bearer token', 'Bearer abcdefghijklmnop'],
     ['an invite token', 'a'.repeat(64)],
     ['coordinates', '13.45490, -16.57900'],

@@ -10,7 +10,6 @@ import { FEATURE_MODULES } from './modules';
 import { ObservabilityModule } from './observability';
 import { OpenApiModule } from './openapi/openapi.module';
 import { RedisModule } from './redis';
-import { ScaffoldController } from './scaffold.controller';
 
 @Module({
   imports: [
@@ -25,6 +24,5 @@ import { ScaffoldController } from './scaffold.controller';
     OpenApiModule,
     ...FEATURE_MODULES,
   ],
-  controllers: [ScaffoldController],
 })
 export class AppModule {}

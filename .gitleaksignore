@@ -1,0 +1,4 @@
+# Reviewed gitleaks findings, one exact fingerprint per line (<commit>:<file>:<rule>:<line>).
+# A fake JWT in a unit test (payload {"sub":"1234567890"}). The commit is already pushed and
+# history is not rewritten; the test now assembles the value at runtime.
+9497ff2e4ca1fdacd9f401994db47d787705064e:src/modules/audit/audit.detail.spec.ts:jwt:103

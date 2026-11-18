@@ -9,7 +9,7 @@
 #             throwaway containers through Testcontainers (API-100-13)
 #   dart      regenerates the Dart client, fails on any difference, analyzes and tests the package
 #   docker    docker build of the Dockerfile (build only, nothing is pushed)
-#   secrets   gitleaks (default rules) on the commits this push / pull request adds
+#   secrets   gitleaks (.gitleaks.toml + .gitleaksignore) on the commits this push / pull request adds
 #
 # Reproduce locally: see "CI" in README.md.
 
@@ -245,8 +245,9 @@ jobs:
           echo "Scanning: $range ($(git rev-list --count "$range") commits)"
           echo "log_opts=$range" >> "$GITHUB_OUTPUT"
 
-      # Default gitleaks rules. The local throwaway values (postgres:postgres@127.0.0.1 etc.) are not
-      # flagged, so no allowlist is needed; a .gitleaks.toml at the repo root would be picked up.
+      # Default gitleaks rules extended by .gitleaks.toml (one reviewed commit allowlisted), plus
+      # .gitleaksignore (exact fingerprints of reviewed findings in history). Both are read from the
+      # repo root. The local throwaway values (postgres:postgres@127.0.0.1 etc.) are not flagged.
       - name: Scan for secrets
         env:
           LOG_OPTS: ${{ steps.range.outputs.log_opts }}

@@ -179,7 +179,7 @@ describe('Error envelope (API-100-05)', () => {
     });
 
     it('wrong method on an existing path → 404 http:not_found (Fastify has no 405)', async () => {
-      const { res, body } = await call('DELETE' as 'GET', '/v1/ping');
+      const { res, body } = await call('DELETE' as 'GET', '/v1/test-errors/echo');
       expect(res.statusCode).toBe(404);
       expectEnvelope(body, 'http:not_found');
     });

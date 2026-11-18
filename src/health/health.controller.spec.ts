@@ -214,7 +214,7 @@ describe('Health and readiness (API-100-07)', () => {
     });
 
     it('ordinary routes still log at info', async () => {
-      await app.inject({ method: 'GET', url: '/v1/ping' });
+      await app.inject({ method: 'GET', url: '/v1/no-such-route' });
       await settle();
       expect(logs.lines.filter((l) => l.msg === 'request completed')).toHaveLength(1);
     });

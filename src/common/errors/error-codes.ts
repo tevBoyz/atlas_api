@@ -138,10 +138,6 @@ export const PARITY_ERROR_CODES = {
 
   // §11.2 / §11.3 E1 Idempotency-Key (enforced by API-100-10; `invalid_key` from its AC3)
   idempotency: ['key_mismatch', 'in_progress', 'key_required', 'invalid_key'],
-
-  // API-only, scaffold: `GET /v1/ping` (API-100-01) is an authenticated placeholder since
-  // API-100-08, so it needs its own `not_authenticated` code. Removed together with the route.
-  ping: ['not_authenticated'],
 } as const;
 
 type ParityCatalogue = typeof PARITY_ERROR_CODES;

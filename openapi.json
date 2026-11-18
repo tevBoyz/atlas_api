@@ -70,6 +70,214 @@
         ],
         "type": "string"
       },
+      "IncidentSubmitResult": {
+        "additionalProperties": false,
+        "properties": {
+          "acknowledged_count": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "activated_at": {
+            "type": "string"
+          },
+          "activity_confirmed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "auto_closed": {
+            "type": "boolean"
+          },
+          "cancelled_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "circle_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivered_count": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "emergency_type": {
+            "enum": [
+              "medical",
+              "domestic_violence",
+              "fire",
+              "burglary",
+              "other",
+              "unspecified"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "incident_notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "incident_notes_updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_accuracy_m": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "location_captured_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_lat": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "location_lng": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "location_sharing_ended_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "current",
+                  "last_known",
+                  "unavailable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "renotified_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resident_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sent_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "share_payload": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "active",
+              "resolved",
+              "activating",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "submit_outcome": {
+            "enum": [
+              "created",
+              "promoted",
+              "renotified"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "resident_id",
+          "circle_id",
+          "status",
+          "activated_at",
+          "emergency_type",
+          "location_lat",
+          "location_lng",
+          "location_accuracy_m",
+          "location_captured_at",
+          "location_source",
+          "cancelled_at",
+          "sent_at",
+          "share_payload",
+          "incident_notes",
+          "incident_notes_updated_at",
+          "renotified_at",
+          "resolved_at",
+          "resolved_reason",
+          "auto_closed",
+          "activity_confirmed_at",
+          "location_sharing_ended_at",
+          "delivered_count",
+          "acknowledged_count",
+          "submit_outcome"
+        ],
+        "type": "object"
+      },
       "InviteLookupStatus": {
         "enum": [
           "pending",
@@ -102,24 +310,6 @@
         "properties": {},
         "type": "object"
       },
-      "PingResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "user_id": {
-            "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "status",
-          "user_id"
-        ],
-        "type": "object"
-      },
       "ReadinessUnavailable": {
         "additionalProperties": false,
         "properties": {
@@ -142,6 +332,24 @@
         "required": [
           "status",
           "failed"
+        ],
+        "type": "object"
+      },
+      "SubmitEmergencyAlertRequest": {
+        "properties": {
+          "emergency_type": {
+            "enum": [
+              "medical",
+              "domestic_violence",
+              "fire",
+              "burglary",
+              "other"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "emergency_type"
         ],
         "type": "object"
       }
@@ -255,6 +463,225 @@
         ]
       }
     },
+    "/v1/incidents": {
+      "post": {
+        "operationId": "submitEmergencyAlert",
+        "parameters": [
+          {
+            "description": "UUID chosen by the client. A retry with the same key replays the first result.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitEmergencyAlertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentSubmitResult"
+                }
+              }
+            },
+            "description": "An alert was already open: its members were re-notified"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentSubmitResult"
+                }
+              }
+            },
+            "description": "The alert was created (or a legacy activating alert was promoted)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:key_required",
+                    "details": {},
+                    "message": "An Idempotency-Key header is required."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad request",
+            "x-error-codes": [
+              "idempotency:key_required"
+            ]
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "submit_emergency_alert:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "submit_emergency_alert:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "submit_emergency_alert:profile_not_found",
+                    "details": {},
+                    "message": "Profile not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "submit_emergency_alert:profile_not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:in_progress",
+                    "details": {},
+                    "message": "A request with this Idempotency-Key is still being processed."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "idempotency:in_progress",
+              "submit_emergency_alert:profile_setup_incomplete"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:invalid_key",
+                    "details": {},
+                    "message": "The Idempotency-Key header must be a UUID."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "idempotency:invalid_key",
+              "idempotency:key_mismatch",
+              "submit_emergency_alert:invalid_type"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create the emergency alert, or re-notify the one already open",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
     "/v1/openapi.json": {
       "get": {
         "operationId": "getOpenApiDocument",
@@ -341,101 +768,6 @@
         },
         "security": [],
         "summary": "The OpenAPI document of this API (never served in production)",
-        "tags": [
-          "meta"
-        ]
-      }
-    },
-    "/v1/ping": {
-      "get": {
-        "operationId": "ping",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PingResponse"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "ping:not_authenticated",
-                    "details": {},
-                    "message": "Sign in to continue."
-                  }
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Missing, invalid or expired access token",
-            "x-error-codes": [
-              "ping:not_authenticated"
-            ]
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "rate_limit:exceeded",
-                    "details": {},
-                    "message": "Too many requests. Try again later."
-                  }
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Too many requests",
-            "headers": {
-              "Retry-After": {
-                "description": "Seconds to wait before retrying.",
-                "schema": {
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              }
-            },
-            "x-error-codes": [
-              "rate_limit:exceeded"
-            ]
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "internal:error",
-                    "details": {},
-                    "message": "Something went wrong. Try again later."
-                  }
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Unexpected error",
-            "x-error-codes": [
-              "internal:error"
-            ]
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "Scaffold route: echoes the authenticated caller",
         "tags": [
           "meta"
         ]
