@@ -20,3 +20,7 @@ coverage/
 
 # drizzle-kit introspection scratch output (npm run db:introspect)
 .drizzle-introspect/
+
+# Dart client tooling output
+clients/dart/.dart_tool/
+clients/dart/build/

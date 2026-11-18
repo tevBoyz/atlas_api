@@ -1,0 +1,4 @@
+# Generated contract files are compared byte for byte in CI (Linux), so they stay LF on every
+# checkout, including Windows with core.autocrlf=true (API-100-12).
+openapi.json text eol=lf
+clients/dart/** text eol=lf

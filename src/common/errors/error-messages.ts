@@ -76,6 +76,7 @@ const GENERIC_MESSAGES: Record<GenericErrorCode, string> = {
   'http:uri_too_long': 'The request address is too long.',
   'http:unsupported_media_type': 'This content type is not supported.',
   'http:too_many_requests': 'Too many requests. Try again later.',
+  'rate_limit:exceeded': 'Too many requests. Try again later.',
   'http:client_error': 'The request could not be processed.',
 };
 

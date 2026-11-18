@@ -8,6 +8,7 @@ import { DatabaseModule } from './db';
 import { HealthModule } from './health/health.module';
 import { FEATURE_MODULES } from './modules';
 import { ObservabilityModule } from './observability';
+import { OpenApiModule } from './openapi/openapi.module';
 import { RedisModule } from './redis';
 import { ScaffoldController } from './scaffold.controller';
 
@@ -21,6 +22,7 @@ import { ScaffoldController } from './scaffold.controller';
     AuthenticationModule,
     IdempotencyModule,
     HealthModule,
+    OpenApiModule,
     ...FEATURE_MODULES,
   ],
   controllers: [ScaffoldController],

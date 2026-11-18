@@ -8,9 +8,7 @@ import { RedisService } from '../../src/redis';
 import { createTestApp } from '../../src/testing/test-app';
 
 /**
- * Health and readiness against the LOCAL docker stack (API-100-07). Needs `docker compose up -d
- * --wait` (CI's database job does this). URLs come from the environment or default to the local
- * docker ones (test/int/setup-env.ts); remote hosts are refused by the config guard.
+ * Health and readiness against the test containers (API-100-07, API-100-13).
  *
  * Unreachable stores are simulated with closed local ports (127.0.0.1:1), never by touching the
  * running containers.

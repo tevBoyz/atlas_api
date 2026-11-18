@@ -149,8 +149,8 @@ Fake only: Ada (circle owner), Ben and Cara (active members), Dan (pending phone
   `DATABASE_URL` or `REDIS_URL` names a host other than `localhost`, `127.0.0.1` or `::1` (or a
   database URL with `host`/`hostaddr`/`port`/`service` parameters). The error names the key and the
   host only. `ALLOW_REMOTE_DATA_STORES=true` lifts the rule, only on Dawit's instruction.
-- Unit tests (`npm test`) never connect: `src/testing/unit-env.ts` removes the URLs. Integration
-  tests (`npm run test:int`) use the local docker stack (env URLs, else the local defaults).
+- Unit tests (`npm test`) never connect: `src/testing/unit-env.ts` removes the URLs. The other suites
+  start their own containers (see Tests).
 
 ## Errors (API-100-05, `src/common/errors`)
 
@@ -238,6 +238,67 @@ null), `incident.resident`, `incident.memberView`, `incident.eventsView`, `incid
   5xx is not stored (retryable). Keys expire after 24 h (purged when presented, swept every 10 min).
 - The table is closed to the `anon` / `authenticated` roles (no grants, RLS on).
 
+## Rate limiting (API-100-11, `src/common/rate-limit`)
+
+- **Limits** (requests per sliding window, configurable, see `.env.example`):
+
+  | Policy            | Default    | Key             | Applies to                           |
+  | ----------------- | ---------- | --------------- | ------------------------------------ |
+  | `authenticated`   | 300 / 60 s | user            | every authenticated route by default |
+  | `public`          | 60 / 300 s | IP              | every `@Public()` route by default   |
+  | `emergency_write` | 30 / 60 s  | user            | `@RateLimit('emergency_write')`      |
+  | `location_ping`   | 30 / 60 s  | user + incident | `@RateLimit('location_ping')`        |
+  | `auth_failure`    | 120 / 60 s | IP              | requests rejected by authentication  |
+
+- Over the limit: 429, `Retry-After` and `rate_limit:exceeded` (or the policy's own `code`).
+  `@SkipRateLimit()` routes (health, readiness) are never limited or counted.
+- **Atomic**: one Lua script does the whole check, including the expiry, with Redis `TIME`.
+- **Fails open**: when Redis is down or slower than `RATE_LIMIT_REDIS_TIMEOUT_MS` the request goes
+  through. An outage logs one warning and its end one info line.
+- **Order** (`RequestGuard`): authentication, then the limit, then interceptors, so a 429 is never
+  stored as an idempotent response. A rejected token counts against its IP; a valid token never does.
+- **Client IP**: the first `x-forwarded-for` value when `TRUST_PROXY` is on, else the socket address.
+  **A client can set that header itself**, so production must sit behind a proxy that overwrites it.
+
+## Audit log (API-100-14, `src/modules/audit`)
+
+- `AuditService.record(entry, tx)` writes `audit_log` (migration `0003`) inside the caller's
+  transaction. Request id and IP come from the per-request context (`AsyncLocalStorage`).
+- **Append-only**: triggers refuse UPDATE, DELETE and TRUNCATE for every role, including the role the
+  API connects as, which owns the table (epic §18 D10). Closed to `anon` / `authenticated`.
+- `detail` is sanitized (`audit.detail.ts`): medical and share fields, tokens, phone numbers,
+  coordinates and free text are left out, and a warning names the keys. There is no read endpoint.
+
+## OpenAPI and the Dart client (API-100-12, `src/openapi`, `clients/dart`)
+
+- Every route declares `@ApiContract({ operationId, summary, tag, responses, ... })` with zod schemas.
+  Bearer security, the `Idempotency-Key` header, 401, 429 and the error envelope are derived from the
+  route's own decorators.
+- `npm run openapi:generate` writes `openapi.json`; `npm run openapi:check` fails on any byte
+  difference. Neither needs a database, Redis or `.env`.
+- `GET /v1/openapi.json` is public while `OPENAPI_ENABLED` is on (default) and always 404 in production.
+- `npm run client:dart:generate` regenerates `clients/dart/lib/src/generated`;
+  `npm run client:dart:build` analyzes and tests the package. Needs the Dart SDK, not Java. The package
+  version is `API_VERSION` (`src/app.constants.ts`), which must match `package.json`.
+
+## Tests
+
+Needs Docker running. No suite uses the compose stack or reads `.env`.
+
+| Script                  | What it runs                                                                           |
+| ----------------------- | -------------------------------------------------------------------------------------- |
+| `npm test`              | Unit tests. No containers.                                                             |
+| `npm run test:int`      | `test/int`: integration tests against real Postgres and Redis containers.              |
+| `npm run test:baseline` | Each SQL file in `db/baseline/tests` must end with its `<name>_ok` exception.          |
+| `npm run test:parity`   | `test/parity`: one named test per SQL assertion (`it.todo` until the endpoint exists). |
+
+- One Postgres and one Redis container per run (`test/support/global-setup.ts`), on random ports, with
+  the baseline and API migrations applied once into a template database.
+- **Isolation**: each Jest worker has its own database and Redis index, and both are reset before every
+  test file, so suites may commit real rows.
+- Fixture builders are in `test/support/fixtures.ts`, the token factory in `src/testing/test-tokens.ts`.
+- `test/parity/assertion-coverage.spec.ts` fails when a SQL assertion has no named parity test.
+
 ## Observability (API-100-06, `src/observability`)
 
 - **Logs**: pino JSON on stdout, level from `LOG_LEVEL` (`silent` turns them off). Nest's own
@@ -268,26 +329,16 @@ GitHub Actions runs on every push and pull request (all branches); any failing s
 A newer push to the same branch cancels the older run. No real credentials and no GitHub secrets:
 the jobs read the repository only, and the database is a throwaway container.
 
-| Job        | Steps                                                                                                                                                                                                          |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `checks`   | `npm ci`, `lint`, `format:check`, `typecheck`, `test`, `db:baseline:verify`, OpenAPI diff (`openapi:check`).                                                                                                   |
-| `database` | `docker compose up -d --wait` (same image + shim as local, compose project `atlas-api-ci`), then `db:baseline`, `db:test:sql`, `db:migrate`, `db:seed`, `test:int`, `test:parity`. Runs after `checks` passes. |
-| `docker`   | `docker build` of the `Dockerfile` (build only, nothing pushed). Runs after `checks` passes.                                                                                                                   |
-| `secrets`  | gitleaks (CLI, version and checksum pinned) on the commits the push or pull request adds.                                                                                                                      |
+| Job        | Steps                                                                                                                                                                                                                                                      |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `checks`   | `npm ci`, `lint`, `format:check`, `typecheck`, `test`, `db:baseline:verify`, OpenAPI diff (`openapi:check`).                                                                                                                                               |
+| `database` | `docker compose up -d --wait` (same image + shim as local, compose project `atlas-api-ci`), then `db:baseline`, `db:test:sql`, `db:migrate`, `db:seed`, and `test:baseline`, `test:int`, `test:parity` (their own containers). Runs after `checks` passes. |
+| `dart`     | Regenerates `clients/dart`, fails on any difference, then `client:dart:build`. Runs after `checks` passes.                                                                                                                                                 |
+| `docker`   | `docker build` of the `Dockerfile` (build only, nothing pushed). Runs after `checks` passes.                                                                                                                                                               |
+| `secrets`  | gitleaks (CLI, version and checksum pinned) on the commits the push or pull request adds.                                                                                                                                                                  |
 
 CI sets `NODE_ENV=test`, `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54329/postgres` and
 `REDIS_URL=redis://127.0.0.1:63799` explicitly.
-
-Not built yet (the CI steps already exist):
-
-- **OpenAPI diff**: runs `npm run openapi:check` once that script exists (API-100-12 adds it: it
-  regenerates `openapi.json` and fails on any difference from the committed file). Until then the
-  step logs "OpenAPI diff skipped" and passes.
-- **Integration and parity tests**: `test/int/` holds the health/readiness (API-100-07), policy
-  (API-100-09) and idempotency (API-100-10) tests against the compose stack (policy fixtures run in a
-  rolled-back transaction; idempotency rows are deleted afterwards); the Testcontainers harness
-  (API-100-13) adds more. `test/parity/` is empty
-  until then and passes with no tests.
 
 Run the same steps locally (Git Bash, from the repo root; run the lines in order, each stops at its
 first failure):
@@ -296,7 +347,9 @@ first failure):
 export NODE_ENV=test DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54329/postgres REDIS_URL=redis://127.0.0.1:63799
 npm ci && npm run lint && npm run format:check && npm run typecheck && npm test && npm run db:baseline:verify
 docker compose -p atlas-api-ci up -d --wait   # fresh database, separate from your local atlas-api stack
-npm run db:baseline && npm run db:test:sql && npm run db:migrate && npm run db:seed && npm run test:int && npm run test:parity
+npm run db:baseline && npm run db:test:sql && npm run db:migrate && npm run db:seed
+npm run test:baseline && npm run test:int && npm run test:parity
+npm run client:dart:generate && git status --porcelain -- clients/dart openapi.json && npm run client:dart:build
 docker compose -p atlas-api-ci down -v
 docker build -t atlas-api:ci .
 ```
@@ -307,4 +360,6 @@ Stop your local `atlas-api` stack first (`docker compose down`) since both use p
 
 `npm run build` · `npm start` · `npm run start:dev` · `npm run lint` · `npm run format` /
 `format:check` · `npm test` (unit) · `npm run test:int` · `npm run test:parity` ·
+`npm run test:baseline` · `npm run openapi:generate` / `openapi:check` ·
+`npm run client:dart:generate` / `client:dart:build` ·
 `npm run auth:test-token` (local test token, see Authentication).

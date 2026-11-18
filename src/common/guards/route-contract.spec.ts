@@ -98,12 +98,14 @@ describe('RouteContractCheck at boot', () => {
           isPublic: true,
           operation: undefined,
           idempotency: undefined,
+          skipRateLimit: true,
         },
         {
           name: 'HealthController.readyz',
           isPublic: true,
           operation: undefined,
           idempotency: undefined,
+          skipRateLimit: true,
         },
         {
           name: 'ScaffoldController.ping',

@@ -1,10 +1,18 @@
 import { Controller, Get, Header, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
+import { z } from 'zod';
 
 import { Public, SkipRateLimit } from '../common/guards/route-access';
 import { QuietRequestLog } from '../observability/http-hooks';
+import { ApiContract } from '../openapi/api-contract.decorator';
 import type { ReadyBody, UnavailableBody } from './readiness';
 import { ReadinessService } from './readiness.service';
+
+const healthOkSchema = z.object({ status: z.literal('ok') });
+const readinessUnavailableSchema = z.object({
+  status: z.literal('unavailable'),
+  failed: z.array(z.enum(['db', 'redis', 'migrations'])),
+});
 
 /**
  * Liveness and readiness (API-100-07, spec §11.3 H1/H2). Served at the root, outside `/v1`
@@ -18,6 +26,12 @@ export class HealthController {
 
   /** AC1: the process is up. No dependency checks. */
   @Get('healthz')
+  @ApiContract({
+    operationId: 'getHealth',
+    summary: 'Liveness: the process is up',
+    tag: 'health',
+    responses: { 200: { description: 'Up', name: 'HealthOk', schema: healthOkSchema } },
+  })
   @QuietRequestLog()
   @Header('cache-control', 'no-store')
   healthz(): ReadyBody {
@@ -32,6 +46,19 @@ export class HealthController {
    * the status set here, never a thrown exception, so the global filter never sees it.
    */
   @Get('readyz')
+  @ApiContract({
+    operationId: 'getReadiness',
+    summary: 'Readiness: database, Redis and migrations',
+    tag: 'health',
+    responses: {
+      200: { description: 'Ready', name: 'HealthOk', schema: healthOkSchema },
+      503: {
+        description: 'A dependency failed',
+        name: 'ReadinessUnavailable',
+        schema: readinessUnavailableSchema,
+      },
+    },
+  })
   @QuietRequestLog()
   @Header('cache-control', 'no-store')
   async readyz(

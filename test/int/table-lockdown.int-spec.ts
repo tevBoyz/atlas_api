@@ -1,14 +1,14 @@
 import { Client } from 'pg';
 
-import { testDatabaseUrl } from './support/database';
+import { testDatabaseUrl } from '../support/database';
 
 /**
  * API-owned tables in `public` are not reachable by the Supabase API roles (PostgREST): `anon` and
  * `authenticated` have no table privileges and RLS is enabled with no policy (deny). Covers the
- * migration tracking table (runner + `0002_lock_down_api_schema_migrations.sql`) and
- * `idempotency_keys` (`0001`). Requires `npm run db:migrate` on the local database.
+ * migration tracking table (runner + `0002_lock_down_api_schema_migrations.sql`),
+ * `idempotency_keys` (`0001`) and `audit_log` (`0003`).
  */
-const TABLES = ['public.api_schema_migrations', 'public.idempotency_keys'];
+const TABLES = ['public.api_schema_migrations', 'public.idempotency_keys', 'public.audit_log'];
 const ROLES = ['anon', 'authenticated'];
 const PRIVILEGES = ['select', 'insert', 'update', 'delete'];
 

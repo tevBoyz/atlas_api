@@ -4,8 +4,10 @@
 #
 # Jobs
 #   checks    install, lint, format check, typecheck, unit tests, baseline checksums, OpenAPI diff
-#   database  Postgres 17.11 (Supabase image + local shim) and Redis via docker compose, then
-#             db:baseline, db:test:sql (7 SQL tests), db:migrate, db:seed, test:int, test:parity
+#   database  the db:* scripts against docker compose (Postgres 17.11, Supabase image + local shim,
+#             and Redis), then test:baseline, test:int and test:parity, which start their own
+#             throwaway containers through Testcontainers (API-100-13)
+#   dart      regenerates the Dart client, fails on any difference, analyzes and tests the package
 #   docker    docker build of the Dockerfile (build only, nothing is pushed)
 #   secrets   gitleaks (default rules) on the commits this push / pull request adds
 #
@@ -114,8 +116,11 @@ jobs:
       - name: Seed fake data
         run: npm run db:seed
 
-      # test/int: health/readiness against the compose stack (API-100-07; uses DATABASE_URL and
-      # REDIS_URL above). Testcontainers suites are added by API-100-13. Parity: none yet.
+      # These suites start their own Postgres and Redis containers on random ports (API-100-13) and
+      # ignore DATABASE_URL and REDIS_URL above.
+      - name: SQL behaviour tests in a fresh container
+        run: npm run test:baseline -- --ci
+
       - name: Integration tests
         run: npm run test:int -- --ci
 
@@ -129,6 +134,43 @@ jobs:
       - name: Stop services
         if: always()
         run: docker compose down -v
+
+  dart:
+    name: Dart client
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: dart-lang/setup-dart@2286a0c042b44434fe26d292bbce8d34f7ec662b # v1.8.2
+        with:
+          sdk: 3.12.2
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Regenerate the client
+        run: npm run client:dart:generate
+
+      - name: Fail on any difference from the committed client
+        run: |
+          if [ -n "$(git status --porcelain -- clients/dart openapi.json)" ]; then
+            git status --porcelain -- clients/dart openapi.json
+            git diff -- clients/dart openapi.json
+            echo "::error::clients/dart is out of date. Run npm run client:dart:generate and commit."
+            exit 1
+          fi
+
+      - name: Analyze and test the package
+        run: npm run client:dart:build
 
   docker:
     name: Docker build

@@ -5,5 +5,7 @@ docs/
 /db/
 /.drizzle-introspect/
 package-lock.json
+openapi.json
+clients/
 AGENTS.md
 CLAUDE.md

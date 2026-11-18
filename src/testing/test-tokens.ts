@@ -2,12 +2,13 @@ import { randomUUID } from 'node:crypto';
 
 import { type CryptoKey, type JWTPayload, type KeyObject, SignJWT } from 'jose';
 
+import type { LocalSigningKey } from './local-jwks';
 import { TEST_JWT_AUDIENCE, TEST_JWT_ISSUER, TEST_JWT_SECRET } from './test-auth-config';
 
 /**
- * Minimal token factory for tests (API-100-08). Signs Supabase-shaped access tokens with a LOCAL
- * key: the HS256 test secret by default, or a generated asymmetric key (`privateKey` + `alg` +
- * `kid`) for JWKS tests. API-100-13 generalizes this into the shared harness.
+ * Token factory for tests (API-100-08, API-100-13 AC3). Signs Supabase-shaped access tokens with a
+ * LOCAL key: the HS256 test secret by default, or a generated asymmetric key (`privateKey` + `alg` +
+ * `kid`) for JWKS tests. {@link createTokenFactory} binds one key for a whole suite.
  */
 export interface TestTokenOptions {
   /** Claims to add or override. Set a claim to `undefined` to leave it out. */
@@ -62,4 +63,27 @@ export async function authHeader(
 ): Promise<{ authorization: string }> {
   const token = await signTestToken({ ...options, claims: { sub, ...options.claims } });
   return { authorization: `Bearer ${token}` };
+}
+
+/** Signs tokens for any user with one fixed key. */
+export interface TokenFactory {
+  token(sub: string, options?: TestTokenOptions): Promise<string>;
+  header(sub: string, options?: TestTokenOptions): Promise<{ authorization: string }>;
+}
+
+/**
+ * A {@link TokenFactory} for one key. Default: the HS256 test secret the guard trusts in tests.
+ * Pass a `generateSigningKey()` result (`src/testing/local-jwks.ts`) for an asymmetric JWKS key.
+ */
+export function createTokenFactory(
+  key?: Pick<LocalSigningKey, 'privateKey' | 'alg' | 'kid'>,
+): TokenFactory {
+  const signing: TestTokenOptions = key
+    ? { privateKey: key.privateKey, alg: key.alg, kid: key.kid }
+    : {};
+  return {
+    token: (sub, options = {}) =>
+      signTestToken({ ...signing, ...options, claims: { sub, ...options.claims } }),
+    header: (sub, options = {}) => authHeader(sub, { ...signing, ...options }),
+  };
 }

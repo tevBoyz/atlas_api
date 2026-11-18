@@ -6,6 +6,7 @@ import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 
 import { AppModule } from '../app.module';
 import { configureApp, createFastifyAdapter } from '../app.setup';
+import { ApiConfigService, type ConfigKey, parseConfig } from '../config';
 import { LOG_DESTINATION } from '../observability/logger';
 
 /** Collects the JSON log lines an app writes, for assertions. Test-only (excluded from the build). */
@@ -37,6 +38,21 @@ export interface TestApp {
 }
 
 /**
+ * For {@link createTestApp}'s `override`: the app's config becomes the environment plus `values`,
+ * validated like the real one. (`ApiConfigModule` reads the environment once, when imported.)
+ */
+export function withTestConfig(
+  values: Record<string, string>,
+): (builder: TestingModuleBuilder) => TestingModuleBuilder {
+  const config = parseConfig({ ...process.env, ...values });
+  return (builder) =>
+    builder.overrideProvider(ApiConfigService).useValue({
+      get: (key: ConfigKey) => config[key],
+      isProduction: config.NODE_ENV === 'production',
+    });
+}
+
+/**
  * The real AppModule (plus optional extra controllers/providers) on the same Fastify adapter and
  * setup as main.ts, with logs captured instead of written to stdout. `override` can replace
  * providers (e.g. fake data stores) before the module compiles.
@@ -47,7 +63,7 @@ export async function createTestApp(
 ): Promise<TestApp> {
   const logs = new LogCapture();
   const moduleRef = await override(
-    Test.createTestingModule({ imports: [AppModule], ...extra })
+    Test.createTestingModule({ ...extra, imports: [AppModule, ...(extra.imports ?? [])] })
       .overrideProvider(LOG_DESTINATION)
       .useValue(logs),
   ).compile();

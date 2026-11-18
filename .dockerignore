@@ -5,6 +5,8 @@ coverage
 .env*
 !.env.example
 docs
+clients
+openapi.json
 db
 !db/migrations
 test

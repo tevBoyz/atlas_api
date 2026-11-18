@@ -1,0 +1,16 @@
+# Generator settings (swagger_parser, pinned in pubspec.yaml). Run: npm run client:dart:generate
+swagger_parser:
+  schema_path: ../../openapi.json
+  output_directory: lib/src/generated
+  name: atlas_api
+  language: dart
+  json_serializer: json_serializable
+  root_client: true
+  root_client_name: AtlasApiClient
+  put_clients_in_folder: true
+  squash_clients: false
+  export_file: true
+  enums_to_json: true
+  unknown_enum_value: true
+  mark_files_as_generated: true
+  original_http_response: false

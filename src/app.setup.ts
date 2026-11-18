@@ -2,8 +2,9 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import type { Logger } from 'pino';
 
 import { API_PREFIX, UNPREFIXED_ROUTES } from './app.constants';
+import { installRequestContext } from './common/http/request-context';
 import { IdempotencyHookInstaller } from './common/idempotency';
-import { fastifyTrustProxy, type TrustProxy } from './config';
+import { ApiConfigService, fastifyTrustProxy, type TrustProxy } from './config';
 import { genRequestId, installHttpHooks, ROOT_LOGGER } from './observability';
 
 /**
@@ -24,6 +25,8 @@ export function configureApp(app: NestFastifyApplication): void {
   app.setGlobalPrefix(API_PREFIX, { exclude: UNPREFIXED_ROUTES });
   const fastify = app.getHttpAdapter().getInstance();
   installHttpHooks(fastify, app.get<Logger>(ROOT_LOGGER));
+  // Request id and client IP for code that has no request object, e.g. the audit log (API-100-14).
+  installRequestContext(fastify, app.get(ApiConfigService).get('TRUST_PROXY'));
   // Records responses of `@Idempotent()` routes (API-100-10).
   app.get(IdempotencyHookInstaller).install(fastify);
 }

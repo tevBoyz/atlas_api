@@ -25,6 +25,7 @@ export const INTROSPECTED_TABLES = [
   'login_lockouts',
   // API-owned (db/migrations/)
   'idempotency_keys',
+  'audit_log',
 ];
 
 export default defineConfig({

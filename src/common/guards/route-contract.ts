@@ -5,7 +5,9 @@ import { DiscoveryService, MetadataScanner, Reflector } from '@nestjs/core';
 import { type ErrorPrefix, parityCode } from '../errors/error-codes';
 import { OPERATION_METADATA } from '../errors/operation';
 import { IDEMPOTENCY_METADATA, type IdempotencyMode } from '../idempotency/idempotent.decorator';
-import { IS_PUBLIC_KEY } from './route-access';
+import { RATE_LIMIT_METADATA, type RateLimitRule } from '../rate-limit/rate-limit.decorator';
+import { type RateLimitScope, scopeOfRule } from '../rate-limit/rate-limit.policies';
+import { IS_PUBLIC_KEY, SKIP_RATE_LIMIT_KEY } from './route-access';
 
 /** What the contract check needs to know about one route handler. */
 export interface RouteDescriptor {
@@ -14,13 +16,17 @@ export interface RouteDescriptor {
   isPublic: boolean;
   operation?: ErrorPrefix;
   idempotency?: IdempotencyMode;
+  /** Scope of the route's `@RateLimit()`, when it declares one. */
+  rateLimitScope?: RateLimitScope;
+  skipRateLimit?: boolean;
 }
 
 /**
  * The rules every route must follow (API-100-08 AC4, API-100-10):
  * - a non-public route declares `@Operation('<fn>')` whose catalogue lists `not_authenticated`,
  *   so a 401 always carries the route's parity code `<fn>:not_authenticated`;
- * - an `@Idempotent()` route is authenticated (keys are stored per user).
+ * - an `@Idempotent()` route is authenticated (keys are stored per user);
+ * - a `@RateLimit()` keyed by user is on an authenticated route, and never with `@SkipRateLimit()`.
  * Returns one line per broken rule (empty = all good).
  */
 export function routeContractProblems(routes: readonly RouteDescriptor[]): string[] {
@@ -37,6 +43,14 @@ export function routeContractProblems(routes: readonly RouteDescriptor[]): strin
     }
     if (route.idempotency && route.isPublic) {
       problems.push(`${route.name}: @Idempotent() on a @Public() route (keys are per user)`);
+    }
+    if (route.rateLimitScope && route.rateLimitScope !== 'ip' && route.isPublic) {
+      problems.push(
+        `${route.name}: per-user @RateLimit() on a @Public() route (no user to key on)`,
+      );
+    }
+    if (route.rateLimitScope && route.skipRateLimit) {
+      problems.push(`${route.name}: @RateLimit() together with @SkipRateLimit()`);
     }
   }
   return problems;
@@ -95,6 +109,15 @@ export class RouteContractCheck implements OnModuleInit {
             IDEMPOTENCY_METADATA,
             targets,
           ),
+          rateLimitScope: scopeOfRule(
+            this.reflector.getAllAndOverride<RateLimitRule | undefined>(
+              RATE_LIMIT_METADATA,
+              targets,
+            ),
+          ),
+          skipRateLimit:
+            this.reflector.getAllAndOverride<boolean>(SKIP_RATE_LIMIT_KEY, targets) === true ||
+            undefined,
         });
       }
     }

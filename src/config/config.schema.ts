@@ -89,6 +89,23 @@ export const configSchema = z.object({
   INVITE_URL_BASE: urlWithProtocol([]).default('io.supabase.atlasmobile://invite/'),
 
   TRUST_PROXY: trustProxy.default(false),
+  // Serves GET /v1/openapi.json. Never served in production, whatever this says (API-100-12).
+  OPENAPI_ENABLED: z.stringbool({ truthy: ['true'], falsy: ['false'] }).default(true),
+
+  // Rate limits (API-100-11 AC2): requests allowed per sliding window, per key.
+  RATE_LIMIT_AUTHENTICATED_MAX: integerInRange(1, 1_000_000).default(300),
+  RATE_LIMIT_AUTHENTICATED_WINDOW_SECONDS: integerInRange(1, 86_400).default(60),
+  RATE_LIMIT_PUBLIC_MAX: integerInRange(1, 1_000_000).default(60),
+  RATE_LIMIT_PUBLIC_WINDOW_SECONDS: integerInRange(1, 86_400).default(300),
+  RATE_LIMIT_LOCATION_PING_MAX: integerInRange(1, 1_000_000).default(30),
+  RATE_LIMIT_LOCATION_PING_WINDOW_SECONDS: integerInRange(1, 86_400).default(60),
+  RATE_LIMIT_EMERGENCY_WRITE_MAX: integerInRange(1, 1_000_000).default(30),
+  RATE_LIMIT_EMERGENCY_WRITE_WINDOW_SECONDS: integerInRange(1, 86_400).default(60),
+  RATE_LIMIT_AUTH_FAILURE_MAX: integerInRange(1, 1_000_000).default(120),
+  RATE_LIMIT_AUTH_FAILURE_WINDOW_SECONDS: integerInRange(1, 86_400).default(60),
+  // Longest wait for Redis before the limiter lets the request through (fail open).
+  RATE_LIMIT_REDIS_TIMEOUT_MS: integerInRange(1, 5_000).default(100),
+
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   SENTRY_DSN: urlWithProtocol(['http:', 'https:']).optional(),
   OTEL_EXPORTER_OTLP_ENDPOINT: urlWithProtocol(['http:', 'https:']).optional(),
@@ -123,6 +140,18 @@ const RULES: Record<ConfigKey, string> = {
   AVATARS_BUCKET: 'must be a bucket name (lowercase letters, digits, ".", "_", "-")',
   INVITE_URL_BASE: 'must be a URL (any scheme)',
   TRUST_PROXY: 'must be true, false, a hop count, or a comma-separated list of IPs/CIDRs',
+  OPENAPI_ENABLED: 'must be true or false',
+  RATE_LIMIT_AUTHENTICATED_MAX: 'must be an integer from 1 to 1000000',
+  RATE_LIMIT_AUTHENTICATED_WINDOW_SECONDS: 'must be an integer from 1 to 86400',
+  RATE_LIMIT_PUBLIC_MAX: 'must be an integer from 1 to 1000000',
+  RATE_LIMIT_PUBLIC_WINDOW_SECONDS: 'must be an integer from 1 to 86400',
+  RATE_LIMIT_LOCATION_PING_MAX: 'must be an integer from 1 to 1000000',
+  RATE_LIMIT_LOCATION_PING_WINDOW_SECONDS: 'must be an integer from 1 to 86400',
+  RATE_LIMIT_EMERGENCY_WRITE_MAX: 'must be an integer from 1 to 1000000',
+  RATE_LIMIT_EMERGENCY_WRITE_WINDOW_SECONDS: 'must be an integer from 1 to 86400',
+  RATE_LIMIT_AUTH_FAILURE_MAX: 'must be an integer from 1 to 1000000',
+  RATE_LIMIT_AUTH_FAILURE_WINDOW_SECONDS: 'must be an integer from 1 to 86400',
+  RATE_LIMIT_REDIS_TIMEOUT_MS: 'must be an integer from 1 to 5000',
   LOG_LEVEL: `must be one of ${LOG_LEVELS.join(', ')}`,
   SENTRY_DSN: 'must be an http(s) URL',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'must be an http(s) URL',

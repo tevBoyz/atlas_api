@@ -7,6 +7,7 @@ Plain SQL migrations owned by the Atlas API, applied **after** the Supabase base
 | --------------------------- | ---------- | --------------------------------------------- |
 | `0001_idempotency_keys.sql` | API-100-10 | `idempotency_keys` table + `expires_at` index |
 | `0002_lock_down_api_schema_migrations.sql` | API-100-03 follow-up | revoke `anon`/`authenticated` + RLS on `api_schema_migrations` |
+| `0003_audit_log.sql` | API-100-14 | append-only `audit_log` (triggers refuse UPDATE, DELETE, TRUNCATE) |
 
 - File name: `<number>_<snake_case_description>.sql`, e.g. `0001_audit_log.sql`. Applied in number
   order; the id recorded is the file name without `.sql`.

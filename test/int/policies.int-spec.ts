@@ -19,7 +19,7 @@ import {
   requireIncident,
 } from '../../src/common/policies';
 import { incidents } from '../../src/db/schema';
-import { openTestTransaction, type TestTransaction } from './support/database';
+import { openTestTransaction, type TestTransaction } from '../support/database';
 
 /**
  * Authorization policies against the LOCAL Postgres (API-100-09 AC2-AC5). Reproduces the access

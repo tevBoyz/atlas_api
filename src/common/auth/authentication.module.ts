@@ -5,7 +5,9 @@ import type { Logger } from 'pino';
 import { ApiConfigService } from '../../config';
 import { ROOT_LOGGER } from '../../observability/logger';
 import { AuthGuard } from '../guards/auth.guard';
+import { RequestGuard } from '../guards/request.guard';
 import { RouteContractCheck } from '../guards/route-contract';
+import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { SupabaseTokenVerifier } from './supabase-token-verifier';
 import { TOKEN_VERIFIER } from './token-verifier';
 
@@ -21,7 +23,8 @@ export function supabaseVerifierFromConfig(config: ApiConfigService): SupabaseTo
 }
 
 /**
- * Authentication for every route (API-100-08): the global {@link AuthGuard}, the active
+ * Authentication for every route (API-100-08): the global {@link RequestGuard} (authentication,
+ * then rate limiting, API-100-11), the active
  * {@link TOKEN_VERIFIER} (Supabase JWTs until own auth, API-100-51/59) and the boot-time
  * {@link RouteContractCheck}.
  *
@@ -29,7 +32,7 @@ export function supabaseVerifierFromConfig(config: ApiConfigService): SupabaseTo
  * one is allowed, but then every authenticated route answers 401 (fail closed): logged once here.
  */
 @Module({
-  imports: [DiscoveryModule],
+  imports: [DiscoveryModule, RateLimitModule],
   providers: [
     {
       provide: TOKEN_VERIFIER,
@@ -45,7 +48,8 @@ export function supabaseVerifierFromConfig(config: ApiConfigService): SupabaseTo
         return verifier;
       },
     },
-    { provide: APP_GUARD, useClass: AuthGuard },
+    AuthGuard,
+    { provide: APP_GUARD, useClass: RequestGuard },
     RouteContractCheck,
   ],
   exports: [TOKEN_VERIFIER],

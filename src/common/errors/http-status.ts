@@ -33,6 +33,7 @@ export const FULL_CODE_STATUS: Readonly<Record<string, number>> = {
   'http:unsupported_media_type': 415,
   'http:too_many_requests': 429,
   'http:client_error': 400,
+  'rate_limit:exceeded': 429,
 } satisfies Record<GenericErrorCode | `idempotency:${string}` | 'login_lockout:locked', number>;
 
 /** §11.2 rows matched on the exact suffix. */

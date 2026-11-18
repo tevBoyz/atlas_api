@@ -11,12 +11,14 @@
  * - `authUsers` is READ-ONLY: Supabase Auth owns auth.users.
  */
 import {
+  bigserial,
   boolean,
   check,
   date,
   doublePrecision,
   foreignKey,
   index,
+  inet,
   integer,
   jsonb,
   pgSchema,
@@ -461,6 +463,40 @@ export const safetyCircleMembers = pgTable(
       'safety_circle_members_activated_shape',
       sql`((status = 'active'::text) AND (activated_at IS NOT NULL)) OR ((status <> 'active'::text) AND (activated_at IS NULL))`,
     ),
+  ],
+);
+
+export const auditLog = pgTable(
+  'audit_log',
+  {
+    id: bigserial({ mode: 'bigint' }).primaryKey().notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true, mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    actorUserId: uuid('actor_user_id'),
+    actorSessionId: uuid('actor_session_id'),
+    action: text().notNull(),
+    targetType: text('target_type'),
+    targetId: uuid('target_id'),
+    ip: inet(),
+    requestId: text('request_id'),
+    detail: jsonb().default({}).notNull(),
+  },
+  (table) => [
+    index('audit_log_actor_idx')
+      .using('btree', table.actorUserId.asc().nullsLast(), table.occurredAt.asc().nullsLast())
+      .where(sql`(actor_user_id IS NOT NULL)`),
+    index('audit_log_occurred_at_idx').using('btree', table.occurredAt.asc().nullsLast()),
+    index('audit_log_target_idx')
+      .using(
+        'btree',
+        table.targetType.asc().nullsLast(),
+        table.targetId.asc().nullsLast(),
+        table.occurredAt.asc().nullsLast(),
+      )
+      .where(sql`(target_id IS NOT NULL)`),
+    check('audit_log_action_check', sql`length(btrim(action)) > 0`),
+    check('audit_log_detail_check', sql`jsonb_typeof(detail) = 'object'::text`),
   ],
 );
 

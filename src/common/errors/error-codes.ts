@@ -162,6 +162,7 @@ export type ErrorSuffix = ParityCatalogue[ErrorPrefix][number];
  * - `validation:invalid_request` (422) request validation failed and the operation has no parity code (AC4).
  * - `internal:error` (500) anything unexpected (AC5).
  * - `http:*` framework-level failures before any operation runs (unknown route, unreadable body, ...).
+ * - `rate_limit:exceeded` (429) a rate limit was hit and the operation has no code of its own (API-100-11).
  */
 export const GENERIC_ERROR_CODES = [
   'validation:invalid_request',
@@ -181,6 +182,7 @@ export const GENERIC_ERROR_CODES = [
   'http:unsupported_media_type',
   'http:too_many_requests',
   'http:client_error',
+  'rate_limit:exceeded',
 ] as const;
 
 export type GenericErrorCode = (typeof GENERIC_ERROR_CODES)[number];

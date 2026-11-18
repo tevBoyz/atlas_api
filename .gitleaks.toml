@@ -1,0 +1,12 @@
+# Gitleaks configuration: the default rules, plus one reviewed false positive.
+# Picked up automatically by `gitleaks git .` when run from the repository root (see ci.yml).
+
+[extend]
+useDefault = true
+
+# The generic-api-key rule flags a README heading in this commit (README.md line 143). It is
+# documentation text, not a credential. Only this commit is exempt: later commits, including any
+# change to README.md, are still scanned by every rule.
+[[allowlists]]
+description = "False positive: README heading in commit e3dce62"
+commits = ["e3dce62ff58e204d9f5608fdd65fcd9077c62671"]

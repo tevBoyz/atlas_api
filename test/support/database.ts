@@ -1,14 +1,13 @@
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Client } from 'pg';
 
-import * as schema from '../../../src/db/schema';
-import { assertSafeTarget } from '../../../src/db/tooling/target-guard';
+import * as schema from '../../src/db/schema';
+import { assertSafeTarget } from '../../src/db/tooling/target-guard';
 
 /**
- * Minimal test-database helper for integration tests (API-100-09/10). One dedicated connection to
- * the LOCAL docker database (remote hosts refused), inside a transaction that is always rolled
- * back: fixtures never persist and seed data is untouched. API-100-13 replaces this with the shared
- * harness (Testcontainers, fixture builders, isolation per test).
+ * Database access for tests (API-100-09/10/13): dedicated connections to THIS worker's container
+ * database (remote hosts refused). {@link openTestTransaction} wraps fixtures in a transaction that
+ * is always rolled back; {@link openTestClient} is for suites that must commit.
  */
 export interface TestTransaction {
   client: Client;
@@ -20,17 +19,23 @@ export interface TestTransaction {
 
 export function testDatabaseUrl(): string {
   const url = process.env.DATABASE_URL;
-  if (!url) throw new Error('DATABASE_URL is not set (test/int/setup-env.ts sets the local one)');
+  if (!url) throw new Error('DATABASE_URL is not set (test/support/worker-env.ts sets it)');
   assertSafeTarget(url, false);
   return url;
 }
 
-export async function openTestTransaction(): Promise<TestTransaction> {
+/** A connected client on this worker's database. The caller ends it. */
+export async function openTestClient(): Promise<Client> {
   const client = new Client({
     connectionString: testDatabaseUrl(),
     application_name: 'atlas-int-test',
   });
   await client.connect();
+  return client;
+}
+
+export async function openTestTransaction(): Promise<TestTransaction> {
+  const client = await openTestClient();
   await client.query('begin');
   let savepoints = 0;
   return {

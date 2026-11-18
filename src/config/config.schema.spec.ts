@@ -4,6 +4,22 @@ import { ConfigValidationError, parseConfig } from './config.schema';
 const SECRET = 'fake-jwt-secret-0123456789-abcdefghij-SHOULD-NEVER-APPEAR';
 const DB_URL = 'postgresql://fake_user:fake-db-password-NEVER-PRINT@localhost:5432/atlas';
 
+/** Defaults of the rate limit settings (API-100-11 AC2). */
+const RATE_LIMIT_DEFAULTS = {
+  OPENAPI_ENABLED: true,
+  RATE_LIMIT_AUTHENTICATED_MAX: 300,
+  RATE_LIMIT_AUTHENTICATED_WINDOW_SECONDS: 60,
+  RATE_LIMIT_PUBLIC_MAX: 60,
+  RATE_LIMIT_PUBLIC_WINDOW_SECONDS: 300,
+  RATE_LIMIT_LOCATION_PING_MAX: 30,
+  RATE_LIMIT_LOCATION_PING_WINDOW_SECONDS: 60,
+  RATE_LIMIT_EMERGENCY_WRITE_MAX: 30,
+  RATE_LIMIT_EMERGENCY_WRITE_WINDOW_SECONDS: 60,
+  RATE_LIMIT_AUTH_FAILURE_MAX: 120,
+  RATE_LIMIT_AUTH_FAILURE_WINDOW_SECONDS: 60,
+  RATE_LIMIT_REDIS_TIMEOUT_MS: 100,
+};
+
 const PRODUCTION_ENV = {
   NODE_ENV: 'production',
   PORT: '8080',
@@ -42,6 +58,7 @@ describe('parseConfig (API-100-02)', () => {
     it('parses a complete production config into typed values', () => {
       const config = parseConfig(PRODUCTION_ENV);
       expect(config).toEqual({
+        ...RATE_LIMIT_DEFAULTS,
         ...PRODUCTION_ENV,
         PORT: 8080,
         DATABASE_POOL_MAX: 20,
@@ -82,6 +99,7 @@ describe('parseConfig (API-100-02)', () => {
   describe('defaults', () => {
     it('applies defaults when nothing is set (development)', () => {
       expect(parseConfig({})).toEqual({
+        ...RATE_LIMIT_DEFAULTS,
         NODE_ENV: 'development',
         PORT: 3000,
         DATABASE_POOL_MAX: 10,
