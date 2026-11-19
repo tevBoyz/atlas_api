@@ -4,12 +4,15 @@
 
 // Clients
 export 'clients/health_client.dart';
+export 'clients/circles_client.dart';
 export 'clients/config_client.dart';
 export 'clients/incidents_client.dart';
 export 'clients/locations_client.dart';
 export 'clients/meta_client.dart';
 // Data classes
 export 'models/attach_incident_location_request.dart';
+export 'models/capacity.dart';
+export 'models/circle_member.dart';
 export 'models/delivery_counts.dart';
 export 'models/emergency_type.dart';
 export 'models/error_body.dart';
@@ -27,12 +30,16 @@ export 'models/location_source.dart';
 export 'models/member_status.dart';
 export 'models/open_api_document.dart';
 export 'models/open_incident_result.dart';
+export 'models/own_circle.dart';
 export 'models/readiness_unavailable.dart';
 export 'models/recent_incident.dart';
 export 'models/responder_incident.dart';
+export 'models/safety_circle.dart';
 export 'models/set_incident_notes_request.dart';
 export 'models/submit_emergency_alert_request.dart';
 export 'models/attach_incident_location_request_location_source.dart';
+export 'models/circle_member_role.dart';
+export 'models/circle_member_status.dart';
 export 'models/delivery_counts_status.dart';
 export 'models/incident_details_emergency_type.dart';
 export 'models/incident_details_location_source.dart';

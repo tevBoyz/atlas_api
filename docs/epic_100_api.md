@@ -29,7 +29,7 @@ Future product features (Epic 3 membership states, Epic 5 responder actions, Epi
 1. Read spec §1–§15 once before story API-100-01. The spec is the source of truth for behaviour; this file is the order of work.
 2. Work the stories **in order** inside a phase. A story may start only when all its dependencies are done.
 3. For each story: write a short plan → wait for Dawit's go-ahead → build → test → report (rules in §3).
-4. Each phase ends with a **parity gate** story. The app area switches to the API only after the gate passes and Dawit approves.
+4. Each phase ends with a **parity gate** story. The gate proves parity and Dawit approves the phase with its manual test guide. The app does **not** switch per phase: the whole app moves to the API once, after Phase 7 (§18 D13).
 5. If a story's text and the spec disagree, the spec wins; if the spec and a SQL test (spec §14.3) disagree, the SQL test wins. Report every such case.
 6. Items marked **ASK** need Dawit's answer before you build that part.
 
@@ -39,7 +39,7 @@ Future product features (Epic 3 membership states, Epic 5 responder actions, Epi
 2. **Tests are required.** Unit tests for validation and policies; integration tests (Testcontainers, real Postgres + Redis) for every endpoint; **parity tests** that reproduce every assertion of the SQL test file named in the story. A story is not done with failing or skipped tests.
 3. **No secrets.** Never commit, log, print or put in fixtures/docs: keys, tokens, JWTs, passwords, OTP codes, database URLs with credentials, Supabase project refs/URLs, real phone numbers or emails. `.env` files are never committed; `.env.example` lists key names only. Use fake phone numbers in tests.
 4. **Never change app-visible behaviour without approval.** JSON keys, types, null behaviour, ordering, error codes (`fn:code`), HTTP semantics and timing are frozen at today's behaviour. Improvements go in the report as proposals.
-5. **Backward-compatible schema changes only.** The Supabase SQL functions keep serving the app until each area is cut over, on the same database. Only additive migrations (new tables, new nullable/defaulted columns, new indexes). Never rename/drop a column, change a constraint, edit an existing function/policy/trigger, or change stored enum values, unless a Phase 7 story says so and Dawit approves. Never edit the baseline migrations.
+5. **Backward-compatible schema changes only.** The Supabase SQL functions keep serving the app until the single switch at the end (§18 D13), on the same database. Only additive migrations (new tables, new nullable/defaulted columns, new indexes). Never rename/drop a column, change a constraint, edit an existing function/policy/trigger, or change stored enum values, unless a Phase 7 story says so and Dawit approves. Never edit the baseline migrations.
 6. **Same locks as the SQL.** Writes must take the same row locks in the same order as the SQL functions (spec §12) so SQL and API writers can run side by side.
 7. **Server time from the database.** Use Postgres `now()` (transaction time) for every server timestamp, as the SQL does. Timestamps written in one transaction share one value.
 8. **No real sends.** Push, SMS, OTP and email channels stay disabled (fake adapters) until Dawit lifts the hold for each provider. Never message real people from tests or dev.
@@ -71,6 +71,7 @@ An operation has parity when, for the same database state and caller:
 5. Migrations (if any) are additive, numbered, re-runnable on a fresh DB after the baseline.
 6. Errors use the envelope and parity codes; logs carry the request id.
 7. Story report posted (rule 3.10).
+8. **Gate stories only** (API-100-23, 33, 38, 43, 49, 59, and 61/62 where they change what the app calls): a hand-off note for the mobile agent in `docs/phaseN_handoff.md` (N = the phase), in the structure of `docs/phase1_handoff.md`: endpoint ↔ app repository method table with bodies, extra headers, success status codes and parity error codes (HTTP); shape changes vs the SQL; client timeouts (spec §7.8) and measured latency; auth/token notes; known differences from the SQL with the decision behind each; checks before the switch. Under D13 the note is used by the single mobile switch epic, not by a per-phase switch (decided 2026-11-19).
 
 Per-story "Definition of done" lines below list only what is added to this standard.
 
@@ -89,6 +90,8 @@ Hosting, budget and start date are undecided. Keep everything host-agnostic: one
 
 ## 7. Cutover order
 
+**One switch at the end (§18 D13, 2026-11-19).** The phases below are the **build order** of the API, not app switch points. Each gate proves parity and ends with Dawit's approval of the phase (manual Git Bash test guide) and a hand-off note (§5 item 8). When Phases 2–7 are built, the entire app moves to the API in one mobile epic (own auth, all data, Socket.IO realtime, push); then the team tests and optimises; then the remaining Jira stories are built on the API. There is no per-area switch and no Supabase fallback path in the app.
+
 | Order | App area (Flutter store) | Phase that must pass its gate | Gate story |
 | --- | --- | --- | --- |
 | 1 | Incidents & live location (`IncidentStore`) | Phase 1 | API-100-23 |
@@ -99,7 +102,7 @@ Hosting, budget and start date are undecided. Keep everything host-agnostic: one
 | 6 | Auth (`SessionStore` / `AtlasAuth`) | Phase 6 | API-100-59 |
 | 7 | Decommission Supabase app paths | Phase 7 | API-100-61, 62 |
 
-Until Phase 6 the app signs in with Supabase Auth and sends its Supabase access token to the API (API-100-08). The app keeps working at every step; any area can roll back to its Supabase path because the SQL functions stay deployed until Phase 7.
+While the API is built, the app keeps using Supabase unchanged; the API accepts Supabase access tokens (API-100-08) so its routes can be tested with the same tokens before own auth ships (Phase 6). The SQL functions stay deployed until Phase 7: they are the parity reference for the API's tests. (The earlier per-area rollback to the Supabase path is superseded by D13: no per-area switch, no app fallback.)
 
 ## 8. Story index
 
@@ -493,7 +496,7 @@ Until Phase 6 the app signs in with Supabase Auth and sends its Supabase access 
 4. Load check: 50 concurrent residents submitting, pinging location every 12 s and marking safe; no errors, p99 submit < 2 s.
 5. Hand-off note for the app: endpoint ↔ repository method table (`submitEmergencyAlert`, `getMyOpenIncident`, `listMyRecentIncidents`, `attachIncidentLocation`, `getLiveLocationConfig`, `incidentDeliveryCounts`, `markIncidentSafe`, `setIncidentNotes`, `listResponderIncidents`, `getIncidentDetails`), timeouts of spec §7.8, and the rollback switch.
 
-**Definition of done.** Standard. Dawit's manual QA of the incident area against the API passes; Dawit approves the switch.
+**Definition of done.** Standard. Dawit's manual test guide of the incident area against the API passes; Dawit approves the phase. Hand-off note `docs/phase1_handoff.md` (§5 item 8).
 **Dependencies.** 15–22.
 **Parity references.** spec §12.2 checklist (incident items).
 
@@ -651,7 +654,7 @@ All invite/circle writes lock the `safety_circles` row first, then member rows, 
 5. Security test: no API route inserts or activates a member row except accept (and the setup owner row).
 6. Hand-off note for the app: endpoint ↔ repository method table (`fetchOwnCircle`, `listCircleMembers`, `circleInviteCapacity`, `inviteCircleMemberByPhone`, `inviteCircleMembersByPhone`, `createCircleInviteLink`, `resendCircleInvite`, `cancelCircleInvite`, `removeCircleMember`, `lookupCircleInvite`, `previewCircleInvite`, `acceptCircleInvite`, `declineCircleInvite`, `listMyCircleInvites`, `listMyJoinedCircles`, `leaveSafetyCircle`).
 
-**Definition of done.** Standard. Dawit's manual QA of the circles area passes; Dawit approves the switch.
+**Definition of done.** Standard. Dawit's manual test guide of the circles area passes; Dawit approves the phase. Hand-off note `docs/phase2_handoff.md` (§5 item 8).
 **Dependencies.** 24–32.
 **Parity references.** spec §12.2 (capacity, invite, member list, visibility items).
 
@@ -732,7 +735,7 @@ All invite/circle writes lock the `safety_circles` row first, then member rows, 
 4. Avatar upload round trip with the Storage fake; URL format matches today.
 5. Hand-off note: endpoint ↔ repository method table and the new `profiles:*` validation codes.
 
-**Definition of done.** Standard. Dawit's manual QA (onboarding + Settings tab) passes; Dawit approves the switch.
+**Definition of done.** Standard. Dawit's manual test guide (onboarding + Settings) passes; Dawit approves the phase. Hand-off note `docs/phase3_handoff.md` (§5 item 8).
 **Dependencies.** 34–37.
 **Parity references.** spec §6.1, §12.2 (profile items).
 
@@ -806,7 +809,7 @@ All invite/circle writes lock the `safety_circles` row first, then member rows, 
 3. Load check: 200 sockets across 2 instances, 1 location event per 12 s per incident, no lost events in steady state.
 4. Hand-off note: replace `watchIncidentRow` and counts polling; keep polling as fallback when the socket is down.
 
-**Definition of done.** Standard. Dawit approves the switch.
+**Definition of done.** Standard. Dawit approves the phase. Hand-off note `docs/phase4_handoff.md` (§5 item 8).
 **Dependencies.** 39–42.
 **Parity references.** spec §9, §12.2 (realtime item).
 
@@ -896,7 +899,7 @@ All invite/circle writes lock the `safety_circles` row first, then member rows, 
 2. Device registration hand-off note for the app (call U1 after sign-in and on token refresh; U2 at sign-out).
 3. Dawit confirms channels remain disabled in every deployed environment.
 
-**Definition of done.** Standard. Dawit approves.
+**Definition of done.** Standard. Dawit approves the phase. Hand-off note `docs/phase5_handoff.md` (§5 item 8).
 **Dependencies.** 44–48.
 **Parity references.** none.
 
@@ -1044,7 +1047,7 @@ Rules for the whole phase: user ids stay the same as Supabase's; JSON keys and e
 3. All flows of spec §8.1–§8.8 pass against the API (checklist).
 4. Hand-off note for `AtlasAuth` / `SessionStore`.
 
-**Definition of done.** Standard. Dawit approves the switch.
+**Definition of done.** Standard. Dawit approves the phase. Hand-off note `docs/phase6_handoff.md` (§5 item 8).
 **Dependencies.** 50–58.
 **Parity references.** spec §8, §12.2 (lockout item).
 
@@ -1063,6 +1066,7 @@ Rules for the whole phase: user ids stay the same as Supabase's; JSON keys and e
 **Definition of done.** Standard.
 **Dependencies.** 23 (first area); updated after 33, 38, 43, 49, 59.
 **Parity references.** spec §12.
+**Note (D13, 2026-11-19).** There is no per-area switch: this runbook covers the **single** switch of the whole app at the end (preconditions = every gate passed and approved; the mobile switch epic's build; rollout; monitoring; what to do if it fails). No per-area rollback to the Supabase path.
 
 ### API-100-61 — Final parity sign-off
 
@@ -1073,7 +1077,7 @@ Rules for the whole phase: user ids stay the same as Supabase's; JSON keys and e
 2. All 7 SQL test files fully reproduced (assertion-level checklist).
 3. No app code path calls Supabase RPCs, PostgREST tables, Supabase Realtime or Supabase Auth.
 
-**Definition of done.** Standard. Dawit signs off.
+**Definition of done.** Standard. Dawit signs off. Hand-off note `docs/phase7_handoff.md` (§5 item 8) for the single mobile switch epic (D13).
 **Dependencies.** 23, 33, 38, 43, 49, 59.
 **Parity references.** spec §12.2, §14.3.
 
@@ -1159,6 +1163,7 @@ These answers replace the former open questions. **Where any story in this epic 
 | D9 | Hosting | Production DB = the **existing Supabase project, upgraded to Pro before go-live** (Dawit subscribes). API on a container host in an EU region near the database (`eu-west-1`); exact provider chosen by the team. Staging optional/later. The project is now the new `atlas_staging` project (see D12). | §6, API-100-62 |
 | D10 | Database role for the API | Use the **existing database role** (no dedicated least-privilege role for now). Keep the connection string only in server env/secrets; never in the app. | §6, API-100-02/03 |
 | D12 | Supabase project for the API (decided 2026-11-19) | The **original Supabase project was a prototype**: it is **frozen** (read-only reference; nothing is written to it) and will be scrapped. The **new Supabase project `atlas_staging`** (`eu-west-1`) is the API's database and avatar Storage going forward. **No data migration** (there are no real users). D9's "existing Supabase project, upgraded to Pro" now means this new project. It runs **PostgreSQL 17.12** (the baseline and D1b were written for 17.11); the 37 baseline migrations and API migrations 0001–0003 were applied with the db tooling and **all 7 SQL tests pass on 17.12**. Its Auth settings were copied from the prototype (non-secret settings only; Google native ID-token sign-in with the same client IDs; phone/SMS provider off while Twilio is on hold). | §6, D1b, D9, API-100-03, API-100-62 |
+| D13 | Cutover approach (decided 2026-11-19) | **One switch at the end.** The whole API (Phases 2–7) is built first; then the **entire mobile app moves to the API in one mobile epic** (own auth, all data, Socket.IO realtime, push); then the team tests and optimises; then the remaining Jira stories are built on the API. **No per-area switch and no Supabase fallback path in the app.** Phase gates still prove parity with the SQL; Dawit's per-phase sign-off is the gate's **manual Git Bash test guide** (no app switch per phase). Every gate (33, 38, 43, 49, 59, and 61/62 where they change what the app calls) writes `docs/phaseN_handoff.md` for the mobile agent in the structure of `docs/phase1_handoff.md` (§5 item 8). The per-area switch/rollback of `docs/phase1_handoff.md` §5 is superseded (kept as reference) and the `app_config` row `client_incidents_backend` (API migration 0004) is unused. Replaces the area-by-area (strangler) app cutover of §2, §7, API-100-60 and spec §11.1 / §12. | §2, §5, §7, gate stories 23, 33, 38, 43, 49, 59, API-100-60/61/62 |
 
 ### 18.1 Working product assumptions (pending PO confirmation)
 Dawit will confirm these with the product owner. Build foundations to these assumptions; they affect future epics, not Epic 100 parity.

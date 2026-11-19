@@ -7,8 +7,11 @@ checklist in `docs/phase1_parity_checklist.md`, the error-code test
 `test/int/phase1-mixed-writers.int-spec.ts` and the load check `npm run load:incidents`). The switch
 itself is a separate mobile story, after Dawit's manual QA and approval.
 
-Nothing here changes how the app works today. The SQL functions stay deployed until Phase 7, so the
-app can go back to them at any time (section 5).
+Nothing here changes how the app works today. The SQL functions stay deployed until Phase 7.
+
+**D13 (2026-11-19):** the app does not switch per phase. This note is input for the single mobile
+epic that moves the whole app to the API after Phase 7; section 5 (per-area switch and rollback) is
+superseded and kept only as reference.
 
 ## 1. Repository method to endpoint
 
@@ -107,6 +110,15 @@ second every 12 s) queueing for the 10 pooled connections; steady polling is sin
 milliseconds. Production should size `DATABASE_POOL_MAX` with the hosted connection limit in mind.
 
 ## 5. Rollback switch (server row from migration 0004; app side is the mobile story)
+
+> **Superseded by D13 (epic §18 / spec §16, decided 2026-11-19). Kept as reference only; do not
+> build it.** There is no per-area switch and no Supabase fallback in the app: the whole API
+> (Phases 2-7) is built first, then the entire app moves to the API once, in one mobile epic. The
+> `app_config` row `client_incidents_backend` (API migration
+> `db/migrations/0004_client_incidents_backend_switch.sql`) is **unused** under D13; it stays in
+> the database because migrations are additive only (removing it is a decommission-phase decision).
+> The method table (section 1), shape changes (section 2), timeouts (section 3) and the known
+> differences (section 7) still apply to the single switch.
 
 Goal: the incident area can go back to the Supabase RPCs without a new app release, and the API
 path can be turned on gradually.

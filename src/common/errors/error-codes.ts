@@ -70,6 +70,9 @@ export const PARITY_ERROR_CODES = {
   ],
   remove_circle_member: ['not_authenticated', 'not_found', 'not_authorized', 'cannot_remove_owner'],
   list_circle_members: ['not_authenticated', 'not_found', 'not_authorized'],
+  // §11.3 C1 `GET /v1/me/circle` (API-100-24): replaces the app's `safety_circles` SELECT plus the
+  // owner list and capacity; new prefix (the table), like `incident_events`. No other error.
+  safety_circles: ['not_authenticated'],
 
   // §7.3 Circles and invites (invitee / member side). lookup_circle_invite raises no errors.
   preview_circle_invite: ['not_authenticated', 'duplicate_membership'],

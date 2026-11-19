@@ -318,6 +318,30 @@ null), `incident.resident`, `incident.memberView`, `incident.eventsView`, `incid
 - `{id}` accepts what Postgres accepts as uuid input (any case, hyphens optional, braces); anything
   else is 422 on field `id`.
 
+## Own circle, capacity and member list (API-100-24/25, `src/modules/circles`)
+
+- `GET /v1/me/circle/capacity` → Capacity `{limit, active_count, pending_count, used, available}`,
+  built by Postgres with the same `jsonb_build_object` as `_circle_invite_capacity_json` (same keys,
+  order and integer types). Owner excluded; only active and **valid pending** rows use a slot.
+  Caller without an owned circle → 403 `circle_invite_capacity:not_owner`. No location-sharing check.
+- `GET /v1/me/circle` → `{circle, members, capacity}`: the `safety_circles` row (column order, as
+  PostgREST's `select *`), the owner view of the member list and the capacity, from one
+  `repeatable read` snapshot so members and capacity always agree. `{circle: null, members: [],
+capacity: null}` when the caller owns no circle. Never `invite_token`. 401 code
+  `safety_circles:not_authenticated`.
+- `GET /v1/circles/{circle_id}/members` (`list_circle_members`): unknown circle → 404 `not_found`;
+  neither owner (`circle.owner`) nor active member (`circle.activeMember`) → 403 `not_authorized`.
+  Owner: every row, 14 keys, a pending row past its expiry as `expired`. Member: active rows only, 8
+  keys. Names: an active row with a user shows that user's profile `full_name` (Postgres `trim`,
+  spaces only), else the stored name. `avatar_url` = `{SUPABASE_URL}/storage/v1/object/public/{AVATARS_BUCKET}/{avatar_path}`
+  (bare path when `SUPABASE_URL` is unset, as the SQL without a Host header; `http(s)://` paths kept).
+  Ordering, including `lower(name)`, runs in Postgres (database collation, as the SQL).
+- **Shared slot rules** (`invite-slots.ts`): `holdsSlot` (spec "valid pending"), `inviteLookupStatus`
+  and the shown member status, each as a TypeScript function (microsecond-precise, `now` from the
+  database) and a SQL form; both are tested against `_circle_invite_holds_slot` /
+  `_circle_invite_lookup_status`. Every Phase 2 story uses them.
+- Reads only; no row locks (the SQL functions take none) and no audit rows.
+
 ## OpenAPI and the Dart client (API-100-12, `src/openapi`, `clients/dart`)
 
 - Every route declares `@ApiContract({ operationId, summary, tag, responses, ... })` with zod schemas.
