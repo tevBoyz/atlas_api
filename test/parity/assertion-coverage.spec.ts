@@ -1,8 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-import ts from 'typescript';
-
+import { testNamesIn } from '../support/parity-tests';
 import {
   parityTestName,
   paritySpecFile,
@@ -17,24 +16,6 @@ import {
  * that does not exist. The gate stories rely on this check.
  */
 const PARITY_DIR = resolve('test/parity');
-
-/** The titles of every `it(...)`, `it.todo(...)`, `it.only(...)`, `test(...)` in a spec file. */
-function testNamesIn(file: string): string[] {
-  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.ES2023);
-  const names: string[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node)) {
-      const callee = node.expression.getText(source);
-      const title = node.arguments[0];
-      if (/^(it|test)(\.\w+)?$/.test(callee) && title && ts.isStringLiteralLike(title)) {
-        names.push(title.text);
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
-  return names;
-}
 
 describe('SQL assertion coverage (API-100-13 AC5/AC6)', () => {
   it('finds the 7 SQL files of spec §14.3', () => {

@@ -351,6 +351,19 @@ Needs Docker running. No suite uses the compose stack or reads `.env`.
 - Fixture builders are in `test/support/fixtures.ts`, the token factory in `src/testing/test-tokens.ts`.
 - `test/parity/assertion-coverage.spec.ts` fails when a SQL assertion has no named parity test.
 
+### Phase 1 gate (API-100-23)
+
+| Script                   | What it does                                                                                                                                                                                                                                                                                                                  |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run parity:report`  | Runs `test:parity` and prints the Phase 1 checklist: one line per assertion of the four incident SQL files with its parity test and result. Fails on any incident assertion that is missing, `it.todo` or not passing. `-- --results <jest.json>` reuses a Jest JSON report; `-- --out <file>` also writes the Markdown file. |
+| `npm run load:incidents` | Load check against the **built** app (`npm run build` first): own throwaway containers, 50 residents x 3 members, 180 s of pings and counts polling, then mark safe. Prints p50/p95/p99 per route; fails on any error or p99 submit ≥ 2 s. Options: `--residents`, `--members`, `--duration`, `--out`, `--rate-limit-env`.    |
+
+- `test/int/phase1-error-codes.int-spec.ts` reads every incident error code from `docs/api_doc.md`
+  (§7.4 and §11.3 E11) and produces each one with a real request.
+- `test/int/phase1-mixed-writers.int-spec.ts` runs one incident scenario four ways (SQL only, API
+  only, SQL submit then API, API submit then SQL) and requires the same answers and final rows.
+- App hand-off: `docs/phase1_handoff.md`; generated checklist: `docs/phase1_parity_checklist.md`.
+
 ## Observability (API-100-06, `src/observability`)
 
 - **Logs**: pino JSON on stdout, level from `LOG_LEVEL` (`silent` turns them off). Nest's own
@@ -414,4 +427,5 @@ Stop your local `atlas-api` stack first (`docker compose down`) since both use p
 `format:check` · `npm test` (unit) · `npm run test:int` · `npm run test:parity` ·
 `npm run test:baseline` · `npm run openapi:generate` / `openapi:check` ·
 `npm run client:dart:generate` / `client:dart:build` ·
-`npm run auth:test-token` (local test token, see Authentication).
+`npm run auth:test-token` (local test token, see Authentication) · `npm run parity:report` /
+`load:incidents` (Phase 1 gate, see Tests).

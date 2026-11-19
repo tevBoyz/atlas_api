@@ -38,7 +38,7 @@ declare global {
   var __ATLAS_TEST_STACK__: TestStack | undefined;
 }
 
-function startPostgres(password: string): Promise<StartedTestContainer> {
+export function startPostgres(password: string): Promise<StartedTestContainer> {
   return new GenericContainer(POSTGRES_IMAGE)
     .withEnvironment({
       POSTGRES_PASSWORD: password,
@@ -66,7 +66,7 @@ function startPostgres(password: string): Promise<StartedTestContainer> {
     .start();
 }
 
-function startRedis(): Promise<StartedTestContainer> {
+export function startRedis(): Promise<StartedTestContainer> {
   return new GenericContainer(REDIS_IMAGE)
     .withCommand(['redis-server', '--databases', String(REDIS_DATABASES), '--save', ''])
     .withExposedPorts(REDIS_PORT)

@@ -1,0 +1,221 @@
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
+
+import { parityTestsIn, type ParityTestKind } from '../support/parity-tests';
+import { parityTestName, paritySpecFile, sqlAssertionsOf } from '../support/sql-assertions';
+
+/**
+ * `npm run parity:report [-- --results <jest.json>] [--out <file.md>]` (API-100-23 AC1).
+ *
+ * Generates the Phase 1 parity checklist: one line per SQL assertion of the incident test files,
+ * each mapped to the parity test that reproduces it and that test's result. Without `--results` it
+ * runs the parity suite itself (`test:parity`, containers) and reads Jest's JSON report. Prints the
+ * checklist (Markdown) and writes it to `--out` when given.
+ *
+ * Fails (exit 1) when an incident assertion has no parity test, is declared `it.todo` / `skip` /
+ * `only`, or did not pass. The membership-trigger assertions of membership_access_window.sql are not
+ * incident behaviour: they are listed separately with the Phase 2 story that completes them, and only
+ * have to exist (as a test or `it.todo`).
+ */
+
+const PHASE1_FILES = [
+  'scrum43_submit_emergency_alert.sql',
+  'scrum36_resident_incident_reads.sql',
+  'scrum45_closure_events.sql',
+  'membership_access_window.sql',
+] as const;
+
+/** membership_access_window.sql lines about membership writes (Phase 2), and who completes them. */
+const MEMBERSHIP_TRIGGER_LINES: Record<number, string> = {
+  84: 'API-100-36 (owner row from complete setup)',
+  121: 'API-100-26/27 (pending invite by phone / link)',
+  148: 'API-100-30 (accept)',
+  189: 'API-100-33 (Phase 2 gate: no client-chosen activated_at, membership.activate)',
+  456: 'API-100-30 (decline)',
+};
+const TRIGGER_FILE = 'membership_access_window.sql';
+
+type Result = 'passed' | 'failed' | 'pending' | 'todo' | 'skipped' | 'not run' | 'missing';
+
+interface Line {
+  file: string;
+  line: number;
+  message: string;
+  test: string;
+  kind: ParityTestKind | 'missing';
+  result: Result;
+  deferredTo?: string;
+}
+
+interface JestReport {
+  testResults: {
+    name: string;
+    assertionResults: { title: string; status: string; ancestorTitles: string[] }[];
+  }[];
+}
+
+function argValue(flag: string): string | undefined {
+  const index = process.argv.indexOf(flag);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
+/** Runs the parity suite with a JSON report; returns the report (whatever the suite's exit code). */
+function runParitySuite(): JestReport {
+  const dir = mkdtempSync(join(tmpdir(), 'atlas-parity-report-'));
+  const out = join(dir, 'parity.json');
+  try {
+    process.stderr.write('Running the parity suite (npm run test:parity) for the results...\n');
+    spawnSync(
+      process.execPath,
+      [
+        '--experimental-vm-modules',
+        resolve('node_modules/jest/bin/jest.js'),
+        '--config',
+        'test/jest-parity.json',
+        '--json',
+        `--outputFile=${out}`,
+      ],
+      { stdio: ['ignore', 'ignore', 'inherit'] },
+    );
+    return JSON.parse(readFileSync(out, 'utf8')) as JestReport;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** `<spec file name>|<test title>` → Jest status. */
+function resultsByTest(report: JestReport): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const suite of report.testResults) {
+    for (const test of suite.assertionResults) {
+      map.set(`${basename(suite.name)}|${test.title}`, test.status);
+    }
+  }
+  return map;
+}
+
+function checklist(results: Map<string, string>): Line[] {
+  const lines: Line[] = [];
+  for (const file of PHASE1_FILES) {
+    const specFile = paritySpecFile(file);
+    const declared = new Map(
+      parityTestsIn(resolve('test/parity', specFile)).map((test) => [test.name, test.kind]),
+    );
+    for (const assertion of sqlAssertionsOf(file)) {
+      const test = parityTestName(assertion);
+      const kind = declared.get(test) ?? 'missing';
+      const status = results.get(`${specFile}|${test}`);
+      const result: Result =
+        kind === 'missing' ? 'missing' : ((status as Result | undefined) ?? 'not run');
+      lines.push({
+        file,
+        line: assertion.line,
+        message: assertion.message,
+        test,
+        kind,
+        result,
+        deferredTo: file === TRIGGER_FILE ? MEMBERSHIP_TRIGGER_LINES[assertion.line] : undefined,
+      });
+    }
+  }
+  return lines;
+}
+
+const isIncident = (line: Line) => line.deferredTo === undefined;
+const incidentOk = (line: Line) => line.kind === 'it' && line.result === 'passed';
+const cell = (text: string) => text.replace(/\|/g, '\\|');
+
+function render(lines: Line[], source: string): string {
+  const out: string[] = [];
+  out.push('# Phase 1 parity checklist (API-100-23 AC1)');
+  out.push('');
+  out.push(
+    `Generated by \`npm run parity:report\` on ${new Date().toISOString().slice(0, 10)} ` +
+      `from the SQL test files in \`db/baseline/tests/\` and the parity specs in \`test/parity/\` ` +
+      `(results: ${source}). Do not edit by hand.`,
+  );
+  out.push('');
+  out.push('## Summary');
+  out.push('');
+  out.push('| SQL file | Incident assertions | Passing | Not passing | Deferred (Phase 2) |');
+  out.push('| --- | --- | --- | --- | --- |');
+  for (const file of PHASE1_FILES) {
+    const own = lines.filter((line) => line.file === file);
+    const incident = own.filter(isIncident);
+    out.push(
+      `| \`${file}\` | ${incident.length} | ${incident.filter(incidentOk).length} | ` +
+        `${incident.filter((l) => !incidentOk(l)).length} | ${own.length - incident.length} |`,
+    );
+  }
+  out.push('');
+  for (const file of PHASE1_FILES) {
+    out.push(`## \`${file}\` → \`test/parity/${paritySpecFile(file)}\``);
+    out.push('');
+    out.push('| Line | SQL assertion | Parity test | Result |');
+    out.push('| --- | --- | --- | --- |');
+    for (const line of lines.filter((l) => l.file === file && isIncident(l))) {
+      const result = line.kind === 'it' ? line.result : `${line.kind} (${line.result})`;
+      out.push(`| L${line.line} | ${cell(line.message)} | ${cell(line.test)} | ${result} |`);
+    }
+    out.push('');
+  }
+  out.push('## Not incident behaviour: membership-trigger assertions (Phase 2)');
+  out.push('');
+  out.push(
+    'These `membership_access_window.sql` assertions check the `activated_at` trigger on membership ' +
+      'writes, which the API gets in Phase 2. They stay `it.todo` until the story named here.',
+  );
+  out.push('');
+  out.push('| Line | SQL assertion | Parity test | Declared as | Completed by |');
+  out.push('| --- | --- | --- | --- | --- |');
+  for (const line of lines.filter((l) => !isIncident(l))) {
+    out.push(
+      `| L${line.line} | ${cell(line.message)} | ${cell(line.test)} | ${line.kind} | ` +
+        `${line.deferredTo} |`,
+    );
+  }
+  out.push('');
+  return out.join('\n');
+}
+
+function main(): void {
+  const resultsFile = argValue('--results');
+  const outFile = argValue('--out');
+  const report = resultsFile
+    ? (JSON.parse(readFileSync(resultsFile, 'utf8')) as JestReport)
+    : runParitySuite();
+  const lines = checklist(resultsByTest(report));
+  const markdown = render(lines, resultsFile ? `\`${basename(resultsFile)}\`` : 'this run');
+  process.stdout.write(`${markdown}\n`);
+  if (outFile) writeFileSync(outFile, `${markdown}\n`);
+
+  const failing = lines.filter((line) => isIncident(line) && !incidentOk(line));
+  const missingDeferred = lines.filter((line) => !isIncident(line) && line.kind === 'missing');
+  const deferredSeen = new Set(lines.filter((l) => !isIncident(l)).map((l) => l.line));
+  const deferredGone = Object.keys(MEMBERSHIP_TRIGGER_LINES)
+    .map(Number)
+    .filter((line) => !deferredSeen.has(line));
+  const incidentCount = lines.filter(isIncident).length;
+  if (failing.length > 0 || missingDeferred.length > 0 || deferredGone.length > 0) {
+    for (const line of failing) {
+      process.stderr.write(
+        `NOT PASSING ${line.file} L${line.line}: ${line.kind}, ${line.result}\n`,
+      );
+    }
+    for (const line of missingDeferred) {
+      process.stderr.write(`MISSING ${line.file} L${line.line} (deferred assertion)\n`);
+    }
+    for (const line of deferredGone) {
+      process.stderr.write(`${TRIGGER_FILE} L${line} is no longer an assertion: update the map\n`);
+    }
+    process.exit(1);
+  }
+  process.stderr.write(
+    `Phase 1 parity checklist: ${incidentCount} incident assertions, all passing, no it.todo; ` +
+      `${deferredSeen.size} membership-trigger assertions deferred to Phase 2.\n`,
+  );
+}
+
+main();
