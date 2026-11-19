@@ -134,4 +134,42 @@ export class IncidentsController {
   ): Promise<Record<string, unknown>> {
     return this.incidents.renotify(user, requireIncidentId(id));
   }
+
+  /**
+   * `mark_incident_safe` (spec §6.7, rules 38-41): "I'm Safe Now". Closes the caller's active alert
+   * once; a repeat on an incident already closed as safe is 200 with the unchanged incident and writes
+   * nothing. `Idempotency-Key` is required (spec §11.2): a retry with the same key replays the first
+   * response. Checks in order: token (401), key (400/422), `{id}` is uuid input (422 on field `id`),
+   * then the SQL function's: not the caller's → 404 `not_found`, not `active` → 409 `not_open`.
+   */
+  @Post(':id/mark-safe')
+  @HttpCode(200)
+  @Operation('mark_incident_safe')
+  @Idempotent('required')
+  @RateLimit('emergency_write')
+  @ApiContract({
+    operationId: 'markIncidentSafe',
+    summary: "Mark the caller's alert safe and close it",
+    tag: 'incidents',
+    params: incidentIdParamsSchema,
+    responses: {
+      200: {
+        description:
+          'The alert is closed as safe (closed by this call, or already closed as safe: unchanged)',
+        name: 'IncidentSend',
+        schema: incidentSendSchema,
+      },
+    },
+    errors: [
+      'validation:invalid_request',
+      'mark_incident_safe:not_found',
+      'mark_incident_safe:not_open',
+    ],
+  })
+  markSafe(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: unknown,
+  ): Promise<Record<string, unknown>> {
+    return this.incidents.markSafe(user, requireIncidentId(id));
+  }
 }

@@ -23,7 +23,7 @@ import {
   callSqlAs,
   countRows,
   getOpenIncident,
-  markSafeViaSql,
+  markSafe,
   renotifyAlert,
   setIncidentNotes,
   setNotesViaPostgrest,
@@ -173,7 +173,7 @@ describe('live note and explicit re-notify (API-100-18)', () => {
     it('cancelled and resolved: 409 not_open, nothing written', async () => {
       const cancelled = await legacyIncident('cancelled');
       const resolved = await activeAlert();
-      await markSafeViaSql(client, resolved.resident.id, resolved.incidentId);
+      await markSafe(app, resolved.resident.id, resolved.incidentId);
       for (const { resident, incidentId } of [cancelled, resolved]) {
         const res = await setIncidentNotes(app, resident.id, incidentId, { incident_notes: 'x' });
         expect(res.statusCode).toBe(409);
@@ -193,7 +193,7 @@ describe('live note and explicit re-notify (API-100-18)', () => {
         errorOf(await setIncidentNotes(app, other.id, incidentId, { incident_notes: long })).code,
       ).toBe('set_incident_notes:not_found');
       const resolved = await activeAlert();
-      await markSafeViaSql(client, resolved.resident.id, resolved.incidentId);
+      await markSafe(app, resolved.resident.id, resolved.incidentId);
       expect(
         errorOf(
           await setIncidentNotes(app, resolved.resident.id, resolved.incidentId, {
@@ -546,7 +546,7 @@ describe('live note and explicit re-notify (API-100-18)', () => {
 
     it('resolved, legacy activating and cancelled: 409 not_open, nothing written', async () => {
       const resolved = await activeAlert();
-      await markSafeViaSql(client, resolved.resident.id, resolved.incidentId);
+      await markSafe(app, resolved.resident.id, resolved.incidentId);
       for (const { resident, incidentId } of [
         resolved,
         await legacyIncident('activating'),

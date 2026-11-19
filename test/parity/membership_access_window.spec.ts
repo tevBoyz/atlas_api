@@ -2,6 +2,12 @@
  * Parity coverage of db/baseline/tests/membership_access_window.sql (API-100-13 AC5). One entry per SQL assertion: the
  * name quotes the SQL message, prefixed with its line in the file. Each `it.todo` becomes a real API
  * test in the story that ships the endpoint; `assertion-coverage.spec.ts` keeps this list complete.
+ *
+ * The window case for closure recipients (rule 54 in `_incident_active_recipient_ids`, used by
+ * `mark_incident_safe`; the script closes incident A at L131 but has no assertion of its own) is
+ * covered by API-100-19 in test/int/incidents-mark-safe.int-spec.ts, "rule 54 closure recipients":
+ * joined at the instant the incident started → told, 1 µs later → not told, and joined while open →
+ * not told. It cannot be listed here because this file may name only the script's assertions.
  */
 describe('membership_access_window.sql', () => {
   it.todo('L44: incidents_select_active_member does not use _is_active_circle_member_since');

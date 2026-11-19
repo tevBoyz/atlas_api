@@ -16,7 +16,7 @@ import {
   countRows,
   getOpenIncident,
   listRecentIncidents,
-  markSafeViaSql,
+  markSafe,
   submitAlert,
 } from '../support/incident-api';
 
@@ -200,7 +200,7 @@ describe('resident incident reads (API-100-16)', () => {
     it('is null after mark safe; the next submit is the new open incident', async () => {
       const { resident } = await residentWithCircle(1);
       const first = (await submitAlert(app, resident.id, 'fire')).json<Body>();
-      await markSafeViaSql(client, resident.id, first.id);
+      await markSafe(app, resident.id, first.id as string);
       expect(openOf(await getOpenIncident(app, resident.id))).toBeNull();
 
       const second = (await submitAlert(app, resident.id, 'other')).json<Body>();

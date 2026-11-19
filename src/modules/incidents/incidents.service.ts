@@ -36,8 +36,9 @@ function auditSessionId(user: AuthenticatedUser): string | null {
 
 /**
  * The resident's incident writes (spec §6.4, §6.6, §7.4): `POST /v1/incidents`
- * (`submit_emergency_alert`), `PUT /v1/incidents/{id}/notes` (`set_incident_notes`) and
- * `POST /v1/incidents/{id}/renotify` (`renotify_emergency_alert`). Each is one transaction with the SQL
+ * (`submit_emergency_alert`), `PUT /v1/incidents/{id}/notes` (`set_incident_notes`),
+ * `POST /v1/incidents/{id}/renotify` (`renotify_emergency_alert`) and
+ * `POST /v1/incidents/{id}/mark-safe` (`mark_incident_safe`). Each is one transaction with the SQL
  * function's row locks in the function's order. Audit is written inside the transaction; post-commit
  * hooks run only once it has committed, and the response never waits for them.
  */
@@ -143,6 +144,55 @@ export class IncidentsService {
       circle_id: done.body.circle_id as string | null,
       recipient_count: done.recipientCount,
     });
+    return done.body;
+  }
+
+  /**
+   * `mark_incident_safe` (final definition: baseline migration 20261023140000; its recipient helper
+   * `_incident_active_recipient_ids`: 20261117100000). In the function's order: lock the caller's own
+   * incident (`not_found`); already `resolved`/`safe` → the unchanged IncidentSend and nothing written
+   * (no events, no timestamps, no audit, no hook); any other status than `active` → `not_open`; else
+   * close it, read the closure recipients (rule 54) and log the four closure events once each.
+   * Returns IncidentSend.
+   */
+  async markSafe(user: AuthenticatedUser, incidentId: string): Promise<Record<string, unknown>> {
+    const operation = 'mark_incident_safe';
+    const done = await runIncidentTransaction(
+      this.database,
+      async (tx) => {
+        await this.repository.useUtcTimestamps(tx);
+        // Same lock order as submit (profile before incident): see keyShareProfile.
+        await this.repository.keyShareProfile(tx, user.id);
+        const incident = await this.repository.lockOwnIncident(tx, incidentId, user.id);
+        if (!incident) throw new DomainError('mark_incident_safe:not_found');
+        if (incident.status === 'resolved' && incident.resolved_reason === 'safe') {
+          return { closed: undefined, body: await this.repository.sendResult(tx, incident.id) };
+        }
+        if (incident.status !== 'active') throw new DomainError('mark_incident_safe:not_open');
+
+        const closed = await this.repository.closeSafe(tx, incident.id);
+        if (!closed) throw new Error('mark_incident_safe:not_open');
+        const recipientIds = await this.repository.closureRecipientIds(tx, incident.id);
+        await this.repository.recordClosureEvents(tx, incident.id, user.id, recipientIds);
+        const body = await this.repository.sendResult(tx, incident.id);
+        // Counts only: never the emergency type, share payload, location or notes.
+        await this.recordAudit(tx, user, 'incident.resolved', incident.id, {
+          recipient_count: recipientIds.length,
+        });
+        return {
+          closed: {
+            incident_id: incident.id,
+            resident_id: user.id,
+            circle_id: closed.circle_id,
+            recipient_count: recipientIds.length,
+          },
+          body,
+        };
+      },
+      (sqlState) => new IncidentOperationFailedError(operation, sqlState),
+    );
+    // Only the call that closed the incident, and only once that has committed.
+    if (done.closed) void this.postCommit.afterResolved(done.closed);
     return done.body;
   }
 

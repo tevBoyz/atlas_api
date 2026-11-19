@@ -52,6 +52,9 @@ function serviceWith(overrides: Partial<Record<keyof IncidentsRepository, jest.M
     setNotes: jest.fn().mockResolvedValue({ body: { circle_id: null }, cleared: false }),
     keyShareProfile: jest.fn().mockResolvedValue(undefined),
     sendResult: jest.fn().mockResolvedValue({ circle_id: null, delivered_count: 3 }),
+    closeSafe: jest.fn().mockResolvedValue({ circle_id: null }),
+    closureRecipientIds: jest.fn().mockResolvedValue(['a', 'b']),
+    recordClosureEvents: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
@@ -59,6 +62,7 @@ function serviceWith(overrides: Partial<Record<keyof IncidentsRepository, jest.M
     afterSubmit: jest.fn().mockResolvedValue(undefined),
     afterNotes: jest.fn().mockResolvedValue(undefined),
     afterRenotify: jest.fn().mockResolvedValue(undefined),
+    afterResolved: jest.fn().mockResolvedValue(undefined),
   };
   const database = {
     db: { transaction: (run: (tx: object) => Promise<unknown>) => run({}) },
@@ -256,6 +260,125 @@ describe('IncidentsService.renotify (API-100-18)', () => {
   });
 });
 
+describe('IncidentsService.markSafe (API-100-19)', () => {
+  const locked = (status: string, resolved_reason: string | null = null) =>
+    jest.fn().mockResolvedValue({ id: INCIDENT_ID, status, resolved_reason, sharing_ended: false });
+
+  it('takes the profile key-share lock before the incident row lock', async () => {
+    const order: string[] = [];
+    const { service } = serviceWith({
+      keyShareProfile: jest.fn().mockImplementation(() => {
+        order.push('profile');
+        return Promise.resolve();
+      }),
+      lockOwnIncident: jest.fn().mockImplementation(() => {
+        order.push('incident');
+        return Promise.resolve({
+          id: INCIDENT_ID,
+          status: 'active',
+          resolved_reason: null,
+          sharing_ended: false,
+        });
+      }),
+    });
+    await service.markSafe(USER, INCIDENT_ID);
+    expect(order).toEqual(['profile', 'incident']);
+  });
+
+  it('not_found first; nothing else runs', async () => {
+    const { service, repository, audit, postCommit } = serviceWith({
+      lockOwnIncident: jest.fn().mockResolvedValue(undefined),
+    });
+    await expect(service.markSafe(USER, INCIDENT_ID)).rejects.toMatchObject({
+      code: 'mark_incident_safe:not_found',
+    });
+    expect(repository.closeSafe).not.toHaveBeenCalled();
+    expect(repository.sendResult).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(postCommit.afterResolved).not.toHaveBeenCalled();
+  });
+
+  it('already resolved as safe: the unchanged IncidentSend, no write, audit or hook', async () => {
+    const { service, repository, audit, postCommit } = serviceWith({
+      lockOwnIncident: locked('resolved', 'safe'),
+    });
+    await expect(service.markSafe(USER, INCIDENT_ID)).resolves.toEqual({
+      circle_id: null,
+      delivered_count: 3,
+    });
+    expect(repository.closeSafe).not.toHaveBeenCalled();
+    expect(repository.closureRecipientIds).not.toHaveBeenCalled();
+    expect(repository.recordClosureEvents).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(postCommit.afterResolved).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['resolved', 'ended'],
+    ['resolved', null],
+    ['activating', null],
+    ['cancelled', null],
+  ])('%s / %s is not_open, nothing written', async (status, reason) => {
+    const { service, repository, postCommit } = serviceWith({
+      lockOwnIncident: locked(status, reason),
+    });
+    await expect(service.markSafe(USER, INCIDENT_ID)).rejects.toMatchObject({
+      code: 'mark_incident_safe:not_open',
+    });
+    expect(repository.closeSafe).not.toHaveBeenCalled();
+    expect(postCommit.afterResolved).not.toHaveBeenCalled();
+  });
+
+  it('closes, records the events with the recipients, audits the count, then the hook', async () => {
+    const { service, repository, audit, postCommit } = serviceWith({
+      lockOwnIncident: locked('active'),
+      closeSafe: jest.fn().mockResolvedValue({ circle_id: 'c' }),
+    });
+    await expect(service.markSafe(USER, INCIDENT_ID)).resolves.toEqual({
+      circle_id: null,
+      delivered_count: 3,
+    });
+    expect(repository.recordClosureEvents).toHaveBeenCalledWith({}, INCIDENT_ID, USER.id, [
+      'a',
+      'b',
+    ]);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'incident.resolved',
+        target_id: INCIDENT_ID,
+        detail: { recipient_count: 2 },
+      }),
+      {},
+    );
+    expect(postCommit.afterResolved).toHaveBeenCalledWith({
+      incident_id: INCIDENT_ID,
+      resident_id: USER.id,
+      circle_id: 'c',
+      recipient_count: 2,
+    });
+  });
+
+  it('a failure after the close rolls back and runs no hook', async () => {
+    const { service, postCommit } = serviceWith({
+      lockOwnIncident: locked('active'),
+      recordClosureEvents: jest
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('x'), { code: '23505' })),
+    });
+    await expect(service.markSafe(USER, INCIDENT_ID)).rejects.toMatchObject({
+      operation: 'mark_incident_safe',
+      sqlState: '23505',
+    });
+    expect(postCommit.afterResolved).not.toHaveBeenCalled();
+  });
+
+  it('answers without waiting for the hook', async () => {
+    const { service, postCommit } = serviceWith({ lockOwnIncident: locked('active') });
+    postCommit.afterResolved.mockReturnValue(new Promise(() => undefined));
+    await expect(service.markSafe(USER, INCIDENT_ID)).resolves.toBeDefined();
+  });
+});
+
 describe('IncidentPostCommitRunner (API-100-15)', () => {
   const logger = () => ({ warn: jest.fn() });
 
@@ -292,6 +415,9 @@ describe('IncidentPostCommitRunner (API-100-15)', () => {
     const location = { incident_id: INCIDENT_ID, resident_id: USER.id, circle_id: null };
     await expect(runner.afterLocation(location)).resolves.toBeUndefined();
     await expect(runner.afterNotes({ ...location, cleared: true })).resolves.toBeUndefined();
+    await expect(
+      runner.afterResolved({ ...location, recipient_count: 0 }),
+    ).resolves.toBeUndefined();
     expect(afterLocation).toHaveBeenCalledWith(location);
     expect(log.warn).not.toHaveBeenCalled();
   });

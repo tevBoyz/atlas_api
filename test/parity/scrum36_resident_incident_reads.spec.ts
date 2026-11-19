@@ -8,7 +8,7 @@ import {
   countRows,
   getOpenIncident,
   listRecentIncidents,
-  markSafeViaSql,
+  markSafe,
   submitAlert,
 } from '../support/incident-api';
 
@@ -88,7 +88,7 @@ describe('scrum36_resident_incident_reads.sql', () => {
     for (let i = 1; i <= 7; i++) {
       const closed = (await submitAlert(app, resident.id, TYPES[i % 5])).json<Body>();
       ids.push(closed.id as string);
-      await markSafeViaSql(client, resident.id, closed.id);
+      await markSafe(app, resident.id, closed.id as string);
       // Distinct, increasing activated_at for deterministic order.
       await client.query(
         `update public.incidents
@@ -110,7 +110,7 @@ describe('scrum36_resident_incident_reads.sql', () => {
     listNull = await listRecentIncidents(app, resident.id);
 
     // After mark safe, no open incident; completed one tops Recent Activity.
-    await markSafeViaSql(client, resident.id, inc.id);
+    await markSafe(app, resident.id, inc.id as string);
     openAfterSafe = await getOpenIncident(app, resident.id);
     list1AfterSafe = await listRecentIncidents(app, resident.id, 'limit=1');
   });

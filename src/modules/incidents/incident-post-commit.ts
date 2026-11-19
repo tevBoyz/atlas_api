@@ -38,6 +38,16 @@ export interface IncidentRenotifiedEvent extends IncidentRef {
 }
 
 /**
+ * `incident.resolved` (API-100-19): `POST /v1/incidents/{id}/mark-safe` closed the incident. Raised
+ * once per incident, by the call that closed it: never for the already-safe no-op, an error or an
+ * idempotent replay. Realtime (API-100-41) tells the incident room; the outbox (API-100-48) enqueues
+ * the closure notice for each recipient (it reads the recipients from `closure_notified`).
+ */
+export interface IncidentResolvedEvent extends IncidentRef {
+  recipient_count: number;
+}
+
+/**
  * Work that follows a committed incident write: realtime (API-100-41) and the outbox (API-100-48).
  * A hook implements the events it cares about.
  */
@@ -46,6 +56,7 @@ export interface IncidentPostCommitHook {
   afterLocation?(event: IncidentLocationEvent): void | Promise<void>;
   afterNotes?(event: IncidentNotesEvent): void | Promise<void>;
   afterRenotify?(event: IncidentRenotifiedEvent): void | Promise<void>;
+  afterResolved?(event: IncidentResolvedEvent): void | Promise<void>;
 }
 
 /** The registered hooks. Empty until API-100-41 and API-100-48 add theirs. */
@@ -83,6 +94,11 @@ export class IncidentPostCommitRunner {
   /** `incident.renotified`. Never rejects. */
   afterRenotify(event: IncidentRenotifiedEvent): Promise<void> {
     return this.run('afterRenotify', event, (hook) => hook.afterRenotify?.(event));
+  }
+
+  /** `incident.resolved`. Never rejects. */
+  afterResolved(event: IncidentResolvedEvent): Promise<void> {
+    return this.run('afterResolved', event, (hook) => hook.afterResolved?.(event));
   }
 
   private async run(

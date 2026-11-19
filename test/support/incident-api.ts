@@ -101,8 +101,30 @@ export async function callSqlAs<T = unknown>(
 }
 
 /**
- * `mark_incident_safe` through the SQL function, as the resident. Its endpoint is API-100-19: until
- * then, tests that need a closed incident close it the way today's app does.
+ * `POST /v1/incidents/{id}/mark-safe` as `userId` (API-100-19), with a fresh Idempotency-Key unless
+ * one is given (`null` sends none).
+ */
+export async function markSafe(
+  app: NestFastifyApplication,
+  userId: string,
+  incidentId: string,
+  key: string | null = randomUUID(),
+  token: TestTokenOptions = {},
+) {
+  return app.inject({
+    method: 'POST',
+    url: `/v1/incidents/${incidentId}/mark-safe`,
+    headers: {
+      ...(await authHeader(userId, token)),
+      ...(key === null ? {} : { 'idempotency-key': key }),
+    },
+  });
+}
+
+/**
+ * `mark_incident_safe` through the SQL function, as the resident, the way today's app closes an
+ * alert. For tests that prove the API and the SQL function are interchangeable; anything about the
+ * API's own behaviour uses {@link markSafe}.
  */
 export function markSafeViaSql(client: Client, userId: string, incidentId: unknown) {
   return callSqlAs<Record<string, unknown>>(client, userId, 'public.mark_incident_safe($1)', [

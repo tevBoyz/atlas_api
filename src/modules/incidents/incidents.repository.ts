@@ -18,9 +18,22 @@ export interface OpenIncidentRow extends Record<string, unknown> {
 export interface LockedIncidentRow extends Record<string, unknown> {
   id: string;
   status: string;
+  /** `resolved_reason` (`safe` on an incident closed by mark safe). */
+  resolved_reason: string | null;
   /** `location_sharing_ended_at is not null`. */
   sharing_ended: boolean;
 }
+
+/** The lifecycle events `mark_incident_safe` writes, in the order it writes them (spec §5.6). */
+export const CLOSURE_EVENT_TYPES = [
+  'safe_recorded',
+  'incident_closed',
+  'location_sharing_ended',
+  'closure_notified',
+] as const;
+
+type IncidentEventType =
+  'alert_sent' | 'location_sharing_started' | 'renotified' | (typeof CLOSURE_EVENT_TYPES)[number];
 
 export interface WrittenIncidentRow extends Record<string, unknown> {
   id: string;
@@ -262,6 +275,7 @@ export class IncidentsRepository {
     const result = await tx.execute<LockedIncidentRow>(sql`
       select rec.id::text as id,
              rec.status,
+             rec.resolved_reason,
              rec.location_sharing_ended_at is not null as sharing_ended
         from public.incidents rec
        where rec.id = ${incidentId}::uuid
@@ -273,8 +287,9 @@ export class IncidentsRepository {
   /**
    * `FOR KEY SHARE` on the caller's profile: the lock the `incident_events` insert (FK `actor_id` →
    * profiles) takes anyway, taken before the incident row lock. Submit locks the profile `FOR UPDATE`
-   * and then the incident; without this, an explicit re-notify holding the incident and waiting for
-   * the profile deadlocks with it (the SQL functions do: 40P01). Changes no result, only the order.
+   * and then the incident; without this, an explicit re-notify or a mark safe holding the incident
+   * and waiting for the profile deadlocks with it (the SQL functions do: 40P01). Changes no result,
+   * only the order.
    */
   async keyShareProfile(tx: IncidentTransaction, residentId: string): Promise<void> {
     await tx.execute(sql`
@@ -395,11 +410,94 @@ export class IncidentsRepository {
     return result.rows[0].body;
   }
 
+  /**
+   * The close of `mark_incident_safe` (final definition: baseline migration 20261023140000), after the
+   * row lock and the status checks: `status = 'resolved'`, `resolved_at = now()`,
+   * `resolved_reason = 'safe'`, `auto_closed = false`, `location_sharing_ended_at = now()`. Undefined
+   * (nothing written) when the incident is no longer `active`; the caller holds the row lock, so this
+   * only guards against a caller that skipped the check.
+   */
+  async closeSafe(
+    tx: IncidentTransaction,
+    incidentId: string,
+  ): Promise<{ circle_id: string | null } | undefined> {
+    const result = await tx.execute<{ circle_id: string | null }>(sql`
+      update public.incidents
+         set status = 'resolved',
+             resolved_at = now(),
+             resolved_reason = 'safe',
+             auto_closed = false,
+             location_sharing_ended_at = now()
+       where id = ${incidentId}::uuid
+         and status = 'active'
+      returning circle_id::text as circle_id`);
+    return result.rows[0];
+  }
+
+  /**
+   * `_incident_active_recipient_ids(rec)` (final definition: baseline migration 20261117100000): the
+   * user ids of the incident circle's active members, excluding the resident, whose membership
+   * `activated_at` is at or before the incident's `activated_at` (rule 54), ascending (uuid order,
+   * sorted by Postgres). Empty when the incident has no circle.
+   */
+  async closureRecipientIds(tx: IncidentTransaction, incidentId: string): Promise<string[]> {
+    const result = await tx.execute<{ ids: string[] }>(sql`
+      select coalesce(
+               array_agg(m.user_id::text order by m.user_id),
+               '{}'::text[]
+             ) as ids
+        from public.incidents rec
+        join public.safety_circle_members m
+          on rec.circle_id is not null
+         and m.circle_id = rec.circle_id
+       where rec.id = ${incidentId}::uuid
+         and m.status = 'active'
+         and m.user_id is not null
+         and m.user_id is distinct from rec.resident_id
+         and m.activated_at is not null
+         and m.activated_at <= rec.activated_at`);
+    return result.rows[0]?.ids ?? [];
+  }
+
+  /**
+   * The four events of `mark_incident_safe`, in its order: `safe_recorded {}`,
+   * `incident_closed {resolved_reason: "safe"}`, `location_sharing_ended {}` and
+   * `closure_notified {recipient_count, recipient_ids}`. Each is once-only (a repeat is a no-op).
+   * `recipientIds` is {@link closureRecipientIds}: the detail is built from that one read, so the count
+   * and the ids always agree.
+   */
+  async recordClosureEvents(
+    tx: IncidentTransaction,
+    incidentId: string,
+    actorId: string,
+    recipientIds: readonly string[],
+  ): Promise<void> {
+    await this.recordEvent(tx, incidentId, 'safe_recorded', actorId, sql`'{}'::jsonb`);
+    await this.recordEvent(
+      tx,
+      incidentId,
+      'incident_closed',
+      actorId,
+      sql`jsonb_build_object('resolved_reason', 'safe')`,
+    );
+    await this.recordEvent(tx, incidentId, 'location_sharing_ended', actorId, sql`'{}'::jsonb`);
+    await this.recordEvent(
+      tx,
+      incidentId,
+      'closure_notified',
+      actorId,
+      sql`jsonb_build_object(
+            'recipient_count', ${recipientIds.length}::int,
+            'recipient_ids', ${JSON.stringify(recipientIds)}::jsonb
+          )`,
+    );
+  }
+
   /** `_incident_record_event`: once-only lifecycle types are no-ops on repeat. */
   private async recordEvent(
     tx: IncidentTransaction,
     incidentId: string,
-    eventType: 'alert_sent' | 'location_sharing_started' | 'renotified',
+    eventType: IncidentEventType,
     actorId: string,
     detail: SQL,
   ): Promise<void> {

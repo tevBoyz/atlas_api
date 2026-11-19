@@ -28,6 +28,15 @@ abstract class IncidentsClient {
     @Body() required SubmitEmergencyAlertRequest body,
   });
 
+  /// Mark the caller's alert safe and close it.
+  ///
+  /// [idempotencyKey] - UUID chosen by the client. A retry with the same key replays the first result.
+  @POST('/v1/incidents/{id}/mark-safe')
+  Future<IncidentSend> markIncidentSafe({
+    @Path('id') required String id,
+    @Header('Idempotency-Key') required String idempotencyKey,
+  });
+
   /// Set or clear the live note on the caller's open alert
   @PUT('/v1/incidents/{id}/notes')
   Future<IncidentShared> setIncidentNotes({

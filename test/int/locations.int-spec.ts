@@ -28,7 +28,7 @@ import {
   countRows,
   getLiveLocationConfig,
   getOpenIncident,
-  markSafeViaSql,
+  markSafe,
   type SqlOutcome,
   submitAlert,
 } from '../support/incident-api';
@@ -627,7 +627,7 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
 
     it('a closed incident: argument errors first, then not_open', async () => {
       const { resident, incidentId } = await activeAlert();
-      await markSafeViaSql(client, resident.id, incidentId);
+      await markSafe(app, resident.id, incidentId);
       expect(
         errorOf(
           await attachLocation(app, resident.id, incidentId, {
@@ -742,7 +742,7 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
     it('a late ping after close: not_open, and nothing reopens or changes', async () => {
       const { resident, incidentId } = await activeAlert(2);
       await attachLocation(app, resident.id, incidentId, fix(T0));
-      await markSafeViaSql(client, resident.id, incidentId);
+      await markSafe(app, resident.id, incidentId);
       const snapshot = async () => ({
         incident: (await client.query('select * from public.incidents where id = $1', [incidentId]))
           .rows,
@@ -987,7 +987,7 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
       expect(failed.statusCode).toBe(500);
       expect(errorOf(failed).code).toBe('internal:error');
       replies.push(failed);
-      await markSafeViaSql(client, resident.id, incidentId);
+      await markSafe(app, resident.id, incidentId);
       replies.push(
         await attachLocation(app, resident.id, incidentId, coordinates('2026-11-19T13:00:00Z')),
       );
@@ -1226,20 +1226,19 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
     it('pings racing mark safe: the incident ends resolved; a ping either landed before or got not_open', async () => {
       for (let round = 0; round < 5; round++) {
         const { resident, incidentId } = await activeAlert();
-        const sqlClient = await openTestClient();
-        try {
-          const [replies] = await Promise.all([
-            Promise.all(
-              Array.from({ length: 4 }, (_, i) =>
-                post(resident.id, incidentId, fix(`2026-11-19T11:00:0${i}Z`, { location_lat: i })),
-              ),
+        const [replies, closed] = await Promise.all([
+          Promise.all(
+            Array.from({ length: 4 }, (_, i) =>
+              post(resident.id, incidentId, fix(`2026-11-19T11:00:0${i}Z`, { location_lat: i })),
             ),
-            markSafeViaSql(sqlClient, resident.id, incidentId),
-          ]);
-          for (const reply of replies) expect([200, 409]).toContain(reply.status);
-        } finally {
-          await sqlClient.end();
-        }
+          ),
+          fetch(`${baseUrl}/v1/incidents/${incidentId}/mark-safe`, {
+            method: 'POST',
+            headers: { ...(await authHeader(resident.id)), 'idempotency-key': randomUUID() },
+          }),
+        ]);
+        for (const reply of replies) expect([200, 409]).toContain(reply.status);
+        expect(closed.status).toBe(200);
         const { rows } = await client.query<Body>(
           'select status, location_sharing_ended_at from public.incidents where id = $1',
           [incidentId],
