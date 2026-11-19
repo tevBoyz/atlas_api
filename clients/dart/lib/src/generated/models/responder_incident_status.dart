@@ -24,16 +24,7 @@ enum ResponderIncidentStatus {
       values.firstWhere((e) => e.json == json, orElse: () => $unknown);
 
   final String? json;
-  String toJson() {
-    final value = json;
-    if (value == null) {
-      throw StateError(
-        'Cannot convert enum value with null JSON representation to String. '
-        'This usually happens for \$unknown or @JsonValue(null) entries.',
-      );
-    }
-    return value as String;
-  }
+  String? toJson() => json;
 
   @override
   String toString() => json?.toString() ?? super.toString();

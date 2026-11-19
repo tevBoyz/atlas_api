@@ -106,7 +106,7 @@ The slow tail is the synchronized bursts (200 users starting at the same moment,
 second every 12 s) queueing for the 10 pooled connections; steady polling is single-digit
 milliseconds. Production should size `DATABASE_POOL_MAX` with the hosted connection limit in mind.
 
-## 5. Rollback switch (design for the mobile story; not built)
+## 5. Rollback switch (server row from migration 0004; app side is the mobile story)
 
 Goal: the incident area can go back to the Supabase RPCs without a new app release, and the API
 path can be turned on gradually.
@@ -119,15 +119,19 @@ path can be turned on gradually.
    interface.
 2. **Selector.** `IncidentBackendSelector` returns one of the two. Inputs, first match wins:
    a remote value in `app_config` key `client_incidents_backend` (`"supabase"` or `"api"`; readable
-   by every signed-in user through the existing `app_config` SELECT; a new row, no schema change),
+   by every signed-in user through the existing `app_config` SELECT; a new row, no schema change;
+   **the row exists from migration `db/migrations/0004_client_incidents_backend_switch.sql` with the
+   default `"supabase"`**, and signed-in users can read but not write it),
    else the build default from the app's env file (`INCIDENTS_BACKEND`, plus `ATLAS_API_BASE_URL`).
    Missing or unreadable → `supabase`.
 3. **When it applies.** Read at sign-in and on resume, never in the middle of a submit, mark-safe or
    upload. Both paths read and write the same rows, so an open alert carries over: after a flip the
    store runs its normal restore (`getMyOpenIncident`), and counts polling and live location go on
    against the other backend.
-4. **Rolling back.** `update app_config set value = '"supabase"' where key =
-   'client_incidents_backend'` (ops, service role). Apps pick it up on the next resume. The SQL
+4. **Turning on and rolling back.** Run as the service role / `postgres` (ops):
+   `update public.app_config set value = '"api"'::jsonb where key = 'client_incidents_backend'`
+   to turn the API on, and the same with `'"supabase"'::jsonb` to roll back. Apps pick it up on the
+   next resume. The SQL
    functions stay deployed until Phase 7 (API-100-62), so this works for every phase until then.
 5. **Safety net in the client.** If the API path fails with a network error / 5xx several times in a
    row for a read, the store may fall back to the Supabase path for that call only; never for submit

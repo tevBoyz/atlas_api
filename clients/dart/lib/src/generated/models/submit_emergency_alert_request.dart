@@ -4,6 +4,8 @@
 
 import 'package:json_annotation/json_annotation.dart';
 
+import 'package:atlas_api_client/src/unknown_enum_values.dart';
+
 import 'submit_emergency_alert_request_emergency_type.dart';
 
 part 'submit_emergency_alert_request.g.dart';
@@ -13,10 +15,11 @@ class SubmitEmergencyAlertRequest {
   const SubmitEmergencyAlertRequest({required this.emergencyType});
 
   factory SubmitEmergencyAlertRequest.fromJson(Map<String, Object?> json) =>
-      _$SubmitEmergencyAlertRequestFromJson(json);
+      keepRawJson(_$SubmitEmergencyAlertRequestFromJson(json), json);
 
   @JsonKey(name: 'emergency_type')
   final SubmitEmergencyAlertRequestEmergencyType emergencyType;
 
-  Map<String, Object?> toJson() => _$SubmitEmergencyAlertRequestToJson(this);
+  Map<String, Object?> toJson() =>
+      enumValuesAsStrings(this, _$SubmitEmergencyAlertRequestToJson(this));
 }

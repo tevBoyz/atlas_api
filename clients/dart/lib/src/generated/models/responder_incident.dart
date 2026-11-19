@@ -4,6 +4,8 @@
 
 import 'package:json_annotation/json_annotation.dart';
 
+import 'package:atlas_api_client/src/unknown_enum_values.dart';
+
 import 'responder_incident_emergency_type.dart';
 import 'responder_incident_status.dart';
 
@@ -25,7 +27,7 @@ class ResponderIncident {
   });
 
   factory ResponderIncident.fromJson(Map<String, Object?> json) =>
-      _$ResponderIncidentFromJson(json);
+      keepRawJson(_$ResponderIncidentFromJson(json), json);
 
   @JsonKey(name: 'activated_at')
   final String activatedAt;
@@ -48,5 +50,6 @@ class ResponderIncident {
   final String? sentAt;
   final ResponderIncidentStatus status;
 
-  Map<String, Object?> toJson() => _$ResponderIncidentToJson(this);
+  Map<String, Object?> toJson() =>
+      enumValuesAsStrings(this, _$ResponderIncidentToJson(this));
 }

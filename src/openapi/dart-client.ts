@@ -47,11 +47,81 @@ function normalizeLineEndings(): void {
   }
 }
 
+/** Replaces every match of `pattern` in `text`; throws if there is none (a generator change). */
+function replaceRequired(file: string, text: string, pattern: RegExp, replacement: string): string {
+  pattern.lastIndex = 0;
+  if (!pattern.test(text)) {
+    throw new Error(`patchUnknownEnums: ${pattern} not found in ${file}; check the generator.`);
+  }
+  pattern.lastIndex = 0;
+  return text.replace(pattern, replacement);
+}
+
+const ENUM_TO_JSON =
+  /String toJson\(\) \{\s*final value = json;\s*if \(value == null\) \{\s*throw StateError\([^;]*\);\s*\}\s*return value as String;\s*\}/g;
+const MODEL_FROM_JSON =
+  /factory (\w+)\.fromJson\(Map<String, Object\?> json\)\s*=>\s*_\$(\w+)FromJson\(json\);/g;
+const MODEL_TO_JSON = /Map<String, Object\?> toJson\(\)\s*=>\s*_\$(\w+)ToJson\(this\);/g;
+const HELPER_IMPORT = "import 'package:atlas_api_client/src/unknown_enum_values.dart';";
+
+/**
+ * Unknown enum values never throw and round-trip the original string (see
+ * `clients/dart/lib/src/unknown_enum_values.dart`). swagger_parser 1.46 has no option for this: with
+ * `unknown_enum_value` a new server value becomes `$unknown`, whose `toJson()` throws. Runs on the
+ * swagger_parser output before build_runner; plain text replacement, so it is deterministic, and it
+ * fails if the generated shape it expects is missing.
+ * - Every enum: `String toJson()` that throws on `$unknown` becomes `String? toJson() => json;`.
+ * - Every model with an enum field: `fromJson` remembers the parsed strings, and `toJson` writes
+ *   each enum field as a string: the one it was parsed from (so `$unknown` keeps the server's
+ *   value), else the enum's JSON value.
+ */
+function patchUnknownEnums(): void {
+  const modelsDir = join(GENERATED_DIR, 'models');
+  const files = dartFiles(modelsDir);
+  const enumNames = new Set<string>();
+  for (const file of files) {
+    let text = readFileSync(file, 'utf8');
+    const name = /^enum (\w+) \{/m.exec(text)?.[1];
+    if (!name) continue;
+    enumNames.add(name);
+    text = replaceRequired(file, text, ENUM_TO_JSON, 'String? toJson() => json;');
+    writeFileSync(file, text, 'utf8');
+  }
+  if (enumNames.size === 0) throw new Error('patchUnknownEnums: no generated enums found.');
+
+  for (const file of files) {
+    let text = readFileSync(file, 'utf8');
+    if (!/^class \w+ \{/m.test(text)) continue;
+    const fieldTypes = [...text.matchAll(/^\s*final (\w+)\??\s+\w+;/gm)].map((m) => m[1]);
+    if (!fieldTypes.some((type) => enumNames.has(type))) continue;
+    text = replaceRequired(
+      file,
+      text,
+      MODEL_FROM_JSON,
+      'factory $1.fromJson(Map<String, Object?> json) => keepRawJson(_$$$2FromJson(json), json);',
+    );
+    text = replaceRequired(
+      file,
+      text,
+      MODEL_TO_JSON,
+      'Map<String, Object?> toJson() => enumValuesAsStrings(this, _$$$1ToJson(this));',
+    );
+    text = replaceRequired(
+      file,
+      text,
+      /^(import 'package:json_annotation\/json_annotation\.dart';)$/m,
+      `$1\n\n${HELPER_IMPORT}`,
+    );
+    writeFileSync(file, text, 'utf8');
+  }
+}
+
 function generate(): void {
   assertVersionMatches();
   dart('pub', 'get', '--enforce-lockfile');
   rmSync(GENERATED_DIR, { recursive: true, force: true });
   dart('run', 'swagger_parser');
+  patchUnknownEnums();
   dart('run', 'build_runner', 'build');
   dart('format', 'lib/src/generated');
   normalizeLineEndings();

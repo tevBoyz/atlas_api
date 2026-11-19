@@ -4,6 +4,8 @@
 
 import 'package:json_annotation/json_annotation.dart';
 
+import 'package:atlas_api_client/src/unknown_enum_values.dart';
+
 import 'incident_submit_result_emergency_type.dart';
 import 'incident_submit_result_location_source.dart';
 import 'incident_submit_result_status.dart';
@@ -42,7 +44,7 @@ class IncidentSubmitResult {
   });
 
   factory IncidentSubmitResult.fromJson(Map<String, Object?> json) =>
-      _$IncidentSubmitResultFromJson(json);
+      keepRawJson(_$IncidentSubmitResultFromJson(json), json);
 
   @JsonKey(name: 'acknowledged_count')
   final int acknowledgedCount;
@@ -93,5 +95,6 @@ class IncidentSubmitResult {
   @JsonKey(name: 'submit_outcome')
   final IncidentSubmitResultSubmitOutcome submitOutcome;
 
-  Map<String, Object?> toJson() => _$IncidentSubmitResultToJson(this);
+  Map<String, Object?> toJson() =>
+      enumValuesAsStrings(this, _$IncidentSubmitResultToJson(this));
 }

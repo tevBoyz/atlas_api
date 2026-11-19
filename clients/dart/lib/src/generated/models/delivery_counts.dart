@@ -4,6 +4,8 @@
 
 import 'package:json_annotation/json_annotation.dart';
 
+import 'package:atlas_api_client/src/unknown_enum_values.dart';
+
 import 'delivery_counts_status.dart';
 
 part 'delivery_counts.g.dart';
@@ -18,7 +20,7 @@ class DeliveryCounts {
   });
 
   factory DeliveryCounts.fromJson(Map<String, Object?> json) =>
-      _$DeliveryCountsFromJson(json);
+      keepRawJson(_$DeliveryCountsFromJson(json), json);
 
   @JsonKey(name: 'acknowledged_count')
   final int acknowledgedCount;
@@ -28,5 +30,6 @@ class DeliveryCounts {
   final String incidentId;
   final DeliveryCountsStatus status;
 
-  Map<String, Object?> toJson() => _$DeliveryCountsToJson(this);
+  Map<String, Object?> toJson() =>
+      enumValuesAsStrings(this, _$DeliveryCountsToJson(this));
 }

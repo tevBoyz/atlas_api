@@ -8,6 +8,7 @@ Plain SQL migrations owned by the Atlas API, applied **after** the Supabase base
 | `0001_idempotency_keys.sql` | API-100-10 | `idempotency_keys` table + `expires_at` index |
 | `0002_lock_down_api_schema_migrations.sql` | API-100-03 follow-up | revoke `anon`/`authenticated` + RLS on `api_schema_migrations` |
 | `0003_audit_log.sql` | API-100-14 | append-only `audit_log` (triggers refuse UPDATE, DELETE, TRUNCATE) |
+| `0004_client_incidents_backend_switch.sql` | Phase 1 rollback switch | data only: `app_config` row `client_incidents_backend` = `"supabase"` (see below) |
 
 - File name: `<number>_<snake_case_description>.sql`, e.g. `0001_audit_log.sql`. Applied in number
   order; the id recorded is the file name without `.sql`.
@@ -24,3 +25,18 @@ Plain SQL migrations owned by the Atlas API, applied **after** the Supabase base
 - Readiness (API-100-07): `GET /readyz` reports `migrations` until every file here is recorded in
   `api_schema_migrations`. `npm run build` records the ids in `dist/migrations-manifest.json` (the
   Docker image ships that list, not this folder), so rebuild after adding a migration.
+
+## The incidents backend switch (`0004`)
+
+`public.app_config` key `client_incidents_backend` chooses the backend of the mobile app's incident
+area (docs/phase1_handoff.md section 5). The row exists from `0004` with the value `"supabase"`
+(JSON string). Values: `"supabase"` (the SQL RPCs) or `"api"` (this API). Signed-in users can read
+it through the existing `app_config` SELECT policy; they cannot write it. Flip it as the service
+role / `postgres`:
+
+```sql
+update public.app_config set value = '"api"'::jsonb where key = 'client_incidents_backend';
+update public.app_config set value = '"supabase"'::jsonb where key = 'client_incidents_backend'; -- rollback
+```
+
+Re-running `0004` never resets a value ops already set (`on conflict do nothing`).

@@ -4,6 +4,8 @@
 
 import 'package:json_annotation/json_annotation.dart';
 
+import 'package:atlas_api_client/src/unknown_enum_values.dart';
+
 import 'attach_incident_location_request_location_source.dart';
 
 part 'attach_incident_location_request.g.dart';
@@ -19,7 +21,7 @@ class AttachIncidentLocationRequest {
   });
 
   factory AttachIncidentLocationRequest.fromJson(Map<String, Object?> json) =>
-      _$AttachIncidentLocationRequestFromJson(json);
+      keepRawJson(_$AttachIncidentLocationRequestFromJson(json), json);
 
   /// Metres. Required for `current`.
   @JsonKey(name: 'location_accuracy_m')
@@ -35,5 +37,6 @@ class AttachIncidentLocationRequest {
   @JsonKey(name: 'location_source')
   final AttachIncidentLocationRequestLocationSource locationSource;
 
-  Map<String, Object?> toJson() => _$AttachIncidentLocationRequestToJson(this);
+  Map<String, Object?> toJson() =>
+      enumValuesAsStrings(this, _$AttachIncidentLocationRequestToJson(this));
 }

@@ -4,6 +4,8 @@
 
 import 'package:json_annotation/json_annotation.dart';
 
+import 'package:atlas_api_client/src/unknown_enum_values.dart';
+
 import 'incident_send_emergency_type.dart';
 import 'incident_send_location_source.dart';
 import 'incident_send_status.dart';
@@ -40,7 +42,7 @@ class IncidentSend {
   });
 
   factory IncidentSend.fromJson(Map<String, Object?> json) =>
-      _$IncidentSendFromJson(json);
+      keepRawJson(_$IncidentSendFromJson(json), json);
 
   @JsonKey(name: 'acknowledged_count')
   final int acknowledgedCount;
@@ -89,5 +91,6 @@ class IncidentSend {
   final Map<String, String>? sharePayload;
   final IncidentSendStatus status;
 
-  Map<String, Object?> toJson() => _$IncidentSendToJson(this);
+  Map<String, Object?> toJson() =>
+      enumValuesAsStrings(this, _$IncidentSendToJson(this));
 }

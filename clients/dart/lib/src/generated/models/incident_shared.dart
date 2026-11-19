@@ -4,6 +4,8 @@
 
 import 'package:json_annotation/json_annotation.dart';
 
+import 'package:atlas_api_client/src/unknown_enum_values.dart';
+
 import 'incident_shared_emergency_type.dart';
 import 'incident_shared_location_source.dart';
 import 'incident_shared_status.dart';
@@ -38,7 +40,7 @@ class IncidentShared {
   });
 
   factory IncidentShared.fromJson(Map<String, Object?> json) =>
-      _$IncidentSharedFromJson(json);
+      keepRawJson(_$IncidentSharedFromJson(json), json);
 
   @JsonKey(name: 'activated_at')
   final String activatedAt;
@@ -83,5 +85,6 @@ class IncidentShared {
   final Map<String, String>? sharePayload;
   final IncidentSharedStatus status;
 
-  Map<String, Object?> toJson() => _$IncidentSharedToJson(this);
+  Map<String, Object?> toJson() =>
+      enumValuesAsStrings(this, _$IncidentSharedToJson(this));
 }
