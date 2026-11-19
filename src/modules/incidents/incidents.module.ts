@@ -19,5 +19,7 @@ import { MeIncidentsController } from './me-incidents.controller';
     // API-100-41 (realtime) and API-100-48 (outbox) register their hooks here.
     { provide: INCIDENT_POST_COMMIT_HOOKS, useValue: [] },
   ],
+  // The locations module (attach location) shares the row lock, the JSON shapes and the hooks.
+  exports: [IncidentsRepository, IncidentPostCommitRunner],
 })
 export class IncidentsModule {}

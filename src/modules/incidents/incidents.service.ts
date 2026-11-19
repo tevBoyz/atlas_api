@@ -5,12 +5,19 @@ import { DomainError } from '../../common/errors';
 import { DatabaseService } from '../../db/database.service';
 import { type AuditAction, AuditService, type AuditTransaction } from '../audit';
 import { IncidentPostCommitRunner, type IncidentSubmittedEvent } from './incident-post-commit';
+import {
+  IncidentOperationFailedError,
+  IncidentSubmitFailedError,
+  type IncidentWriteTransaction,
+  runIncidentTransaction,
+} from './incident-transaction';
 import type { SubmitOutcome, SubmittableEmergencyType } from './incident.schemas';
-import { type IncidentTransaction, IncidentsRepository } from './incidents.repository';
+import { IncidentsRepository, type LockedIncidentRow } from './incidents.repository';
+
+// Kept importable from here (API-100-15 callers and tests).
+export { IncidentOperationFailedError, IncidentSubmitFailedError } from './incident-transaction';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-type SubmitTransaction = IncidentTransaction & AuditTransaction;
 
 export interface SubmitResponse {
   status: 200 | 201;
@@ -22,32 +29,17 @@ interface CommittedSubmit {
   event: IncidentSubmittedEvent;
 }
 
-/**
- * A submit that failed in the database. It replaces the original error because that one can carry the
- * query parameters (the emergency type) and row values (share fields), and errors are logged and
- * reported. Only the SQLSTATE is kept.
- */
-export class IncidentSubmitFailedError extends Error {
-  constructor(readonly sqlState: string | undefined) {
-    super('submit_emergency_alert failed in the database');
-    this.name = 'IncidentSubmitFailedError';
-  }
-}
-
-function sqlStateOf(error: unknown): string | undefined {
-  let current = error;
-  for (let depth = 0; depth < 4 && current instanceof Error; depth += 1) {
-    const code = (current as { code?: unknown }).code;
-    if (typeof code === 'string') return code;
-    current = current.cause;
-  }
-  return undefined;
+/** The audit row's session id: the claim only when it is a uuid (a bad claim must not fail a write). */
+function auditSessionId(user: AuthenticatedUser): string | null {
+  return user.sessionId && UUID.test(user.sessionId) ? user.sessionId : null;
 }
 
 /**
- * `POST /v1/incidents`, the API form of `submit_emergency_alert` (spec §6.4). One transaction with the
- * function's row locks in the function's order: the profile row, then the open incident. Audit is
- * written inside the transaction; post-commit hooks run only once it has committed.
+ * The resident's incident writes (spec §6.4, §6.6, §7.4): `POST /v1/incidents`
+ * (`submit_emergency_alert`), `PUT /v1/incidents/{id}/notes` (`set_incident_notes`) and
+ * `POST /v1/incidents/{id}/renotify` (`renotify_emergency_alert`). Each is one transaction with the SQL
+ * function's row locks in the function's order. Audit is written inside the transaction; post-commit
+ * hooks run only once it has committed, and the response never waits for them.
  */
 @Injectable()
 export class IncidentsService {
@@ -62,22 +54,100 @@ export class IncidentsService {
     user: AuthenticatedUser,
     emergencyType: SubmittableEmergencyType,
   ): Promise<SubmitResponse> {
-    let committed: CommittedSubmit;
-    try {
-      committed = await this.database.db.transaction((tx) =>
-        this.submitInTransaction(tx, user, emergencyType),
-      );
-    } catch (error) {
-      if (error instanceof DomainError) throw error;
-      throw new IncidentSubmitFailedError(sqlStateOf(error));
-    }
+    const committed = await runIncidentTransaction(
+      this.database,
+      (tx) => this.submitInTransaction(tx, user, emergencyType),
+      (sqlState) => new IncidentSubmitFailedError(sqlState),
+    );
     // Not awaited: the alert is committed, so a slow or failing hook must not affect the response.
     void this.postCommit.afterSubmit(committed.event);
     return committed.response;
   }
 
+  /**
+   * `set_incident_notes` (final definition: baseline migration 20261020150000): the caller's own
+   * incident (`not_found`), in `activating`/`active` (`not_open`), note trimmed with `btrim`, empty →
+   * null, more than 250 characters → `too_long`; `incident_notes_updated_at = now()` on every write,
+   * also when clearing. Never touches `share_payload`. Returns IncidentShared.
+   *
+   * `incidentId` is valid uuid input and `notes` is text Postgres can hold (checked by the caller).
+   */
+  async setNotes(
+    user: AuthenticatedUser,
+    incidentId: string,
+    notes: string | null,
+  ): Promise<Record<string, unknown>> {
+    const operation = 'set_incident_notes';
+    const written = await runIncidentTransaction(
+      this.database,
+      async (tx) => {
+        await this.repository.useUtcTimestamps(tx);
+        const incident = await this.repository.lockOwnIncident(tx, incidentId, user.id);
+        if (!incident) throw new DomainError('set_incident_notes:not_found');
+        if (incident.status !== 'activating' && incident.status !== 'active') {
+          throw new DomainError('set_incident_notes:not_open');
+        }
+        const result = await this.repository.setNotes(tx, incident.id, notes);
+        if (!result) throw new DomainError('set_incident_notes:too_long');
+        // `detail` never holds the note itself (API-100-14 AC4).
+        await this.recordAudit(tx, user, 'incident.notes_set', incident.id, {
+          cleared: result.cleared,
+        });
+        return { incident, ...result };
+      },
+      (sqlState) => new IncidentOperationFailedError(operation, sqlState),
+    );
+    void this.postCommit.afterNotes({
+      incident_id: written.incident.id,
+      resident_id: user.id,
+      circle_id: written.body.circle_id as string | null,
+      cleared: written.cleared,
+    });
+    return written.body;
+  }
+
+  /**
+   * `renotify_emergency_alert` (final definition: baseline migration 20261023150000): lock the
+   * caller's own incident (`not_found`), status must be `active` (`not_open`), then the same re-notify
+   * a submit on an active incident runs (`_incident_apply_renotify`). Returns IncidentSend.
+   */
+  async renotify(user: AuthenticatedUser, incidentId: string): Promise<Record<string, unknown>> {
+    const operation = 'renotify_emergency_alert';
+    const done = await runIncidentTransaction(
+      this.database,
+      async (tx) => {
+        await this.repository.useUtcTimestamps(tx);
+        // Same lock order as submit (profile before incident): see keyShareProfile.
+        await this.repository.keyShareProfile(tx, user.id);
+        const incident: LockedIncidentRow | undefined = await this.repository.lockOwnIncident(
+          tx,
+          incidentId,
+          user.id,
+        );
+        if (!incident) throw new DomainError('renotify_emergency_alert:not_found');
+        if (incident.status !== 'active') {
+          throw new DomainError('renotify_emergency_alert:not_open');
+        }
+        const recipientCount = await this.applyRenotify(tx, user, incident.id);
+        const body = await this.repository.sendResult(tx, incident.id);
+        await this.recordAudit(tx, user, 'incident.renotified', incident.id, {
+          recipient_count: recipientCount,
+        });
+        return { incidentId: incident.id, body, recipientCount };
+      },
+      (sqlState) => new IncidentOperationFailedError(operation, sqlState),
+    );
+    void this.postCommit.afterRenotify({
+      incident_id: done.incidentId,
+      resident_id: user.id,
+      circle_id: done.body.circle_id as string | null,
+      recipient_count: done.recipientCount,
+    });
+    return done.body;
+  }
+
   private async submitInTransaction(
-    tx: SubmitTransaction,
+    tx: IncidentWriteTransaction,
     user: AuthenticatedUser,
     emergencyType: SubmittableEmergencyType,
   ): Promise<CommittedSubmit> {
@@ -91,7 +161,7 @@ export class IncidentsService {
     }
 
     const open = await this.repository.lockOpenIncident(tx, residentId);
-    if (open?.status === 'active') return this.renotify(tx, user, open.id);
+    if (open?.status === 'active') return this.submitRenotify(tx, user, open.id);
 
     let outcome: SubmitOutcome;
     let incident;
@@ -104,7 +174,7 @@ export class IncidentsService {
         // Lost a race the profile lock should have prevented: never insert a second incident.
         const raced = await this.repository.lockActiveIncident(tx, residentId);
         if (!raced) throw new Error('_incident_apply_renotify:not_open');
-        return this.renotify(tx, user, raced.id);
+        return this.submitRenotify(tx, user, raced.id);
       }
       outcome = 'created';
     }
@@ -116,7 +186,7 @@ export class IncidentsService {
     await this.repository.recordLocationSharingStarted(tx, incident.id, residentId);
 
     const body = await this.repository.submitResult(tx, incident.id, outcome);
-    return this.finish(tx, user, {
+    return this.finishSubmit(tx, user, {
       action: 'incident.created',
       status: 201,
       body,
@@ -126,15 +196,28 @@ export class IncidentsService {
     });
   }
 
-  private async renotify(
-    tx: SubmitTransaction,
+  /**
+   * `_incident_apply_renotify` (spec rule 29), the one re-notify of submit and of explicit re-notify.
+   * The caller holds the incident row lock. Returns the number of delivery rows refreshed.
+   */
+  private async applyRenotify(
+    tx: IncidentWriteTransaction,
+    user: AuthenticatedUser,
+    incidentId: string,
+  ): Promise<number> {
+    const refreshed = await this.repository.applyRenotify(tx, incidentId, user.id);
+    if (refreshed === undefined) throw new Error('_incident_apply_renotify:not_open');
+    return refreshed;
+  }
+
+  private async submitRenotify(
+    tx: IncidentWriteTransaction,
     user: AuthenticatedUser,
     incidentId: string,
   ): Promise<CommittedSubmit> {
-    const refreshed = await this.repository.applyRenotify(tx, incidentId, user.id);
-    if (refreshed === undefined) throw new Error('_incident_apply_renotify:not_open');
+    const refreshed = await this.applyRenotify(tx, user, incidentId);
     const body = await this.repository.submitResult(tx, incidentId, 'renotified');
-    return this.finish(tx, user, {
+    return this.finishSubmit(tx, user, {
       action: 'incident.renotified',
       status: 200,
       body,
@@ -145,7 +228,7 @@ export class IncidentsService {
   }
 
   /** Audit `detail` holds the count and outcome only: never the emergency type or a share field. */
-  private async finish(
+  private async finishSubmit(
     tx: AuditTransaction,
     user: AuthenticatedUser,
     result: {
@@ -158,18 +241,10 @@ export class IncidentsService {
     },
   ): Promise<CommittedSubmit> {
     const { action, status, body, outcome, incidentId, recipientCount } = result;
-    await this.audit.record(
-      {
-        action,
-        actor_user_id: user.id,
-        // The column is a uuid and the claim is not validated: a bad claim must not fail an SOS.
-        actor_session_id: user.sessionId && UUID.test(user.sessionId) ? user.sessionId : null,
-        target_type: 'incident',
-        target_id: incidentId,
-        detail: { recipient_count: recipientCount, submit_outcome: outcome },
-      },
-      tx,
-    );
+    await this.recordAudit(tx, user, action, incidentId, {
+      recipient_count: recipientCount,
+      submit_outcome: outcome,
+    });
     return {
       response: { status, body },
       event: {
@@ -180,5 +255,25 @@ export class IncidentsService {
         recipient_count: recipientCount,
       },
     };
+  }
+
+  private recordAudit(
+    tx: AuditTransaction,
+    user: AuthenticatedUser,
+    action: AuditAction,
+    incidentId: string,
+    detail: Record<string, unknown>,
+  ): Promise<void> {
+    return this.audit.record(
+      {
+        action,
+        actor_user_id: user.id,
+        actor_session_id: auditSessionId(user),
+        target_type: 'incident',
+        target_id: incidentId,
+        detail,
+      },
+      tx,
+    );
   }
 }

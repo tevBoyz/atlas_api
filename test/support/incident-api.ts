@@ -110,6 +110,141 @@ export function markSafeViaSql(client: Client, userId: string, incidentId: unkno
   ]);
 }
 
+/**
+ * `POST /v1/incidents/{id}/locations` as `userId`. `body` is sent as is when it is a string (the exact
+ * JSON text, e.g. with `1e400` or `"\u0000"` in it), else JSON-encoded.
+ */
+export async function attachLocation(
+  app: NestFastifyApplication,
+  userId: string,
+  incidentId: string,
+  body: unknown,
+) {
+  return app.inject({
+    method: 'POST',
+    url: `/v1/incidents/${incidentId}/locations`,
+    headers: { ...(await authHeader(userId)), 'content-type': 'application/json' },
+    payload: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+}
+
+/** `PUT /v1/incidents/{id}/notes` as `userId`; a string body is sent as is. */
+export async function setIncidentNotes(
+  app: NestFastifyApplication,
+  userId: string,
+  incidentId: string,
+  body: unknown,
+) {
+  return app.inject({
+    method: 'PUT',
+    url: `/v1/incidents/${incidentId}/notes`,
+    headers: { ...(await authHeader(userId)), 'content-type': 'application/json' },
+    payload: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+}
+
+/** `POST /v1/incidents/{id}/renotify` as `userId` (no body, no Idempotency-Key). */
+export async function renotifyAlert(
+  app: NestFastifyApplication,
+  userId: string,
+  incidentId: string,
+) {
+  return app.inject({
+    method: 'POST',
+    url: `/v1/incidents/${incidentId}/renotify`,
+    headers: await authHeader(userId),
+  });
+}
+
+/** `GET /v1/config/live-location` as `userId`. */
+export async function getLiveLocationConfig(app: NestFastifyApplication, userId: string) {
+  return app.inject({
+    method: 'GET',
+    url: '/v1/config/live-location',
+    headers: await authHeader(userId),
+  });
+}
+
+/** A SQL call's outcome: its JSON, its `fn:code` (P0001), or the SQLSTATE of any other error. */
+export type SqlOutcome =
+  { ok: true; body: Record<string, unknown> } | { ok: false; code: string; sqlState: string };
+
+/**
+ * Calls an RPC the way PostgREST does: the request body (JSON text, as the app sent it) is read with
+ * `json_to_record` into the function's parameter types, then the function runs as `userId` in its own
+ * committed transaction (TimeZone UTC, as on the hosted database). `argColumns` are the record
+ * columns in parameter order (body key and SQL type); `leading` are values placed before them (the
+ * path id, as text: its uuid conversion happens in Postgres too).
+ */
+export async function callAsPostgrest(
+  client: Client,
+  userId: string,
+  fn: string,
+  leading: { value: string; type: string }[],
+  argColumns: { key: string; type: string }[],
+  body: string,
+): Promise<SqlOutcome> {
+  const lead = leading.map((arg, index) => `$${index + 2}::${arg.type}`);
+  const args = [...lead, ...argColumns.map((col) => `r.${col.key}`)].join(', ');
+  const record = argColumns.map((col) => `${col.key} ${col.type}`).join(', ');
+  try {
+    const result = await callSqlAs<Record<string, unknown>>(
+      client,
+      userId,
+      `(select ${fn}(${args}) from json_to_record($1::json) as r(${record}))`,
+      [body, ...leading.map((arg) => arg.value)],
+    );
+    return { ok: true, body: result };
+  } catch (error) {
+    const { code, message } = error as { code?: string; message?: string };
+    return {
+      ok: false,
+      code: code === 'P0001' ? String(message) : `sqlstate:${code}`,
+      sqlState: String(code),
+    };
+  }
+}
+
+/** `attach_incident_location` through {@link callAsPostgrest}, with the API's body keys. */
+export function attachViaPostgrest(
+  client: Client,
+  userId: string,
+  incidentId: string,
+  body: string,
+): Promise<SqlOutcome> {
+  return callAsPostgrest(
+    client,
+    userId,
+    'public.attach_incident_location',
+    [{ value: incidentId, type: 'uuid' }],
+    [
+      { key: 'location_source', type: 'text' },
+      { key: 'location_lat', type: 'double precision' },
+      { key: 'location_lng', type: 'double precision' },
+      { key: 'location_accuracy_m', type: 'double precision' },
+      { key: 'location_captured_at', type: 'timestamptz' },
+    ],
+    body,
+  );
+}
+
+/** `set_incident_notes` through {@link callAsPostgrest}, with the API's body key. */
+export function setNotesViaPostgrest(
+  client: Client,
+  userId: string,
+  incidentId: string,
+  body: string,
+): Promise<SqlOutcome> {
+  return callAsPostgrest(
+    client,
+    userId,
+    'public.set_incident_notes',
+    [{ value: incidentId, type: 'uuid' }],
+    [{ key: 'incident_notes', type: 'text' }],
+    body,
+  );
+}
+
 /** Row count of a parameterised `select count(*)::int as n ...`. */
 export async function countRows(
   client: Client,

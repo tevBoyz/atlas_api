@@ -290,6 +290,34 @@ null), `incident.resident`, `incident.memberView`, `incident.eventsView`, `incid
   with `details.field = "limit"`.
 - Read-only transactions in UTC; only the caller's own incidents (`incident.resident`).
 
+## Live location (API-100-17, `src/modules/locations`, `src/modules/config`)
+
+- `GET /v1/config/live-location` → `{"interval_seconds", "stale_threshold_seconds"}` from
+  `app_config`, read with the SQL function's own expression; not a JSON number or ≤ 0 → 12 / 45. A
+  JSON number that is not an integer (`12.5`, `12.0`) makes Postgres raise, as
+  `get_live_location_config()` does (the API answers 500).
+- `POST /v1/incidents/{id}/locations` (`location_ping` rate limit, per user per incident) →
+  IncidentShared. Body values go to Postgres as input text, as PostgREST passed them, so numeric
+  strings, `NaN`/`Infinity` and any timestamp Postgres accepts (no offset = UTC) behave as through
+  PostgREST. Order: `{id}` uuid input → body a JSON object → each value converts to its SQL type
+  (422 `validation:invalid_request` + `details.field`) → `invalid_source` → `invalid_location` →
+  row lock (`not_found`) → `not_open` → out-of-order guard (an older fix is 200 with the current row;
+  compared in Postgres) → write. Never notifies; no audit row; coordinates are never logged.
+- Post-commit hook `afterLocation` (realtime `incident.location`, API-100-41) after a stored ping.
+
+## Live note and explicit re-notify (API-100-18, `src/modules/incidents`)
+
+- `PUT /v1/incidents/{id}/notes` `{"incident_notes": string | null}` → IncidentShared. Own incident in
+  `activating`/`active`; trimmed with `btrim` (spaces only) and counted with `char_length` (code
+  points) in Postgres; empty → null; > 250 → 422 `too_long`; `incident_notes_updated_at` stamped on
+  every write. A non-string note is 422 `validation:invalid_request`. Audit `incident.notes_set`
+  (`{cleared}` only); hook `afterNotes`.
+- `POST /v1/incidents/{id}/renotify` → IncidentSend. The same re-notify as a submit on an active alert
+  (`IncidentsService.applyRenotify`); no Idempotency-Key (spec §11.3 E4). Audit `incident.renotified`;
+  hook `afterRenotify`.
+- `{id}` accepts what Postgres accepts as uuid input (any case, hyphens optional, braces); anything
+  else is 422 on field `id`.
+
 ## OpenAPI and the Dart client (API-100-12, `src/openapi`, `clients/dart`)
 
 - Every route declares `@ApiContract({ operationId, summary, tag, responses, ... })` with zod schemas.

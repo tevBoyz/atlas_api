@@ -27,31 +27,38 @@ export const SUBMIT_OUTCOMES = ['created', 'promoted', 'renotified'] as const;
 
 export type SubmitOutcome = (typeof SUBMIT_OUTCOMES)[number];
 
-/** IncidentShared (spec §7.0, `_incident_activation_json`): exactly 22 keys. */
-export const incidentSharedSchema = z.object({
-  id: z.uuid(),
-  resident_id: z.uuid(),
-  circle_id: z.uuid().nullable(),
-  status: incidentStatusSchema,
-  activated_at: z.string(),
-  emergency_type: emergencyTypeSchema,
-  location_lat: z.number().nullable(),
-  location_lng: z.number().nullable(),
-  location_accuracy_m: z.number().nullable(),
-  location_captured_at: z.string().nullable(),
-  location_source: locationSourceSchema.nullable(),
-  cancelled_at: z.string().nullable(),
-  sent_at: z.string().nullable(),
-  share_payload: z.record(z.string(), z.string()).nullable(),
-  incident_notes: z.string().nullable(),
-  incident_notes_updated_at: z.string().nullable(),
-  renotified_at: z.string().nullable(),
-  resolved_at: z.string().nullable(),
-  resolved_reason: z.string().nullable(),
-  auto_closed: z.boolean(),
-  activity_confirmed_at: z.string().nullable(),
-  location_sharing_ended_at: z.string().nullable(),
-});
+/**
+ * IncidentShared (spec §7.0, `_incident_activation_json`): exactly 22 keys. The body of attach
+ * location and set notes. A float stored from a PostgREST-style text value (`"NaN"`, `"Infinity"`)
+ * comes back as that JSON string, as the SQL function returns it.
+ */
+export const incidentSharedSchema = componentSchema(
+  'IncidentShared',
+  z.object({
+    id: z.uuid(),
+    resident_id: z.uuid(),
+    circle_id: z.uuid().nullable(),
+    status: incidentStatusSchema,
+    activated_at: z.string(),
+    emergency_type: emergencyTypeSchema,
+    location_lat: z.number().nullable(),
+    location_lng: z.number().nullable(),
+    location_accuracy_m: z.number().nullable(),
+    location_captured_at: z.string().nullable(),
+    location_source: locationSourceSchema.nullable(),
+    cancelled_at: z.string().nullable(),
+    sent_at: z.string().nullable(),
+    share_payload: z.record(z.string(), z.string()).nullable(),
+    incident_notes: z.string().nullable(),
+    incident_notes_updated_at: z.string().nullable(),
+    renotified_at: z.string().nullable(),
+    resolved_at: z.string().nullable(),
+    resolved_reason: z.string().nullable(),
+    auto_closed: z.boolean(),
+    activity_confirmed_at: z.string().nullable(),
+    location_sharing_ended_at: z.string().nullable(),
+  }),
+);
 
 /** IncidentSend (spec §7.0): IncidentShared plus the delivery counts. Submit and the open read. */
 export const incidentSendSchema = componentSchema(
@@ -61,6 +68,32 @@ export const incidentSendSchema = componentSchema(
     acknowledged_count: z.number().int(),
   }),
 );
+
+/**
+ * `{id}` of the incident routes (documentation). The route accepts what Postgres accepts as uuid input
+ * (any case, with or without hyphens, optionally in braces); anything else is 422
+ * `validation:invalid_request` on field `id`.
+ */
+export const incidentIdParamsSchema = z.object({
+  id: z.guid().describe('The incident id.'),
+});
+
+/** Spec rule 37: at most 250 characters (Unicode code points) after trimming spaces. */
+export const INCIDENT_NOTES_MAX_LENGTH = 250;
+
+/**
+ * `PUT /v1/incidents/{id}/notes` (documentation; the route validates as described in
+ * `IncidentsController.setNotes`). `incident_notes`: a string or null; missing means null (clear).
+ */
+export const setIncidentNotesRequestSchema = z.object({
+  incident_notes: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      `Trimmed of spaces; empty or only spaces clears the note (null). At most ${INCIDENT_NOTES_MAX_LENGTH} characters after trimming, else 422 set_incident_notes:too_long.`,
+    ),
+});
 
 /** The body of `POST /v1/incidents`: IncidentSend plus `submit_outcome`. */
 export const incidentSubmitResultSchema = incidentSendSchema.extend({

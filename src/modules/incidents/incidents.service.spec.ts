@@ -11,7 +11,11 @@ import {
 } from './incident-post-commit';
 import { submitEmergencyAlertRequestSchema } from './incident.schemas';
 import type { IncidentsRepository } from './incidents.repository';
-import { IncidentSubmitFailedError, IncidentsService } from './incidents.service';
+import {
+  IncidentOperationFailedError,
+  IncidentSubmitFailedError,
+  IncidentsService,
+} from './incidents.service';
 
 const USER: AuthenticatedUser = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -42,10 +46,20 @@ function serviceWith(overrides: Partial<Record<keyof IncidentsRepository, jest.M
     recordLocationSharingStarted: jest.fn().mockResolvedValue(undefined),
     applyRenotify: jest.fn().mockResolvedValue(3),
     submitResult: jest.fn().mockResolvedValue({ circle_id: null, delivered_count: 0 }),
+    lockOwnIncident: jest
+      .fn()
+      .mockResolvedValue({ id: INCIDENT_ID, status: 'active', sharing_ended: false }),
+    setNotes: jest.fn().mockResolvedValue({ body: { circle_id: null }, cleared: false }),
+    keyShareProfile: jest.fn().mockResolvedValue(undefined),
+    sendResult: jest.fn().mockResolvedValue({ circle_id: null, delivered_count: 3 }),
     ...overrides,
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
-  const postCommit = { afterSubmit: jest.fn().mockResolvedValue(undefined) };
+  const postCommit = {
+    afterSubmit: jest.fn().mockResolvedValue(undefined),
+    afterNotes: jest.fn().mockResolvedValue(undefined),
+    afterRenotify: jest.fn().mockResolvedValue(undefined),
+  };
   const database = {
     db: { transaction: (run: (tx: object) => Promise<unknown>) => run({}) },
   };
@@ -132,6 +146,116 @@ describe('IncidentsService.submit (API-100-15)', () => {
   });
 });
 
+describe('IncidentsService.setNotes (API-100-18)', () => {
+  it('runs the SQL checks in order: not_found, then not_open, then too_long', async () => {
+    const missing = serviceWith({ lockOwnIncident: jest.fn().mockResolvedValue(undefined) });
+    await expect(missing.service.setNotes(USER, INCIDENT_ID, 'x')).rejects.toMatchObject({
+      code: 'set_incident_notes:not_found',
+    });
+    expect(missing.repository.setNotes).not.toHaveBeenCalled();
+
+    for (const status of ['resolved', 'cancelled']) {
+      const closed = serviceWith({
+        lockOwnIncident: jest
+          .fn()
+          .mockResolvedValue({ id: INCIDENT_ID, status, sharing_ended: false }),
+      });
+      await expect(closed.service.setNotes(USER, INCIDENT_ID, 'x')).rejects.toMatchObject({
+        code: 'set_incident_notes:not_open',
+      });
+      expect(closed.repository.setNotes).not.toHaveBeenCalled();
+    }
+
+    const long = serviceWith({ setNotes: jest.fn().mockResolvedValue(undefined) });
+    await expect(long.service.setNotes(USER, INCIDENT_ID, 'x')).rejects.toMatchObject({
+      code: 'set_incident_notes:too_long',
+    });
+    expect(long.audit.record).not.toHaveBeenCalled();
+    expect(long.postCommit.afterNotes).not.toHaveBeenCalled();
+  });
+
+  it('accepts a legacy activating incident (rule 37)', async () => {
+    const { service } = serviceWith({
+      lockOwnIncident: jest
+        .fn()
+        .mockResolvedValue({ id: INCIDENT_ID, status: 'activating', sharing_ended: false }),
+    });
+    await expect(service.setNotes(USER, INCIDENT_ID, 'x')).resolves.toEqual({ circle_id: null });
+  });
+
+  it('audits without the note and hands the hook ids only', async () => {
+    const { service, audit, postCommit } = serviceWith();
+    await service.setNotes(USER, INCIDENT_ID, 'Gate code 1234');
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'incident.notes_set', detail: { cleared: false } }),
+      {},
+    );
+    expect(JSON.stringify(audit.record.mock.calls)).not.toContain('1234');
+    expect(postCommit.afterNotes).toHaveBeenCalledWith({
+      incident_id: INCIDENT_ID,
+      resident_id: USER.id,
+      circle_id: null,
+      cleared: false,
+    });
+  });
+
+  it('a database error loses the note, keeping the SQLSTATE', async () => {
+    const cause = Object.assign(new Error('failing row contains (Gate code 1234)'), {
+      code: '23514',
+    });
+    const { service } = serviceWith({
+      setNotes: jest.fn().mockRejectedValue(new Error('params: Gate code 1234', { cause })),
+    });
+    const error = await service
+      .setNotes(USER, INCIDENT_ID, 'Gate code 1234')
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(IncidentOperationFailedError);
+    expect(error).toMatchObject({ operation: 'set_incident_notes', sqlState: '23514' });
+    expect(JSON.stringify(error)).not.toContain('1234');
+    expect((error as Error).message).not.toContain('1234');
+  });
+});
+
+describe('IncidentsService.renotify (API-100-18)', () => {
+  it('not_found, then not_open for anything but active (sharing_ended does not matter)', async () => {
+    const missing = serviceWith({ lockOwnIncident: jest.fn().mockResolvedValue(undefined) });
+    await expect(missing.service.renotify(USER, INCIDENT_ID)).rejects.toMatchObject({
+      code: 'renotify_emergency_alert:not_found',
+    });
+    for (const status of ['resolved', 'activating', 'cancelled']) {
+      const closed = serviceWith({
+        lockOwnIncident: jest
+          .fn()
+          .mockResolvedValue({ id: INCIDENT_ID, status, sharing_ended: false }),
+      });
+      await expect(closed.service.renotify(USER, INCIDENT_ID)).rejects.toMatchObject({
+        code: 'renotify_emergency_alert:not_open',
+      });
+      expect(closed.repository.applyRenotify).not.toHaveBeenCalled();
+    }
+  });
+
+  it('reuses the submit re-notify (applyRenotify), answers IncidentSend, audits the count', async () => {
+    const { service, repository, audit, postCommit } = serviceWith();
+    await expect(service.renotify(USER, INCIDENT_ID)).resolves.toEqual({
+      circle_id: null,
+      delivered_count: 3,
+    });
+    expect(repository.applyRenotify).toHaveBeenCalledWith({}, INCIDENT_ID, USER.id);
+    expect(repository.submitResult).not.toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'incident.renotified', detail: { recipient_count: 3 } }),
+      {},
+    );
+    expect(postCommit.afterRenotify).toHaveBeenCalledWith({
+      incident_id: INCIDENT_ID,
+      resident_id: USER.id,
+      circle_id: null,
+      recipient_count: 3,
+    });
+  });
+});
+
 describe('IncidentPostCommitRunner (API-100-15)', () => {
   const logger = () => ({ warn: jest.fn() });
 
@@ -156,6 +280,20 @@ describe('IncidentPostCommitRunner (API-100-15)', () => {
 
     expect(lastHook).toHaveBeenCalledWith(EVENT);
     expect(log.warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs only the hooks that implement an event', async () => {
+    const log = logger();
+    const afterLocation = jest.fn();
+    const runner = new IncidentPostCommitRunner(
+      [{ afterSubmit: jest.fn() }, { afterLocation }],
+      log as unknown as Logger,
+    );
+    const location = { incident_id: INCIDENT_ID, resident_id: USER.id, circle_id: null };
+    await expect(runner.afterLocation(location)).resolves.toBeUndefined();
+    await expect(runner.afterNotes({ ...location, cleared: true })).resolves.toBeUndefined();
+    expect(afterLocation).toHaveBeenCalledWith(location);
+    expect(log.warn).not.toHaveBeenCalled();
   });
 
   it('does nothing without hooks', async () => {

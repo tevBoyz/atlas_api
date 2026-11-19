@@ -5,7 +5,9 @@
 import 'package:dio/dio.dart';
 
 import 'clients/health_client.dart';
+import 'clients/config_client.dart';
 import 'clients/incidents_client.dart';
+import 'clients/locations_client.dart';
 import 'clients/meta_client.dart';
 
 /// Atlas API `v0.1.0`.
@@ -20,13 +22,20 @@ class AtlasApiClient {
   static String get version => '0.1.0';
 
   HealthClient? _health;
+  ConfigClient? _config;
   IncidentsClient? _incidents;
+  LocationsClient? _locations;
   MetaClient? _meta;
 
   HealthClient get health => _health ??= HealthClient(_dio, baseUrl: _baseUrl);
 
+  ConfigClient get config => _config ??= ConfigClient(_dio, baseUrl: _baseUrl);
+
   IncidentsClient get incidents =>
       _incidents ??= IncidentsClient(_dio, baseUrl: _baseUrl);
+
+  LocationsClient get locations =>
+      _locations ??= LocationsClient(_dio, baseUrl: _baseUrl);
 
   MetaClient get meta => _meta ??= MetaClient(_dio, baseUrl: _baseUrl);
 }

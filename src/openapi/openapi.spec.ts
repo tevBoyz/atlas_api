@@ -224,11 +224,15 @@ describe('OpenAPI document (API-100-12)', () => {
       expect(doc.components.schemas.ErrorBody.required).toEqual(['code', 'message', 'details']);
     });
 
-    it('lists only real routes: health, openapi and incidents', () => {
+    it('lists only real routes: health, openapi, incidents, locations and config', () => {
       expect(Object.keys(appDocument().paths).sort()).toEqual([
         '/healthz',
         '/readyz',
+        '/v1/config/live-location',
         '/v1/incidents',
+        '/v1/incidents/{id}/locations',
+        '/v1/incidents/{id}/notes',
+        '/v1/incidents/{id}/renotify',
         '/v1/me/incidents',
         '/v1/me/incidents/open',
         '/v1/openapi.json',
@@ -372,11 +376,15 @@ describe('OpenAPI document (API-100-12)', () => {
         Object.values(path).map((op: any) => op.operationId as string),
       );
       expect(ids.sort()).toEqual([
+        'attachIncidentLocation',
         'getHealth',
+        'getLiveLocationConfig',
         'getMyOpenIncident',
         'getOpenApiDocument',
         'getReadiness',
         'listMyRecentIncidents',
+        'renotifyEmergencyAlert',
+        'setIncidentNotes',
         'submitEmergencyAlert',
       ]);
     });

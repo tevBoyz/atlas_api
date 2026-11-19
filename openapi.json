@@ -1,6 +1,65 @@
 {
   "components": {
     "schemas": {
+      "AttachIncidentLocationRequest": {
+        "properties": {
+          "location_accuracy_m": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Metres. Required for `current`."
+          },
+          "location_captured_at": {
+            "description": "Device fix time, ISO-8601 with an offset (a time without one is read as UTC). A fix older than the stored one is ignored.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_lat": {
+            "anyOf": [
+              {
+                "maximum": 90,
+                "minimum": -90,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "location_lng": {
+            "anyOf": [
+              {
+                "maximum": 180,
+                "minimum": -180,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "location_source": {
+            "enum": [
+              "current",
+              "last_known",
+              "unavailable"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "location_source"
+        ],
+        "type": "object"
+      },
       "EmergencyType": {
         "enum": [
           "medical",
@@ -260,6 +319,193 @@
         ],
         "type": "object"
       },
+      "IncidentShared": {
+        "additionalProperties": false,
+        "properties": {
+          "activated_at": {
+            "type": "string"
+          },
+          "activity_confirmed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "auto_closed": {
+            "type": "boolean"
+          },
+          "cancelled_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "circle_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "emergency_type": {
+            "enum": [
+              "medical",
+              "domestic_violence",
+              "fire",
+              "burglary",
+              "other",
+              "unspecified"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "incident_notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "incident_notes_updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_accuracy_m": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "location_captured_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_lat": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "location_lng": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "location_sharing_ended_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "current",
+                  "last_known",
+                  "unavailable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "renotified_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resident_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sent_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "share_payload": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "active",
+              "resolved",
+              "activating",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "resident_id",
+          "circle_id",
+          "status",
+          "activated_at",
+          "emergency_type",
+          "location_lat",
+          "location_lng",
+          "location_accuracy_m",
+          "location_captured_at",
+          "location_source",
+          "cancelled_at",
+          "sent_at",
+          "share_payload",
+          "incident_notes",
+          "incident_notes_updated_at",
+          "renotified_at",
+          "resolved_at",
+          "resolved_reason",
+          "auto_closed",
+          "activity_confirmed_at",
+          "location_sharing_ended_at"
+        ],
+        "type": "object"
+      },
       "IncidentStatus": {
         "enum": [
           "active",
@@ -487,6 +733,28 @@
         ],
         "type": "string"
       },
+      "LiveLocationConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "interval_seconds": {
+            "description": "Seconds between location uploads while an alert is active (default 12).",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "stale_threshold_seconds": {
+            "description": "A fix older than this many seconds is shown as stale (default 45).",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "interval_seconds",
+          "stale_threshold_seconds"
+        ],
+        "type": "object"
+      },
       "LocationSource": {
         "enum": [
           "current",
@@ -614,6 +882,18 @@
         ],
         "type": "object"
       },
+      "SetIncidentNotesRequest": {
+        "properties": {
+          "incident_notes": {
+            "description": "Trimmed of spaces; empty or only spaces clears the note (null). At most 250 characters after trimming, else 422 set_incident_notes:too_long.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "SubmitEmergencyAlertRequest": {
         "properties": {
           "emergency_type": {
@@ -739,6 +1019,101 @@
         "summary": "Readiness: database, Redis and migrations",
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/v1/config/live-location": {
+      "get": {
+        "operationId": "getLiveLocationConfig",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveLocationConfig"
+                }
+              }
+            },
+            "description": "Values from app_config; 12 / 45 when a value is missing or not positive"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "get_live_location_config:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "get_live_location_config:not_authenticated"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The live-location upload interval and stale threshold, in seconds",
+        "tags": [
+          "config"
         ]
       }
     },
@@ -956,6 +1331,533 @@
           }
         ],
         "summary": "Create the emergency alert, or re-notify the one already open",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/v1/incidents/{id}/locations": {
+      "post": {
+        "operationId": "attachIncidentLocation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "The incident id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachIncidentLocationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentShared"
+                }
+              }
+            },
+            "description": "The incident after the ping (unchanged when the fix was older than the stored one)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "attach_incident_location:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "attach_incident_location:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "attach_incident_location:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "attach_incident_location:not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "attach_incident_location:not_open",
+                    "details": {},
+                    "message": "This alert is no longer open."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "attach_incident_location:not_open"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "attach_incident_location:invalid_location",
+                    "details": {},
+                    "message": "The location is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "attach_incident_location:invalid_location",
+              "attach_incident_location:invalid_source",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Upload the resident's live location to their active alert",
+        "tags": [
+          "locations"
+        ]
+      }
+    },
+    "/v1/incidents/{id}/notes": {
+      "put": {
+        "operationId": "setIncidentNotes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "The incident id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetIncidentNotesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentShared"
+                }
+              }
+            },
+            "description": "The note was stored (or cleared); `incident_notes_updated_at` is stamped either way"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "set_incident_notes:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "set_incident_notes:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "set_incident_notes:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "set_incident_notes:not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "set_incident_notes:not_open",
+                    "details": {},
+                    "message": "This alert is no longer open."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "set_incident_notes:not_open"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "set_incident_notes:too_long",
+                    "details": {},
+                    "message": "The text is too long."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "set_incident_notes:too_long",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Set or clear the live note on the caller's open alert",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/v1/incidents/{id}/renotify": {
+      "post": {
+        "operationId": "renotifyEmergencyAlert",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "The incident id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentSend"
+                }
+              }
+            },
+            "description": "The members were re-notified"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "renotify_emergency_alert:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "renotify_emergency_alert:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "renotify_emergency_alert:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "renotify_emergency_alert:not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "renotify_emergency_alert:not_open",
+                    "details": {},
+                    "message": "This alert is no longer open."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "renotify_emergency_alert:not_open"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Re-notify the members of the caller's active alert",
         "tags": [
           "incidents"
         ]

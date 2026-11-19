@@ -1,4 +1,4 @@
-import { Controller, Post, Res } from '@nestjs/common';
+import { Body, Controller, HttpCode, Param, Post, Put, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import type { z } from 'zod';
 
@@ -7,7 +7,15 @@ import { Operation, ZodBody } from '../../common/errors';
 import { Idempotent } from '../../common/idempotency';
 import { RateLimit } from '../../common/rate-limit';
 import { ApiContract } from '../../openapi/api-contract.decorator';
-import { incidentSubmitResultSchema, submitEmergencyAlertRequestSchema } from './incident.schemas';
+import { notesFromBody, requireIncidentId } from './incident-input';
+import {
+  incidentIdParamsSchema,
+  incidentSendSchema,
+  incidentSharedSchema,
+  incidentSubmitResultSchema,
+  setIncidentNotesRequestSchema,
+  submitEmergencyAlertRequestSchema,
+} from './incident.schemas';
 import { IncidentsService } from './incidents.service';
 
 @Controller('incidents')
@@ -52,5 +60,78 @@ export class IncidentsController {
     const result = await this.incidents.submit(user, body.emergency_type);
     void reply.status(result.status);
     return result.body;
+  }
+
+  /**
+   * `set_incident_notes` (spec rule 37). Checks in order: `{id}` is uuid input, the body is a JSON
+   * object and `incident_notes` is a string or null (422 `validation:invalid_request`), then the SQL
+   * function's checks: not the caller's → 404, not `activating`/`active` → 409 `not_open`, more than
+   * 250 characters after trimming → 422 `too_long`. No Idempotency-Key: setting the same note twice
+   * leaves the same note.
+   */
+  @Put(':id/notes')
+  @HttpCode(200)
+  @Operation('set_incident_notes')
+  @ApiContract({
+    operationId: 'setIncidentNotes',
+    summary: "Set or clear the live note on the caller's open alert",
+    tag: 'incidents',
+    params: incidentIdParamsSchema,
+    body: { name: 'SetIncidentNotesRequest', schema: setIncidentNotesRequestSchema },
+    responses: {
+      200: {
+        description:
+          'The note was stored (or cleared); `incident_notes_updated_at` is stamped either way',
+        name: 'IncidentShared',
+        schema: incidentSharedSchema,
+      },
+    },
+    errors: [
+      'validation:invalid_request',
+      'set_incident_notes:not_found',
+      'set_incident_notes:not_open',
+      'set_incident_notes:too_long',
+    ],
+  })
+  setNotes(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: unknown,
+    @Body() body: unknown,
+  ): Promise<Record<string, unknown>> {
+    const incidentId = requireIncidentId(id);
+    return this.incidents.setNotes(user, incidentId, notesFromBody(body));
+  }
+
+  /**
+   * `renotify_emergency_alert` (spec rule 29, §7.4): the same re-notify as a submit on an active
+   * alert. Not called by the app (submit covers it). Spec §11.3 E4 asks for no Idempotency-Key: a
+   * repeat re-notifies again, as a repeated RPC call does.
+   */
+  @Post(':id/renotify')
+  @HttpCode(200)
+  @Operation('renotify_emergency_alert')
+  @ApiContract({
+    operationId: 'renotifyEmergencyAlert',
+    summary: "Re-notify the members of the caller's active alert",
+    tag: 'incidents',
+    params: incidentIdParamsSchema,
+    responses: {
+      200: {
+        description: 'The members were re-notified',
+        name: 'IncidentSend',
+        schema: incidentSendSchema,
+      },
+    },
+    errors: [
+      'validation:invalid_request',
+      'renotify_emergency_alert:not_found',
+      'renotify_emergency_alert:not_open',
+    ],
+  })
+  renotify(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: unknown,
+  ): Promise<Record<string, unknown>> {
+    return this.incidents.renotify(user, requireIncidentId(id));
   }
 }

@@ -12,7 +12,7 @@ import {
   inviteMember,
   type UserFixture,
 } from '../support/fixtures';
-import { countRows, submitAlert } from '../support/incident-api';
+import { countRows, renotifyAlert, submitAlert } from '../support/incident-api';
 
 /**
  * Parity coverage of db/baseline/tests/scrum43_submit_emergency_alert.sql (API-100-13 AC5, API-100-15).
@@ -20,9 +20,9 @@ import { countRows, submitAlert } from '../support/incident-api';
  * `beforeAll` walks the same scenario as the SQL script, in the same order, through
  * `POST /v1/incidents`; each test then checks what that assertion checks.
  *
- * Two assertions stay `it.todo` because they exercise other endpoints:
- * L309 `POST /v1/incidents/{id}/renotify` (API-100-18), L318 `POST /v1/incidents/{id}/acknowledge`
- * (API-100-20).
+ * One assertion stays `it.todo` because it exercises another endpoint: L318
+ * `POST /v1/incidents/{id}/acknowledge` (API-100-20). L309 uses `POST /v1/incidents/{id}/renotify`
+ * (API-100-18).
  */
 type Reply = Awaited<ReturnType<typeof submitAlert>>;
 type Body = Record<string, unknown>;
@@ -355,8 +355,17 @@ describe('scrum43_submit_emergency_alert.sql', () => {
     expect(renotified).toBe(2);
   });
 
-  // Needs POST /v1/incidents/{id}/renotify (API-100-18).
-  it.todo('L309: renotify_emergency_alert failed: %');
+  // Runs here, not in beforeAll: the script calls it after counting the renotified events (L302).
+  it('L309: renotify_emergency_alert failed: %', async () => {
+    const reply = await renotifyAlert(app, resident.id, first.id as string);
+    expect(reply.statusCode).toBe(200);
+    const body = reply.json<Body>();
+    expect(body.id).toBe(first.id);
+    expect(Date.parse(body.renotified_at as string)).toBeGreaterThanOrEqual(
+      Date.parse(second.renotified_at as string),
+    );
+    expect(body).not.toHaveProperty('submit_outcome');
+  });
 
   // Needs POST /v1/incidents/{id}/acknowledge (API-100-20).
   it.todo('L318: ack failed: %');

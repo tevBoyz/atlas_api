@@ -3,6 +3,7 @@ import { type SQL, sql } from 'drizzle-orm';
 
 import { incidentAlias, incidentResident } from '../../common/policies';
 import type { Database } from '../../db';
+import { INCIDENT_SEND_JSON, INCIDENT_SHARED_JSON } from './incident-json';
 import type { SubmitOutcome, SubmittableEmergencyType } from './incident.schemas';
 
 /** The open transaction of a submit. */
@@ -11,6 +12,14 @@ export type IncidentTransaction = Pick<Database, 'execute'>;
 export interface OpenIncidentRow extends Record<string, unknown> {
   id: string;
   status: string;
+}
+
+/** The caller's own incident, locked `FOR UPDATE`. */
+export interface LockedIncidentRow extends Record<string, unknown> {
+  id: string;
+  status: string;
+  /** `location_sharing_ended_at is not null`. */
+  sharing_ended: boolean;
 }
 
 export interface WrittenIncidentRow extends Record<string, unknown> {
@@ -54,55 +63,11 @@ const SHARE_PAYLOAD = sql`coalesce(
 )`;
 
 /**
- * `_incident_send_json(rec)` for the incident aliased `rec`: IncidentShared (`_incident_activation_json`,
- * 22 keys) plus `delivered_count` and `acknowledged_count`. Submit and the open-incident read both use
- * it, so their bodies are the same bytes for the same row (microsecond timestamps, jsonb key order).
- */
-const INCIDENT_SEND_JSON = sql`(
-  jsonb_build_object(
-    'id', rec.id,
-    'resident_id', rec.resident_id,
-    'circle_id', rec.circle_id,
-    'status', rec.status,
-    'activated_at', rec.activated_at,
-    'emergency_type', rec.emergency_type,
-    'location_lat', rec.location_lat,
-    'location_lng', rec.location_lng,
-    'location_accuracy_m', rec.location_accuracy_m,
-    'location_captured_at', rec.location_captured_at,
-    'location_source', rec.location_source,
-    'cancelled_at', rec.cancelled_at,
-    'sent_at', rec.sent_at,
-    'share_payload', rec.share_payload,
-    'incident_notes', rec.incident_notes,
-    'incident_notes_updated_at', rec.incident_notes_updated_at,
-    'renotified_at', rec.renotified_at,
-    'resolved_at', rec.resolved_at,
-    'resolved_reason', rec.resolved_reason,
-    'auto_closed', rec.auto_closed,
-    'activity_confirmed_at', rec.activity_confirmed_at,
-    'location_sharing_ended_at', rec.location_sharing_ended_at
-  )
-  || jsonb_build_object(
-    'delivered_count', (
-      select count(*)::int
-        from public.incident_deliveries d
-       where d.incident_id = rec.id
-    ),
-    'acknowledged_count', (
-      select count(*)::int
-        from public.incident_deliveries d
-       where d.incident_id = rec.id
-         and d.acknowledged_at is not null
-    )
-  )
-)`;
-
-/**
  * The SQL statements of `submit_emergency_alert` (final definition: baseline migration
  * 20261023150000), one method per step, in the order the function runs them. Every method takes the
  * caller's transaction, so all of a submit commits or rolls back together. Also the resident reads
- * `get_my_open_incident` and `list_my_recent_incidents`.
+ * `get_my_open_incident` and `list_my_recent_incidents`, and the statements `set_incident_notes`,
+ * `renotify_emergency_alert` and `attach_incident_location` share with them (row lock, JSON shapes).
  *
  * JSON is built by Postgres, as the SQL function does, so timestamps keep their microseconds and
  * format. Medical values stay inside these statements except for the response body itself.
@@ -282,6 +247,83 @@ export class IncidentsRepository {
       sql`jsonb_build_object('recipient_count', ${refreshed}::int)`,
     );
     return refreshed;
+  }
+
+  /**
+   * The first step of `attach_incident_location`, `set_incident_notes` and `renotify_emergency_alert`:
+   * `select * from incidents where id = $1 and resident_id = uid for update`. Undefined when the id is
+   * unknown or not the caller's (both are `not_found`). `incidentId` must already be valid uuid input.
+   */
+  async lockOwnIncident(
+    tx: IncidentTransaction,
+    incidentId: string,
+    residentId: string,
+  ): Promise<LockedIncidentRow | undefined> {
+    const result = await tx.execute<LockedIncidentRow>(sql`
+      select rec.id::text as id,
+             rec.status,
+             rec.location_sharing_ended_at is not null as sharing_ended
+        from public.incidents rec
+       where rec.id = ${incidentId}::uuid
+         and ${incidentResident.where({ callerId: residentId, incident: incidentAlias('rec') })}
+       for update`);
+    return result.rows[0];
+  }
+
+  /**
+   * `FOR KEY SHARE` on the caller's profile: the lock the `incident_events` insert (FK `actor_id` →
+   * profiles) takes anyway, taken before the incident row lock. Submit locks the profile `FOR UPDATE`
+   * and then the incident; without this, an explicit re-notify holding the incident and waiting for
+   * the profile deadlocks with it (the SQL functions do: 40P01). Changes no result, only the order.
+   */
+  async keyShareProfile(tx: IncidentTransaction, residentId: string): Promise<void> {
+    await tx.execute(sql`
+      select 1 from public.profiles p where p.id = ${residentId}::uuid for key share`);
+  }
+
+  /** `_incident_send_json(rec)` of one incident (IncidentSend). */
+  async sendResult(tx: IncidentTransaction, incidentId: string): Promise<Record<string, unknown>> {
+    const result = await tx.execute<{ body: Record<string, unknown> }>(sql`
+      select ${INCIDENT_SEND_JSON} as body
+        from public.incidents rec
+       where rec.id = ${incidentId}::uuid`);
+    return result.rows[0].body;
+  }
+
+  /** `_incident_activation_json(rec)` of one incident (IncidentShared). */
+  async sharedResult(
+    tx: IncidentTransaction,
+    incidentId: string,
+  ): Promise<Record<string, unknown>> {
+    const result = await tx.execute<{ body: Record<string, unknown> }>(sql`
+      select ${INCIDENT_SHARED_JSON} as body
+        from public.incidents rec
+       where rec.id = ${incidentId}::uuid`);
+    return result.rows[0].body;
+  }
+
+  /**
+   * The write of `set_incident_notes` (final definition: baseline migration 20261020150000), after the
+   * row lock and the status check: `v := nullif(btrim(coalesce(p, '')), '')`, `too_long` when
+   * `char_length(v) > 250`, else store `v` and stamp `incident_notes_updated_at = now()` (also when
+   * clearing). Trimming and counting run in Postgres: `btrim` removes spaces only and `char_length`
+   * counts code points, neither of which JavaScript's `trim()` / `length` match. Returns undefined
+   * (nothing written) when the trimmed note is too long.
+   */
+  async setNotes(
+    tx: IncidentTransaction,
+    incidentId: string,
+    notes: string | null,
+  ): Promise<{ body: Record<string, unknown>; cleared: boolean } | undefined> {
+    const result = await tx.execute<{ body: Record<string, unknown>; cleared: boolean }>(sql`
+      update public.incidents as rec
+         set incident_notes = n.notes,
+             incident_notes_updated_at = now()
+        from (select nullif(btrim(coalesce(${notes}::text, '')), '') as notes) as n
+       where rec.id = ${incidentId}::uuid
+         and (n.notes is null or char_length(n.notes) <= 250)
+      returning ${INCIDENT_SHARED_JSON} as body, n.notes is null as cleared`);
+    return result.rows[0];
   }
 
   /** `_incident_send_json` plus `submit_outcome`. */
