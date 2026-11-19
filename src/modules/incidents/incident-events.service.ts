@@ -5,6 +5,7 @@ import type { AuthenticatedUser } from '../../common/auth';
 import { DomainError } from '../../common/errors';
 import { incidentAlias, incidentEventsView, incidentResident } from '../../common/policies';
 import { DatabaseService } from '../../db/database.service';
+import { maskActorId } from './incident-actor-mask';
 import type { IncidentTransaction } from './incidents.repository';
 
 /**
@@ -150,9 +151,10 @@ export class IncidentEventService {
    * `GET /v1/incidents/{id}/events`: the incident's events ordered `occurred_at, id`, when the caller
    * passes `incident.eventsView` (the resident; or an active member inside the window while the
    * incident is `active`/`resolved`, rule 54). A caller who is not the resident never gets
-   * `recipient_ids` (epic §18 D3); `recipient_count` stays. Undefined when the incident is unknown or
-   * hidden from the caller (both `not_found`). One statement: the access check and the events come
-   * from one snapshot.
+   * `recipient_ids` (epic §18 D3); `recipient_count` stays. For that caller each `actor_id` is
+   * obscured by {@link maskActorId} (epic §18 D11), except the caller's own id. Undefined when the
+   * incident is unknown or hidden from the caller (both `not_found`). One statement: the access check
+   * and the events come from one snapshot.
    */
   async listVisible(
     tx: IncidentTransaction,
@@ -161,8 +163,9 @@ export class IncidentEventService {
   ): Promise<Record<string, unknown>[] | undefined> {
     const incident = incidentAlias('rec');
     const hidden = sql.raw(`array[${RESIDENT_ONLY_DETAIL_KEYS.map((k) => `'${k}'`).join(', ')}]`);
-    const result = await tx.execute<{ body: Record<string, unknown>[] }>(sql`
-      select coalesce(
+    const result = await tx.execute<{ body: Record<string, unknown>[]; is_resident: boolean }>(sql`
+      select ${incidentResident.where({ callerId, incident })} as is_resident,
+             coalesce(
                (select jsonb_agg(
                          jsonb_build_object(
                            'id', e.id,
@@ -184,6 +187,9 @@ export class IncidentEventService {
         from public.incidents rec
        where rec.id = ${incidentId}::uuid
          and ${incidentEventsView.where({ callerId, incident })}`);
-    return result.rows[0]?.body;
+    const row = result.rows[0];
+    if (!row) return undefined;
+    if (row.is_resident === true) return row.body;
+    return row.body.map((event) => ({ ...event, actor_id: maskActorId(event.actor_id, callerId) }));
   }
 }

@@ -473,7 +473,7 @@ Until Phase 6 the app signs in with Supabase Auth and sends its Supabase access 
 1. `IncidentEventService.record(incident_id, event_type, actor_id, detail)` inserts into `incident_events` and relies on `incident_events_once_per_incident_uidx` for once-only types (`ON CONFLICT DO NOTHING`); used by stories 15, 18, 19.
 2. Known types are validated against spec §5.6; new types can be added later by migration-free code change (the column is free text) — document the list in code.
 3. `GET /v1/incidents/{id}/events` → `[{id, event_type, occurred_at, actor_id, detail}]` ordered `occurred_at, id`; access `incident.eventsView` (resident, or member inside the window while `active`/`resolved`); otherwise 404 `incident_events:not_found`.
-4. For non-resident callers `detail.recipient_ids` is removed from `alert_sent` and `closure_notified` (members must not learn other members' ids). ASK to confirm.
+4. For non-resident callers `detail.recipient_ids` is removed from `alert_sent` and `closure_notified` (members must not learn other members' ids). ASK to confirm. Confirmed: see §18 D3. For the same callers `actor_id` is shown obscured (first 4 and last 4 hex characters kept, the rest `*`, UUID shape kept), except an actor who is the caller; the resident always sees the full id; null stays null (see §18 D11).
 5. Events are never updated or deleted by the API.
 6. Post-commit hook `incident.event` for realtime (API-100-41).
 
@@ -1149,6 +1149,7 @@ These answers replace the former open questions. **Where any story in this epic 
 | D1b | Postgres version | **PostgreSQL 17.11** (hosted project, read 2026-11-17). Local docker image must match. | §6, API-100-03 |
 | D2 | `GET /v1/me/incidents/open` with no open incident | `200 { "open_incident": null }` (always the same wrapper shape). | API-100-16 |
 | D3 | `recipient_ids` in incident event details | **Hidden from members**; only the resident (incident owner) sees them. | API-100-22 |
+| D11 | `actor_id` of incident events for non-resident callers (decided 2026-11-19) | **Shown obscured**: keep the first 4 and the last 4 hex characters, replace every other hex character with `*`, keep the hyphens and the 36-character UUID shape (`4f3a1c2d-9e8b-4a7c-b6d5-1234567f9c2d` → `4f3a****-****-****-****-********9c2d`), lowercase. The resident always sees the full id on their own incident; an actor who is the caller is shown in full; null stays null; a malformed value is fully masked. Sits alongside D3 (unchanged). | API-100-22 |
 | D4 | Notification preferences vs SOS | **SOS always notifies every eligible active member**; `alert_*_enabled` only governs non-emergency messages. (Dawit will confirm with the PO; build it this way.) | API-100-48 |
 | D5a | Password policy | Keep **min 8 + uppercase + lowercase + digit** on the server; the app is updated to check lowercase too. | API-100-52 |
 | D5b | Duplicate email at sign-up | **Do not reveal it**: same neutral "check your email" response whether or not the email exists. | API-100-52 |

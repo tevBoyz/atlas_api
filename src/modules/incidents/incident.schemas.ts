@@ -181,7 +181,8 @@ export const incidentDetailsSchema = componentSchema(
 
 /**
  * One entry of `GET /v1/incidents/{id}/events` (spec §4.7, §11.3 E11). `detail` per spec §5.6; for a
- * caller who is not the resident, `recipient_ids` is left out (epic §18 D3).
+ * caller who is not the resident, `recipient_ids` is left out (epic §18 D3) and `actor_id` is
+ * obscured (epic §18 D11, `maskActorId`).
  */
 export const incidentEventSchema = componentSchema(
   'IncidentEvent',
@@ -191,7 +192,16 @@ export const incidentEventSchema = componentSchema(
       .string()
       .describe('See spec §5.6 (alert_sent, renotified, closure_notified, ...).'),
     occurred_at: z.string(),
-    actor_id: z.uuid().nullable(),
+    actor_id: z
+      .string()
+      .nullable()
+      .describe(
+        'Who caused the event (null when no user did). The resident of the incident gets the full ' +
+          'UUID. Any other caller gets it obscured: the first 4 and the last 4 hex characters are ' +
+          'kept, every other hex character is replaced by "*", and the hyphens and 36-character ' +
+          'shape stay (e.g. "4f3a****-****-****-****-********9c2d"), unless the actor is the ' +
+          'caller, whose own id is always shown in full. Not a usable UUID when obscured.',
+      ),
     detail: z.record(z.string(), z.unknown()),
   }),
 );

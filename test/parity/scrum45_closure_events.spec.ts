@@ -1,6 +1,7 @@
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
+import { maskActorId } from '../../src/modules/incidents/incident-actor-mask';
 import { createTestApp } from '../../src/testing/test-app';
 import { openTestClient } from '../support/database';
 import {
@@ -63,10 +64,11 @@ describe('scrum45_closure_events.sql', () => {
   let afterLatePings: Body;
   let renotifyAfterClose: Reply;
   let newSubmit: Reply;
-  let residentEvents: { api: Reply; rls: number };
-  let memberEvents: { api: Reply; rls: number };
-  let pendingEvents: { api: Reply; rls: number };
-  let outsiderEvents: { api: Reply; rls: number };
+  type EventsSeen = { api: Reply; rls: number; rlsRows: Body[] };
+  let residentEvents: EventsSeen;
+  let memberEvents: EventsSeen;
+  let pendingEvents: EventsSeen;
+  let outsiderEvents: EventsSeen;
   let memberSeesClosed: number;
   let memberDetailsClosed: Reply;
   let memberListClosed: Body[];
@@ -152,6 +154,12 @@ describe('scrum45_closure_events.sql', () => {
         'select count(*)::int as n from public.incident_events where incident_id = $1',
         [incidentId],
       ),
+      rlsRows: await rlsRows(
+        userId,
+        `select id::text as id, actor_id::text as actor_id from public.incident_events
+          where incident_id = $1 order by occurred_at, id`,
+        [incidentId],
+      ),
     });
     residentEvents = await eventsOf(resident.id);
     memberEvents = await eventsOf(member.id);
@@ -187,6 +195,11 @@ describe('scrum45_closure_events.sql', () => {
    * claims, as the script's `set local role authenticated` block does. Always rolled back.
    */
   async function rlsCount(userId: string, statement: string, params: unknown[]) {
+    return (await rlsRows(userId, statement, params))[0].n as number;
+  }
+
+  /** Runs `statement` as {@link rlsCount} does and returns its rows. Always rolled back. */
+  async function rlsRows(userId: string, statement: string, params: unknown[]): Promise<Body[]> {
     await client.query('begin');
     try {
       await client.query(
@@ -195,8 +208,8 @@ describe('scrum45_closure_events.sql', () => {
         [userId, JSON.stringify({ sub: userId, role: 'authenticated' })],
       );
       await client.query('set local role authenticated');
-      const { rows } = await client.query<{ n: number }>(statement, params);
-      return rows[0].n;
+      const { rows } = await client.query<Body>(statement, params);
+      return rows;
     } finally {
       await client.query('rollback');
     }
@@ -372,6 +385,10 @@ describe('scrum45_closure_events.sql', () => {
     expect(residentEvents.rls).toBe(6);
     expect(residentEvents.api.statusCode).toBe(200);
     expect(residentEvents.api.json<Body[]>()).toHaveLength(6);
+    // The same rows, in the same order, with the full actor_id (epic §18 D11: resident unmasked).
+    expect(
+      residentEvents.api.json<Body[]>().map((e) => ({ id: e.id, actor_id: e.actor_id })),
+    ).toEqual(residentEvents.rlsRows);
   });
 
   it('L239: active member sees % events', () => {
@@ -381,6 +398,14 @@ describe('scrum45_closure_events.sql', () => {
     expect(events).toHaveLength(6);
     // Epic §18 D3: members never get recipient_ids (RLS would return them).
     expect(memberEvents.api.body).not.toContain('recipient_ids');
+    // Epic §18 D11: the same rows and order as RLS, with actor_id in its masked form.
+    expect(events.map((e) => ({ id: e.id, actor_id: e.actor_id }))).toEqual(
+      memberEvents.rlsRows.map((row) => ({
+        id: row.id,
+        actor_id: maskActorId(row.actor_id, member.id),
+      })),
+    );
+    expect(memberEvents.api.body).not.toContain(resident.id);
   });
   it('L244: active member cannot see the closed incident', () => {
     expect(memberSeesClosed).toBe(1);

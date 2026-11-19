@@ -312,15 +312,10 @@
         "additionalProperties": false,
         "properties": {
           "actor_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "description": "Who caused the event (null when no user did). The resident of the incident gets the full UUID. Any other caller gets it obscured: the first 4 and the last 4 hex characters are kept, every other hex character is replaced by \"*\", and the hyphens and 36-character shape stay (e.g. \"4f3a****-****-****-****-********9c2d\"), unless the actor is the caller, whose own id is always shown in full. Not a usable UUID when obscured.",
+            "type": [
+              "string",
+              "null"
             ]
           },
           "detail": {
