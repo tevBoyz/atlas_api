@@ -60,6 +60,170 @@
         ],
         "type": "object"
       },
+      "BatchInviteItem": {
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "phone": {
+            "description": "Trimmed; 8-15 digits starting 1-9 get a leading `+`; then strict E.164.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phone",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "BatchInviteNotCreated": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "enum": [
+              "invalid_invite",
+              "invalid_phone",
+              "invalid_display_name",
+              "circle_full",
+              "duplicate_membership"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "phone",
+          "reason",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "BatchInviteRequest": {
+        "properties": {
+          "invites": {
+            "description": "Processed in array order, in one transaction. Not an array → `invalid_invites`.",
+            "items": {
+              "$ref": "#/components/schemas/BatchInviteItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "invites"
+        ],
+        "type": "object"
+      },
+      "BatchInviteResult": {
+        "additionalProperties": false,
+        "properties": {
+          "available_after": {
+            "description": "Free slots after the batch (Capacity.available).",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "created": {
+            "description": "New rows (`resent: false`) and refreshed expired/declined rows (`resent: true`).",
+            "items": {
+              "$ref": "#/components/schemas/MemberInvitePayload"
+            },
+            "type": "array"
+          },
+          "not_created": {
+            "items": {
+              "$ref": "#/components/schemas/BatchInviteNotCreated"
+            },
+            "type": "array"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/BatchInviteSkipped"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "created",
+          "skipped",
+          "not_created",
+          "available_after"
+        ],
+        "type": "object"
+      },
+      "BatchInviteSkipped": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "member_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "already_active",
+              "already_pending"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "phone",
+          "reason",
+          "member_id",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "CanceledInvite": {
+        "additionalProperties": false,
+        "properties": {
+          "circle_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "member_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "owner_name": {
+            "description": "The owner row's stored display name.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "const": "canceled",
+            "type": "string"
+          }
+        },
+        "required": [
+          "member_id",
+          "circle_id",
+          "status",
+          "owner_name"
+        ],
+        "type": "object"
+      },
       "Capacity": {
         "additionalProperties": false,
         "properties": {
@@ -1111,6 +1275,18 @@
         ],
         "type": "string"
       },
+      "LinkInviteRequest": {
+        "properties": {
+          "display_name": {
+            "description": "Missing or blank: `Invited member`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "LiveLocationConfig": {
         "additionalProperties": false,
         "properties": {
@@ -1140,6 +1316,76 @@
           "unavailable"
         ],
         "type": "string"
+      },
+      "MemberInvitePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "circle_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "invite_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "invite_token": {
+            "description": "64 lowercase hex characters; single use; 7-day expiry.",
+            "type": "string"
+          },
+          "invite_url": {
+            "description": "`INVITE_URL_BASE` + `invite_token`.",
+            "type": "string"
+          },
+          "invited_at": {
+            "type": "string"
+          },
+          "member_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "phone": {
+            "description": "Null for a link invite.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "relationship": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resent": {
+            "description": "True when an existing row was refreshed (same `member_id`).",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "Stored status of the row: `pending`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "member_id",
+          "circle_id",
+          "status",
+          "display_name",
+          "relationship",
+          "phone",
+          "invite_token",
+          "invite_url",
+          "invited_at",
+          "invite_expires_at",
+          "resent"
+        ],
+        "type": "object"
       },
       "MemberStatus": {
         "enum": [
@@ -1211,6 +1457,44 @@
           "circle",
           "members",
           "capacity"
+        ],
+        "type": "object"
+      },
+      "PhoneInviteRequest": {
+        "properties": {
+          "display_name": {
+            "description": "Trimmed (spaces); must not be empty.",
+            "type": "string"
+          },
+          "phone": {
+            "description": "Strict E.164 after trimming (spaces): `^\\+[1-9][0-9]{7,14}$`.",
+            "type": "string"
+          },
+          "relationship": {
+            "anyOf": [
+              {
+                "description": "Spec §4.4: one of the 7 relationship values.",
+                "enum": [
+                  "spouse",
+                  "partner",
+                  "parent",
+                  "child",
+                  "sibling",
+                  "friend",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null or blank: none (an existing row keeps its own). Else one of the 7 values."
+          }
+        },
+        "required": [
+          "display_name",
+          "phone"
         ],
         "type": "object"
       },
@@ -3593,6 +3877,956 @@
         "summary": "How many trusted-member slots of the circle the caller owns are used and free",
         "tags": [
           "circles"
+        ]
+      }
+    },
+    "/v1/me/circle/invites/link": {
+      "post": {
+        "operationId": "createCircleInviteLink",
+        "parameters": [
+          {
+            "description": "UUID chosen by the client. A retry with the same key replays the first result.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkInviteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberInvitePayload"
+                }
+              }
+            },
+            "description": "A new pending invitation without a phone (`phone: null`, `resent: false`). Every call creates one: send an `Idempotency-Key` to make a retry safe. The caller must have a profile with location sharing on and own a circle."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "create_circle_invite_link:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "create_circle_invite_link:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "create_circle_invite_link:circle_not_found",
+                    "details": {},
+                    "message": "Safety Circle not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "create_circle_invite_link:circle_not_found",
+              "create_circle_invite_link:profile_not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "create_circle_invite_link:circle_full",
+                    "details": {},
+                    "message": "This Safety Circle is full."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "create_circle_invite_link:circle_full",
+              "create_circle_invite_link:location_sharing_disabled",
+              "idempotency:in_progress"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:invalid_key",
+                    "details": {},
+                    "message": "The Idempotency-Key header must be a UUID."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "idempotency:invalid_key",
+              "idempotency:key_mismatch",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a single-use invitation link (reserves one slot)",
+        "tags": [
+          "invites"
+        ]
+      }
+    },
+    "/v1/me/circle/invites/phone": {
+      "post": {
+        "operationId": "inviteCircleMemberByPhone",
+        "parameters": [
+          {
+            "description": "UUID chosen by the client. A retry with the same key replays the first result.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhoneInviteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberInvitePayload"
+                }
+              }
+            },
+            "description": "The phone's existing invitation was refreshed: same `member_id`, new token and expiry, `resent: true`. The caller must have a profile with location sharing on and own a circle."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberInvitePayload"
+                }
+              }
+            },
+            "description": "A new pending invitation (`resent: false`). The caller must have a profile with location sharing on and own a circle."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invite_circle_member_by_phone:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "invite_circle_member_by_phone:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invite_circle_member_by_phone:circle_not_found",
+                    "details": {},
+                    "message": "Safety Circle not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "invite_circle_member_by_phone:circle_not_found",
+              "invite_circle_member_by_phone:profile_not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:in_progress",
+                    "details": {},
+                    "message": "A request with this Idempotency-Key is still being processed."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "idempotency:in_progress",
+              "invite_circle_member_by_phone:already_active",
+              "invite_circle_member_by_phone:circle_full",
+              "invite_circle_member_by_phone:duplicate_membership",
+              "invite_circle_member_by_phone:location_sharing_disabled"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:invalid_key",
+                    "details": {},
+                    "message": "The Idempotency-Key header must be a UUID."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "idempotency:invalid_key",
+              "idempotency:key_mismatch",
+              "invite_circle_member_by_phone:invalid_display_name",
+              "invite_circle_member_by_phone:invalid_phone",
+              "invite_circle_member_by_phone:invalid_relationship",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Invite one person by phone, or refresh the invitation of that phone",
+        "tags": [
+          "invites"
+        ]
+      }
+    },
+    "/v1/me/circle/invites/phone/batch": {
+      "post": {
+        "operationId": "inviteCircleMembersByPhone",
+        "parameters": [
+          {
+            "description": "UUID chosen by the client. A retry with the same key replays the first result.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchInviteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchInviteResult"
+                }
+              }
+            },
+            "description": "Each item is `created`, `skipped` or `not_created`, in array order. The caller must have a profile with location sharing on and own a circle."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invite_circle_members_by_phone:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "invite_circle_members_by_phone:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invite_circle_members_by_phone:circle_not_found",
+                    "details": {},
+                    "message": "Safety Circle not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "invite_circle_members_by_phone:circle_not_found",
+              "invite_circle_members_by_phone:profile_not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:in_progress",
+                    "details": {},
+                    "message": "A request with this Idempotency-Key is still being processed."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "idempotency:in_progress",
+              "invite_circle_members_by_phone:location_sharing_disabled"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:invalid_key",
+                    "details": {},
+                    "message": "The Idempotency-Key header must be a UUID."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "idempotency:invalid_key",
+              "idempotency:key_mismatch",
+              "invite_circle_members_by_phone:invalid_invites",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Invite several people by phone in one go, with an outcome per person",
+        "tags": [
+          "invites"
+        ]
+      }
+    },
+    "/v1/me/circle/invites/{member_id}/cancel": {
+      "post": {
+        "operationId": "cancelCircleInvite",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "description": "The invite (member row) id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanceledInvite"
+                }
+              }
+            },
+            "description": "The invitation is declined and its token looks up as `canceled`. Owner of the circle only."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "cancel_circle_invite:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "cancel_circle_invite:not_authenticated"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "cancel_circle_invite:not_authorized",
+                    "details": {},
+                    "message": "You do not have access to this."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not allowed",
+            "x-error-codes": [
+              "cancel_circle_invite:not_authorized"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "cancel_circle_invite:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "cancel_circle_invite:not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "cancel_circle_invite:cannot_cancel_owner",
+                    "details": {},
+                    "message": "The circle owner cannot be canceled."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "cancel_circle_invite:cannot_cancel_owner",
+              "cancel_circle_invite:not_pending"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Cancel a pending or expired invitation and free its place",
+        "tags": [
+          "invites"
+        ]
+      }
+    },
+    "/v1/me/circle/invites/{member_id}/resend": {
+      "post": {
+        "operationId": "resendCircleInvite",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "description": "The invite (member row) id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberInvitePayload"
+                }
+              }
+            },
+            "description": "Same `member_id`, new token (the old one stops working) and 7-day expiry, `resent: true`. An expired or declined invitation needs a free slot. The caller must have a profile with location sharing on and own a circle."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "resend_circle_invite:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "resend_circle_invite:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "resend_circle_invite:circle_not_found",
+                    "details": {},
+                    "message": "Safety Circle not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "resend_circle_invite:circle_not_found",
+              "resend_circle_invite:member_not_found",
+              "resend_circle_invite:profile_not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "resend_circle_invite:already_active",
+                    "details": {},
+                    "message": "This person is already in the Safety Circle."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "resend_circle_invite:already_active",
+              "resend_circle_invite:circle_full",
+              "resend_circle_invite:location_sharing_disabled",
+              "resend_circle_invite:not_invitable"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Resend a pending, expired or declined invitation with a new token",
+        "tags": [
+          "invites"
         ]
       }
     },

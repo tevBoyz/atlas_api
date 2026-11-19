@@ -4,7 +4,15 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
 import { createTestApp } from '../../src/testing/test-app';
-import { getCapacity, listMembers, sqlAs } from '../support/circle-api';
+import {
+  cancelInvite,
+  createInviteLink,
+  errorOf,
+  getCapacity,
+  listMembers,
+  resendInvite,
+  sqlAs,
+} from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import { createUser, fakeInviteToken, fakePhone, type UserFixture } from '../support/fixtures';
 
@@ -14,19 +22,24 @@ import { createUser, fakeInviteToken, fakePhone, type UserFixture } from '../sup
  *
  * `beforeAll` walks the script's scenario in its order. Reads go through the API: capacity
  * (`GET /v1/me/circle/capacity`, API-100-24) and the member list (`GET /v1/circles/{id}/members`,
- * API-100-25). Writes the API does not have yet are done as the script does them: the SQL functions
- * (`complete_profile_setup`, `create_circle_invite_link`, `accept_circle_invite`,
- * `cancel_circle_invite`, `resend_circle_invite`, `decline_circle_invite`) as the same callers, and
+ * API-100-25). The owner's invite writes go through the API too: every link invite
+ * (`POST /v1/me/circle/invites/link`, API-100-27), every resend and cancel
+ * (`POST /v1/me/circle/invites/{id}/resend|cancel`, API-100-28). Writes the API does not have yet
+ * are done as the script does them: the SQL functions (`complete_profile_setup`,
+ * `accept_circle_invite`, `decline_circle_invite`, `preview_circle_invite`) as the same callers, and
  * raw inserts/updates as the migration role. The story that ships each write replaces the SQL call
  * with the API call.
  *
- * Done here (API-100-24/25): the capacity reads (L235, L302, L346, L353, L370, L452), the member list
+ * Done here: API-100-24/25 the capacity reads (L235, L302, L346, L353, L370, L452), the member list
  * names, statuses and visibility (L195, L202, L208, L214, L244, L248, L264, L269, L376), the two
- * static privacy checks about profile names (L65, L70) and the fixture phones (L89).
+ * static privacy checks about profile names (L65, L70) and the fixture phones (L89); API-100-27 the
+ * link placeholder (L144); API-100-28 resend at 5/5 (L307, L311, L317), cancel of an expired invite
+ * (L334, L339) and resend of an expired invite (L362).
+ *
+ * The script has no phone invite: the expired-phone refresh of API-100-26 is covered by
+ * test/int/circles-invites.int-spec.ts (incl. its interchangeability tests against the SQL).
  *
  * Still `it.todo`, with the story that completes them:
- * - API-100-27 (link invite): L144.
- * - API-100-28 (resend / cancel): L307, L311, L317, L334, L339, L362.
  * - API-100-29 (lookup / preview): L342, L365, L421, L425, L437.
  * - API-100-30 (accept / decline): L54, L156, L162, L281, L285, L391.
  * - API-100-36 (complete setup): L137, L404, L418, L458.
@@ -53,6 +66,13 @@ describe('member_names_expired_invites.sql', () => {
   let profilesPolicyOpened: boolean;
   let profileNameCallable: boolean;
   let ownerList1: Member[];
+  let link1: Body;
+  let tOld: string;
+  let resendFull: { status: number; code: string };
+  let oldAfterFailedResend: { invite_token: string; status: string };
+  let cancelOld2: { status: number; body: Body };
+  let old2Row: { status: string; invite_canceled_at: string | null };
+  let resendOld: { status: number; body: Body; sixDaysOn: string };
   let cap1: Body;
   let ownerList2: Member[];
   let oldStoredStatus: string;
@@ -80,6 +100,13 @@ describe('member_names_expired_invites.sql', () => {
   };
 
   const find = (rows: Member[], memberId: string) => rows.find((e) => e.member_id === memberId);
+
+  /** `create_circle_invite_link(null)` as the owner, through the API (API-100-27). */
+  const linkViaApi = async (): Promise<Body> => {
+    const reply = await createInviteLink(app, owner.id, { display_name: null });
+    expect(reply.statusCode).toBe(201);
+    return reply.json<Body>();
+  };
 
   beforeAll(async () => {
     ({ app } = await createTestApp());
@@ -134,9 +161,10 @@ describe('member_names_expired_invites.sql', () => {
     const setup = await asUser<Body>(owner, 'public.complete_profile_setup()');
     cid = setup.circle_id as string;
     const contactId = setup.member_id as string;
-    const link = await asUser<Body>(owner, 'public.create_circle_invite_link(null)');
-    linkerRow = link.member_id as string;
-    await asUser(linker, 'public.accept_circle_invite($1)', [link.invite_token]);
+    // Link invite through the API (API-100-27); accepted through SQL (API-100-30).
+    link1 = await linkViaApi();
+    linkerRow = link1.member_id as string;
+    await asUser(linker, 'public.accept_circle_invite($1)', [link1.invite_token]);
 
     // Active member without a profile keeps the stored name.
     noprofRow = randomUUID();
@@ -146,8 +174,7 @@ describe('member_names_expired_invites.sql', () => {
        values ($1, $2, 'member', 'active', 'Stored Name', $3, now())`,
       [noprofRow, cid, noprof.id],
     );
-    link2Id = (await asUser<Body>(owner, 'public.create_circle_invite_link(null)'))
-      .member_id as string;
+    link2Id = (await linkViaApi()).member_id as string;
     // A pre-fix row: active with the placeholder name.
     await client.query(
       `update public.safety_circle_members set display_name = 'Invited member' where id = $1`,
@@ -157,12 +184,13 @@ describe('member_names_expired_invites.sql', () => {
 
     // #14: an expired pending row does not use a slot.
     oldId = randomUUID();
+    tOld = fakeInviteToken();
     await client.query(
       `insert into public.safety_circle_members (id, circle_id, role, status, display_name,
          invite_token, invited_at, invite_expires_at)
        values ($1, $2, 'member', 'pending', 'Old Invite', $3, now() - interval '10 days',
                now() - interval '3 days')`,
-      [oldId, cid, fakeInviteToken()],
+      [oldId, cid, tOld],
     );
     cap1 = await capacityOf(owner);
     ownerList2 = await listOf(owner);
@@ -181,10 +209,19 @@ describe('member_names_expired_invites.sql', () => {
       rows: memberReply.json<Member[]>(),
     };
 
-    // Fill to 5/5 (SQL link invite), then cancel an expired invite and free one slot (SQL cancel).
-    const fillId = (await asUser<Body>(owner, 'public.create_circle_invite_link(null)'))
-      .member_id as string;
+    // Fill to 5/5 (API link invite); a resend of the expired invite re-checks capacity (API).
+    const fillId = (await linkViaApi()).member_id as string;
     cap2 = await capacityOf(owner);
+    const fullReply = await resendInvite(app, owner.id, oldId);
+    resendFull = { status: fullReply.statusCode, code: errorOf(fullReply).code };
+    oldAfterFailedResend = (
+      await client.query<{ invite_token: string; status: string }>(
+        'select invite_token, status from public.safety_circle_members where id = $1',
+        [oldId],
+      )
+    ).rows[0];
+
+    // An expired row can be inserted at 5/5 (holds no slot) and canceled (API).
     const old2Id = randomUUID();
     await client.query(
       `insert into public.safety_circle_members (id, circle_id, role, status, display_name,
@@ -193,16 +230,30 @@ describe('member_names_expired_invites.sql', () => {
                now() - interval '2 days')`,
       [old2Id, cid, fakeInviteToken()],
     );
-    await asUser(owner, 'public.cancel_circle_invite($1)', [old2Id]);
+    const cancelReply = await cancelInvite(app, owner.id, old2Id);
+    cancelOld2 = { status: cancelReply.statusCode, body: cancelReply.json<Body>() };
+    old2Row = (
+      await client.query<{ status: string; invite_canceled_at: string | null }>(
+        'select status, invite_canceled_at from public.safety_circle_members where id = $1',
+        [old2Id],
+      )
+    ).rows[0];
     cap3 = await capacityOf(owner);
-    await asUser(owner, 'public.cancel_circle_invite($1)', [fillId]);
+
+    // Free one slot (API cancel), then resend the expired invite (API): same row, new token.
+    expect((await cancelInvite(app, owner.id, fillId)).statusCode).toBe(200);
     cap4 = await capacityOf(owner);
-    // Resend the expired invite (SQL, API-100-28): same row, new token, takes the free slot.
-    await asUser(owner, 'public.resend_circle_invite($1)', [oldId]);
+    const sixDaysOn = (
+      await client.query<{ t: string }>(
+        `select (extract(epoch from now() + interval '6 days') * 1000)::bigint::text as t`,
+      )
+    ).rows[0].t;
+    const resent = await resendInvite(app, owner.id, oldId);
+    resendOld = { status: resent.statusCode, body: resent.json<Body>(), sixDaysOn };
     cap5 = await capacityOf(owner);
     ownerList3 = await listOf(owner);
 
-    // complete_profile_setup re-run after decline (SQL), decline again, refill (SQL link invite).
+    // complete_profile_setup re-run after decline (SQL), decline again, refill (API link invite).
     const tContact = (
       await client.query<{ t: string }>(
         'select invite_token as t from public.safety_circle_members where id = $1',
@@ -219,7 +270,7 @@ describe('member_names_expired_invites.sql', () => {
     ).rows[0].t;
     await asUser(contact, 'public.preview_circle_invite($1)', [tContactNew]);
     await asUser(contact, 'public.decline_circle_invite($1)', [tContactNew]);
-    await asUser(owner, 'public.create_circle_invite_link(null)');
+    await linkViaApi();
     cap6 = await capacityOf(owner);
   });
 
@@ -259,7 +310,9 @@ describe('member_names_expired_invites.sql', () => {
   });
 
   it.todo('L137: setup failed: %');
-  it.todo('L144: link placeholder changed: %');
+  it('L144: link placeholder changed: %', () => {
+    expect(link1.display_name).toBe('Invited member');
+  });
   it.todo('L156: link accept failed: %');
   it.todo('L162: accept did not store the profile name: %');
 
@@ -321,11 +374,28 @@ describe('member_names_expired_invites.sql', () => {
     expect(cap2).toMatchObject({ used: 5, available: 0 });
   });
 
-  it.todo('L307: resend at 5/5 did not raise');
-  it.todo('L311: resend at 5/5 got %');
-  it.todo('L317: failed resend wrote the row');
-  it.todo('L334: cancel on expired failed: %');
-  it.todo('L339: cancel on expired did not decline');
+  it('L307: resend at 5/5 did not raise', () => {
+    expect(resendFull.status).toBe(409);
+  });
+
+  it('L311: resend at 5/5 got %', () => {
+    expect(resendFull.code).toBe('resend_circle_invite:circle_full');
+  });
+
+  it('L317: failed resend wrote the row', () => {
+    expect(oldAfterFailedResend).toEqual({ invite_token: tOld, status: 'pending' });
+  });
+
+  it('L334: cancel on expired failed: %', () => {
+    expect(cancelOld2.status).toBe(200);
+    expect(cancelOld2.body.status).toBe('canceled');
+    expect(typeof cancelOld2.body.member_id).toBe('string');
+  });
+
+  it('L339: cancel on expired did not decline', () => {
+    expect(old2Row.status).toBe('declined');
+    expect(old2Row.invite_canceled_at).not.toBeNull();
+  });
   it.todo('L342: canceled expired token lookup wrong');
 
   it('L346: cancel on expired changed capacity: %', () => {
@@ -336,7 +406,16 @@ describe('member_names_expired_invites.sql', () => {
     expect(cap4.used).toBe(4);
   });
 
-  it.todo('L362: resend on expired failed: %');
+  it('L362: resend on expired failed: %', () => {
+    expect(resendOld.status).toBe(200);
+    expect(resendOld.body.member_id).toBe(oldId);
+    expect(resendOld.body.status).toBe('pending');
+    expect(resendOld.body.invite_token).toEqual(expect.any(String));
+    expect(resendOld.body.invite_token).not.toBe(tOld);
+    expect(Date.parse(resendOld.body.invite_expires_at as string)).toBeGreaterThanOrEqual(
+      Number(resendOld.sixDaysOn),
+    );
+  });
   it.todo('L365: resent token is not pending');
 
   it('L370: resend did not take the slot: %', () => {

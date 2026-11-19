@@ -36,6 +36,109 @@ export async function listMembers(
   });
 }
 
+export interface InviteCallOptions {
+  /** Sent as `Idempotency-Key`. */
+  idempotencyKey?: string;
+}
+
+async function postJson(
+  app: NestFastifyApplication,
+  userId: string | null,
+  url: string,
+  body: unknown,
+  options: InviteCallOptions = {},
+) {
+  return app.inject({
+    method: 'POST',
+    url,
+    headers: {
+      ...(await headersFor(userId)),
+      ...(options.idempotencyKey ? { 'idempotency-key': options.idempotencyKey } : {}),
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    ...(body === undefined ? {} : { payload: JSON.stringify(body) }),
+  });
+}
+
+/** `POST /v1/me/circle/invites/phone` (I1). */
+export function invitePhone(
+  app: NestFastifyApplication,
+  userId: string | null,
+  body: unknown,
+  options: InviteCallOptions = {},
+) {
+  return postJson(app, userId, '/v1/me/circle/invites/phone', body, options);
+}
+
+/** `POST /v1/me/circle/invites/phone/batch` (I2). */
+export function inviteBatch(
+  app: NestFastifyApplication,
+  userId: string | null,
+  body: unknown,
+  options: InviteCallOptions = {},
+) {
+  return postJson(app, userId, '/v1/me/circle/invites/phone/batch', body, options);
+}
+
+/** `POST /v1/me/circle/invites/link` (I3). `body` undefined sends no body at all. */
+export function createInviteLink(
+  app: NestFastifyApplication,
+  userId: string | null,
+  body: unknown,
+  options: InviteCallOptions = {},
+) {
+  return postJson(app, userId, '/v1/me/circle/invites/link', body, options);
+}
+
+/** `POST /v1/me/circle/invites/{member_id}/resend` (I4). */
+export function resendInvite(app: NestFastifyApplication, userId: string | null, memberId: string) {
+  return postJson(app, userId, `/v1/me/circle/invites/${memberId}/resend`, undefined);
+}
+
+/** `POST /v1/me/circle/invites/{member_id}/cancel` (I5). */
+export function cancelInvite(app: NestFastifyApplication, userId: string | null, memberId: string) {
+  return postJson(app, userId, `/v1/me/circle/invites/${memberId}/cancel`, undefined);
+}
+
+/**
+ * Runs `select <call> as body` as `userId` like {@link sqlAs}, then reads `inspect` (as the
+ * migration role, same transaction) and ROLLS BACK: the SQL function's answer and its effect for a
+ * state the API is then called on. `error` is the `fn:code` when the function raised.
+ */
+export async function sqlRolledBack<T = unknown, R = unknown>(
+  client: Client,
+  userId: string,
+  call: string,
+  params: unknown[] = [],
+  inspect?: { statement: string; params?: unknown[] },
+): Promise<{ body?: T; error?: string; rows?: R[] }> {
+  await client.query('begin');
+  try {
+    await client.query(
+      `select set_config('request.jwt.claim.sub', $1, true),
+              set_config('request.jwt.claims', $2, true),
+              set_config('TimeZone', 'UTC', true)`,
+      [userId, JSON.stringify({ sub: userId, role: 'authenticated' })],
+    );
+    await client.query('savepoint call');
+    let body: T | undefined;
+    let error: string | undefined;
+    try {
+      body = (await client.query<{ body: T }>(`select ${call} as body`, params)).rows[0].body;
+    } catch (caught) {
+      error = (caught as Error).message;
+      await client.query('rollback to savepoint call');
+    }
+    const rows = inspect
+      ? (await client.query<R & Record<string, unknown>>(inspect.statement, inspect.params ?? []))
+          .rows
+      : undefined;
+    return { body, error, rows };
+  } finally {
+    await client.query('rollback');
+  }
+}
+
 export interface SqlCallOptions {
   /**
    * The request `Host` header PostgREST would pass (`request.headers`), which `_avatars_public_url`

@@ -224,7 +224,7 @@ describe('OpenAPI document (API-100-12)', () => {
       expect(doc.components.schemas.ErrorBody.required).toEqual(['code', 'message', 'details']);
     });
 
-    it('lists only real routes: health, openapi, incidents, locations, config and circles', () => {
+    it('lists only real routes: health, openapi, incidents, locations, config, circles and invites', () => {
       expect(Object.keys(appDocument().paths).sort()).toEqual([
         '/healthz',
         '/readyz',
@@ -241,6 +241,11 @@ describe('OpenAPI document (API-100-12)', () => {
         '/v1/incidents/{id}/renotify',
         '/v1/me/circle',
         '/v1/me/circle/capacity',
+        '/v1/me/circle/invites/link',
+        '/v1/me/circle/invites/phone',
+        '/v1/me/circle/invites/phone/batch',
+        '/v1/me/circle/invites/{member_id}/cancel',
+        '/v1/me/circle/invites/{member_id}/resend',
         '/v1/me/incidents',
         '/v1/me/incidents/open',
         '/v1/openapi.json',
@@ -387,7 +392,9 @@ describe('OpenAPI document (API-100-12)', () => {
       expect(ids.sort()).toEqual([
         'acknowledgeIncident',
         'attachIncidentLocation',
+        'cancelCircleInvite',
         'circleInviteCapacity',
+        'createCircleInviteLink',
         'fetchOwnCircle',
         'getHealth',
         'getIncidentDetails',
@@ -396,12 +403,15 @@ describe('OpenAPI document (API-100-12)', () => {
         'getOpenApiDocument',
         'getReadiness',
         'incidentDeliveryCounts',
+        'inviteCircleMemberByPhone',
+        'inviteCircleMembersByPhone',
         'listCircleMembers',
         'listIncidentEvents',
         'listMyRecentIncidents',
         'listResponderIncidents',
         'markIncidentSafe',
         'renotifyEmergencyAlert',
+        'resendCircleInvite',
         'setIncidentNotes',
         'submitEmergencyAlert',
       ]);

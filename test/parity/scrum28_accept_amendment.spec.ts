@@ -4,7 +4,14 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
 import { createTestApp } from '../../src/testing/test-app';
-import { getCapacity, listMembers, sqlAs } from '../support/circle-api';
+import {
+  createInviteLink,
+  errorOf,
+  getCapacity,
+  invitePhone,
+  listMembers,
+  sqlAs,
+} from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import { createUser, fakeInviteToken, fakePhone, type UserFixture } from '../support/fixtures';
 
@@ -19,10 +26,14 @@ import { createUser, fakeInviteToken, fakePhone, type UserFixture } from '../sup
  * script's writes are done as it does them: raw inserts as the migration role, and the SQL functions
  * `accept_circle_invite` / `decline_circle_invite` as the invitee (API-100-30 replaces them).
  *
- * Done here (API-100-24/25): L69, L248, L267, L274, L297, L330.
+ * L308/L312 (no slot past 5, API-100-26/27): the script's raw insert at 5/5 still meets the
+ * capacity trigger's raw `circle_full` (the backstop the API relies on), and the owner's API invite
+ * writes at 5/5 answer the operation's code (`create_circle_invite_link:circle_full`,
+ * `invite_circle_member_by_phone:circle_full`); no row is added by any of them.
+ *
+ * Done here: API-100-24/25 L69, L248, L267, L274, L297, L330; API-100-26/27 L308, L312.
  *
  * Still `it.todo`, with the story that completes them:
- * - API-100-26 (phone invites; the raw `circle_full` of the capacity trigger): L308, L312.
  * - API-100-29 (preview): L141, L148, L212, L226, L233, L418, L425.
  * - API-100-30 (accept / decline): L49, L153, L157, L165, L179, L187, L192, L198, L205, L319, L326,
  *   L363, L366, L369, L399, L403, L411.
@@ -40,6 +51,17 @@ describe('scrum28_accept_amendment.sql', () => {
   let inviteeList: { status: number; body: string; rows: Member[] };
   let usedBeforeDecline: Body;
   let usedAfterDecline: Body;
+  let overflowRaw: string | undefined;
+  let overflowApi: Array<{ status: number; code: string }>;
+  let overflowRowsAdded: number;
+
+  const declineCircleRows = async (circleId: string) =>
+    (
+      await client.query<{ n: number }>(
+        'select count(*)::int as n from public.safety_circle_members where circle_id = $1',
+        [circleId],
+      )
+    ).rows[0].n;
 
   beforeAll(async () => {
     ({ app } = await createTestApp());
@@ -126,6 +148,27 @@ describe('scrum28_accept_amendment.sql', () => {
       );
     }
     usedBeforeDecline = (await getCapacity(app, owner2.id)).json<Body>();
+    // Past 5: the script's raw insert (the capacity trigger), and the API's invite writes.
+    const rowsBefore = await declineCircleRows(cidDecline);
+    overflowRaw = await client
+      .query(
+        `insert into public.safety_circle_members (circle_id, role, status, display_name,
+                                                   invite_token, invite_expires_at)
+         values ($1, 'member', 'pending', 'Overflow', $2, now() + interval '7 days')`,
+        [cidDecline, fakeInviteToken()],
+      )
+      .then(
+        () => undefined,
+        (error: Error) => error.message,
+      );
+    overflowApi = [];
+    for (const reply of [
+      await createInviteLink(app, owner2.id, { display_name: 'Overflow' }),
+      await invitePhone(app, owner2.id, { display_name: 'Overflow', phone: phones[5] }),
+    ]) {
+      overflowApi.push({ status: reply.statusCode, code: errorOf(reply).code });
+    }
+    overflowRowsAdded = (await declineCircleRows(cidDecline)) - rowsBefore;
     await sqlAs(client, invitee.id, 'public.decline_circle_invite($1)', [tDecline]);
     usedAfterDecline = (await getCapacity(app, owner2.id)).json<Body>();
   });
@@ -179,8 +222,19 @@ describe('scrum28_accept_amendment.sql', () => {
     expect(usedBeforeDecline.used).toBe(5);
   });
 
-  it.todo('L308: insert past 5 was allowed before decline');
-  it.todo('L312: full insert got %');
+  it('L308: insert past 5 was allowed before decline', () => {
+    expect(overflowRaw).toBeDefined();
+    expect(overflowApi.map((r) => r.status)).toEqual([409, 409]);
+    expect(overflowRowsAdded).toBe(0);
+  });
+
+  it('L312: full insert got %', () => {
+    expect(overflowRaw).toMatch(/circle_full/);
+    expect(overflowApi.map((r) => r.code)).toEqual([
+      'create_circle_invite_link:circle_full',
+      'invite_circle_member_by_phone:circle_full',
+    ]);
+  });
   it.todo('L319: decline failed: %');
   it.todo('L326: decline did not set declined');
 

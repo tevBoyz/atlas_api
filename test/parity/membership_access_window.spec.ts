@@ -6,14 +6,9 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 
 import { aliasColumn, deliveryOwn } from '../../src/common/policies';
 import { createTestApp } from '../../src/testing/test-app';
+import { createInviteLink } from '../support/circle-api';
 import { openTestClient } from '../support/database';
-import {
-  addActiveMember,
-  createCircle,
-  createUser,
-  inviteMember,
-  type UserFixture,
-} from '../support/fixtures';
+import { addActiveMember, createCircle, createUser, type UserFixture } from '../support/fixtures';
 import {
   acknowledgeIncident,
   callSqlAs,
@@ -41,11 +36,14 @@ import {
  * (`GET /v1/incidents/{id}`, `GET /v1/incidents/{id}/events`, delivery counts, and the `delivery.own`
  * policy).
  *
- * Still `it.todo`: the five membership-trigger assertions (activated_at of the owner, pending, newly
- * active and declined rows, and a client backdating it). They are about membership writes, which the
- * API gets in Phase 2: L84 (owner row) with API-100-36, L121 (pending invite) with API-100-26/27, L148
- * (accept) and L456 (decline) with API-100-30, L189 (no client-chosen activated_at;
- * `membership.activate`) with the Phase 2 gate API-100-33.
+ * The two pending invites (`Member Window`, `Pending Window`) are created through the API's link
+ * invite (`POST /v1/me/circle/invites/link`, API-100-27) by the resident, who owns the circle; L121
+ * checks that the API's pending row has no `activated_at`.
+ *
+ * Still `it.todo`: the other membership-trigger assertions (activated_at of the owner, newly active
+ * and declined rows, and a client backdating it), with the story that completes them: L84 (owner
+ * row) with API-100-36, L148 (accept) and L456 (decline) with API-100-30, L189 (no client-chosen
+ * activated_at; `membership.activate`) with the Phase 2 gate API-100-33.
  *
  * The window case for closure recipients (rule 54 in `_incident_active_recipient_ids`, used by
  * `mark_incident_safe`; the script closes incident A at L131 but has no assertion of its own) is
@@ -118,6 +116,7 @@ describe('membership_access_window.sql', () => {
   let outsiderEvents: Seen;
   let removedEvents: Seen;
   let leftEvents: Seen;
+  let pendingActivatedAt: string | null;
 
   /**
    * Runs `statement` (a `count(*)::int as n` query) as the `authenticated` role with `userId`'s JWT
@@ -215,8 +214,21 @@ describe('membership_access_window.sql', () => {
       [circle.id, early.id],
     );
     const removedRow = await addActiveMember(client, circle, removed);
-    const memberRow = await inviteMember(client, circle, { displayName: 'Member Window' });
-    await inviteMember(client, circle, { displayName: 'Pending Window' });
+    // The two pending invites through the API (API-100-27), as the resident (circle owner).
+    const memberInvite = await createInviteLink(app, resident.id, {
+      display_name: 'Member Window',
+    });
+    const pendingInvite = await createInviteLink(app, resident.id, {
+      display_name: 'Pending Window',
+    });
+    expect([memberInvite.statusCode, pendingInvite.statusCode]).toEqual([201, 201]);
+    const memberRow = { id: memberInvite.json<Body>().member_id as string };
+    pendingActivatedAt = (
+      await client.query<{ activated_at: string | null }>(
+        'select activated_at from public.safety_circle_members where id = $1',
+        [memberRow.id],
+      )
+    ).rows[0].activated_at;
 
     // Incident A: submitted, closed, and dated 1 day ago (before the member joins).
     aId = (await submitAlert(app, resident.id, 'medical')).json<Body>().id as string;
@@ -342,7 +354,9 @@ describe('membership_access_window.sql', () => {
   });
 
   it.todo('L84: owner row has no activated_at');
-  it.todo('L121: pending row has activated_at');
+  it('L121: pending row has activated_at', () => {
+    expect(pendingActivatedAt).toBeNull();
+  });
   it.todo('L148: activation did not stamp now(): %');
 
   it('L159: B should deliver to early, member, removed: %', () => {
