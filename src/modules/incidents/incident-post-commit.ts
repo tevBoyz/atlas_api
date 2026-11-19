@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { Logger } from 'pino';
 
 import { ROOT_LOGGER } from '../../observability/logger';
+import type { IncidentEventType } from './incident-events.service';
 import type { SubmitOutcome } from './incident.schemas';
 
 /**
@@ -48,6 +49,27 @@ export interface IncidentResolvedEvent extends IncidentRef {
 }
 
 /**
+ * Realtime `incident.delivery_counts` to the resident (API-100-20, API-100-41): a member's first
+ * acknowledge changed the counts. Not raised for a repeat acknowledge (nothing changed), an error or a
+ * counts read.
+ */
+export interface IncidentDeliveryCountsEvent extends IncidentRef {
+  delivered_count: number;
+  acknowledged_count: number;
+}
+
+/**
+ * Realtime `incident.event` (API-100-22, API-100-41): one `incident_events` row was inserted by a
+ * committed write (submit, re-notify, mark safe), in insertion order. Never raised for a once-only
+ * event that was already there (`ON CONFLICT DO NOTHING`). The detail is not carried: a hook that
+ * needs it reads the row, applying `incident.eventsView` and hiding `recipient_ids` from members.
+ */
+export interface IncidentEventRecordedEvent extends IncidentRef {
+  event_id: string;
+  event_type: IncidentEventType;
+}
+
+/**
  * Work that follows a committed incident write: realtime (API-100-41) and the outbox (API-100-48).
  * A hook implements the events it cares about.
  */
@@ -57,6 +79,8 @@ export interface IncidentPostCommitHook {
   afterNotes?(event: IncidentNotesEvent): void | Promise<void>;
   afterRenotify?(event: IncidentRenotifiedEvent): void | Promise<void>;
   afterResolved?(event: IncidentResolvedEvent): void | Promise<void>;
+  afterDeliveryCounts?(event: IncidentDeliveryCountsEvent): void | Promise<void>;
+  afterEvent?(event: IncidentEventRecordedEvent): void | Promise<void>;
 }
 
 /** The registered hooks. Empty until API-100-41 and API-100-48 add theirs. */
@@ -99,6 +123,29 @@ export class IncidentPostCommitRunner {
   /** `incident.resolved`. Never rejects. */
   afterResolved(event: IncidentResolvedEvent): Promise<void> {
     return this.run('afterResolved', event, (hook) => hook.afterResolved?.(event));
+  }
+
+  /** `incident.delivery_counts`. Never rejects. */
+  afterDeliveryCounts(event: IncidentDeliveryCountsEvent): Promise<void> {
+    return this.run('afterDeliveryCounts', event, (hook) => hook.afterDeliveryCounts?.(event));
+  }
+
+  /**
+   * `incident.event`, once per inserted event, in insertion order (each hook sees them in order).
+   * Never rejects.
+   */
+  async afterEvents(
+    incident: IncidentRef,
+    events: readonly { id: string; event_type: IncidentEventType }[],
+  ): Promise<void> {
+    for (const recorded of events) {
+      const event: IncidentEventRecordedEvent = {
+        ...incident,
+        event_id: recorded.id,
+        event_type: recorded.event_type,
+      };
+      await this.run('afterEvent', event, (hook) => hook.afterEvent?.(event));
+    }
   }
 
   private async run(

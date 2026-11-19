@@ -13,6 +13,9 @@ import {
 import {
   attachLocation,
   countRows,
+  getIncidentDetails,
+  getIncidentEvents,
+  listResponderIncidents,
   markSafe,
   renotifyAlert,
   submitAlert,
@@ -30,10 +33,10 @@ import {
  * app still reads through Supabase until cutover: they run as the SQL does, against the database
  * roles, after the API has written the rows.
  *
- * Still `it.todo`, because they read through endpoints of later stories:
- * - event visibility per caller (L230, L239, L268, L277): `GET /v1/incidents/{id}/events`, API-100-22;
- * - a member or outsider reading the closed incident (L244, L282) and member details (L315):
- *   `GET /v1/responder/incidents` and `GET /v1/incidents/{id}`, API-100-21.
+ * The RLS reads of the script (L230-L282) are checked twice: against the database roles, as the SQL
+ * does, and through the API that replaces them: `GET /v1/incidents/{id}/events` (API-100-22) for
+ * events, `GET /v1/incidents/{id}` and `GET /v1/responder/incidents` (API-100-21) for the incident;
+ * L315 reads member details through the API. Every assertion is covered.
  */
 type Reply = Awaited<ReturnType<typeof attachLocation>>;
 type Body = Record<string, unknown>;
@@ -44,6 +47,8 @@ describe('scrum45_closure_events.sql', () => {
   let resident: UserFixture;
   let member: UserFixture;
   let member2: UserFixture;
+  let pendingUser: UserFixture;
+  let outsider: UserFixture;
   let incidentId: string;
 
   let located: Reply;
@@ -58,6 +63,17 @@ describe('scrum45_closure_events.sql', () => {
   let afterLatePings: Body;
   let renotifyAfterClose: Reply;
   let newSubmit: Reply;
+  let residentEvents: { api: Reply; rls: number };
+  let memberEvents: { api: Reply; rls: number };
+  let pendingEvents: { api: Reply; rls: number };
+  let outsiderEvents: { api: Reply; rls: number };
+  let memberSeesClosed: number;
+  let memberDetailsClosed: Reply;
+  let memberListClosed: Body[];
+  let outsiderSees: number;
+  let outsiderDetails: Reply;
+  let outsiderList: Body[];
+  let memberDetailsAfterClose: Reply;
 
   const eventCounts = async (id: string) => {
     const { rows } = await client.query<{ counts: Body | null }>(
@@ -78,8 +94,8 @@ describe('scrum45_closure_events.sql', () => {
     resident = await createUser(client, { fullName: 'Resident Safe' });
     member = await createUser(client, { fullName: 'Member Safe' });
     member2 = await createUser(client, { fullName: 'Member Two' });
-    await createUser(client, { fullName: 'Pending Safe' });
-    await createUser(client, { fullName: 'Outsider Safe' });
+    pendingUser = await createUser(client, { fullName: 'Pending Safe' });
+    outsider = await createUser(client, { fullName: 'Outsider Safe' });
     const circle = await createCircle(client, resident);
     await addActiveMember(client, circle, member);
     await addActiveMember(client, circle, member2);
@@ -128,6 +144,35 @@ describe('scrum45_closure_events.sql', () => {
 
     renotifyAfterClose = await renotifyAlert(app, resident.id, incidentId);
 
+    // Visibility of the closed incident (the script's RLS block, then member details).
+    const eventsOf = async (userId: string) => ({
+      api: await getIncidentEvents(app, userId, incidentId),
+      rls: await rlsCount(
+        userId,
+        'select count(*)::int as n from public.incident_events where incident_id = $1',
+        [incidentId],
+      ),
+    });
+    residentEvents = await eventsOf(resident.id);
+    memberEvents = await eventsOf(member.id);
+    pendingEvents = await eventsOf(pendingUser.id);
+    outsiderEvents = await eventsOf(outsider.id);
+    memberSeesClosed = await rlsCount(
+      member.id,
+      `select count(*)::int as n from public.incidents where id = $1 and status = 'resolved'`,
+      [incidentId],
+    );
+    memberDetailsClosed = await getIncidentDetails(app, member.id, incidentId);
+    memberListClosed = (await listResponderIncidents(app, member.id)).json<Body[]>();
+    outsiderSees = await rlsCount(
+      outsider.id,
+      'select count(*)::int as n from public.incidents where id = $1',
+      [incidentId],
+    );
+    outsiderDetails = await getIncidentDetails(app, outsider.id, incidentId);
+    outsiderList = (await listResponderIncidents(app, outsider.id)).json<Body[]>();
+    memberDetailsAfterClose = await getIncidentDetails(app, member.id, incidentId);
+
     // A new submit after close is a new incident.
     newSubmit = await submitAlert(app, resident.id, 'medical');
   });
@@ -136,6 +181,26 @@ describe('scrum45_closure_events.sql', () => {
     await client.end();
     await app.close();
   });
+
+  /**
+   * Runs `statement` (a `count(*)::int as n` query) as the `authenticated` role with `userId`'s JWT
+   * claims, as the script's `set local role authenticated` block does. Always rolled back.
+   */
+  async function rlsCount(userId: string, statement: string, params: unknown[]) {
+    await client.query('begin');
+    try {
+      await client.query(
+        `select set_config('request.jwt.claim.sub', $1, true),
+                set_config('request.jwt.claims', $2, true)`,
+        [userId, JSON.stringify({ sub: userId, role: 'authenticated' })],
+      );
+      await client.query('set local role authenticated');
+      const { rows } = await client.query<{ n: number }>(statement, params);
+      return rows[0].n;
+    } finally {
+      await client.query('rollback');
+    }
+  }
 
   const codeOf = (reply: Reply) => reply.json<{ error: { code: string } }>().error.code;
 
@@ -303,9 +368,27 @@ describe('scrum45_closure_events.sql', () => {
     expect(codeOf(renotifyAfterClose)).toBe('renotify_emergency_alert:not_open');
   });
 
-  it.todo('L230: resident sees % events');
-  it.todo('L239: active member sees % events');
-  it.todo('L244: active member cannot see the closed incident');
+  it('L230: resident sees % events', () => {
+    expect(residentEvents.rls).toBe(6);
+    expect(residentEvents.api.statusCode).toBe(200);
+    expect(residentEvents.api.json<Body[]>()).toHaveLength(6);
+  });
+
+  it('L239: active member sees % events', () => {
+    expect(memberEvents.rls).toBe(6);
+    expect(memberEvents.api.statusCode).toBe(200);
+    const events = memberEvents.api.json<Body[]>();
+    expect(events).toHaveLength(6);
+    // Epic §18 D3: members never get recipient_ids (RLS would return them).
+    expect(memberEvents.api.body).not.toContain('recipient_ids');
+  });
+  it('L244: active member cannot see the closed incident', () => {
+    expect(memberSeesClosed).toBe(1);
+    // incident.memberView through the API: details and the responder list.
+    expect(memberDetailsClosed.statusCode).toBe(200);
+    expect(memberDetailsClosed.json<Body>().status).toBe('resolved');
+    expect(memberListClosed.map((row) => row.id)).toContain(incidentId);
+  });
 
   it('L250: member inserted an event', async () => {
     expect(
@@ -326,9 +409,23 @@ describe('scrum45_closure_events.sql', () => {
     ).toBe('42501');
   });
 
-  it.todo('L268: pending user sees % events');
-  it.todo('L277: outsider sees % events');
-  it.todo('L282: outsider sees the incident');
+  it('L268: pending user sees % events', () => {
+    expect(pendingEvents.rls).toBe(0);
+    expect(pendingEvents.api.statusCode).toBe(404);
+    expect(codeOf(pendingEvents.api)).toBe('incident_events:not_found');
+  });
+
+  it('L277: outsider sees % events', () => {
+    expect(outsiderEvents.rls).toBe(0);
+    expect(outsiderEvents.api.statusCode).toBe(404);
+    expect(codeOf(outsiderEvents.api)).toBe('incident_events:not_found');
+  });
+  it('L282: outsider sees the incident', () => {
+    expect(outsiderSees).toBe(0);
+    expect(outsiderDetails.statusCode).toBe(404);
+    expect(codeOf(outsiderDetails)).toBe('get_incident_details:not_found');
+    expect(outsiderList).toEqual([]);
+  });
 
   it('L292: resident updated an incident directly', async () => {
     expect(
@@ -348,7 +445,13 @@ describe('scrum45_closure_events.sql', () => {
     ).toBe('42501');
   });
 
-  it.todo('L315: member details after close wrong: %');
+  it('L315: member details after close wrong: %', () => {
+    expect(memberDetailsAfterClose.statusCode).toBe(200);
+    const details = memberDetailsAfterClose.json<Body>();
+    expect(details.status).toBe('resolved');
+    expect(details.location_sharing_ended_at).not.toBeNull();
+    expect(details.emergency_type).toBe('burglary');
+  });
 
   it('L327: submit after close failed: %', () => {
     expect(newSubmit.statusCode).toBe(201);

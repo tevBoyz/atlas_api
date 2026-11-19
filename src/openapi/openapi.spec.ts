@@ -230,6 +230,10 @@ describe('OpenAPI document (API-100-12)', () => {
         '/readyz',
         '/v1/config/live-location',
         '/v1/incidents',
+        '/v1/incidents/{id}',
+        '/v1/incidents/{id}/acknowledge',
+        '/v1/incidents/{id}/delivery-counts',
+        '/v1/incidents/{id}/events',
         '/v1/incidents/{id}/locations',
         '/v1/incidents/{id}/mark-safe',
         '/v1/incidents/{id}/notes',
@@ -237,6 +241,7 @@ describe('OpenAPI document (API-100-12)', () => {
         '/v1/me/incidents',
         '/v1/me/incidents/open',
         '/v1/openapi.json',
+        '/v1/responder/incidents',
       ]);
     });
 
@@ -377,13 +382,18 @@ describe('OpenAPI document (API-100-12)', () => {
         Object.values(path).map((op: any) => op.operationId as string),
       );
       expect(ids.sort()).toEqual([
+        'acknowledgeIncident',
         'attachIncidentLocation',
         'getHealth',
+        'getIncidentDetails',
         'getLiveLocationConfig',
         'getMyOpenIncident',
         'getOpenApiDocument',
         'getReadiness',
+        'incidentDeliveryCounts',
+        'listIncidentEvents',
         'listMyRecentIncidents',
+        'listResponderIncidents',
         'markIncidentSafe',
         'renotifyEmergencyAlert',
         'setIncidentNotes',

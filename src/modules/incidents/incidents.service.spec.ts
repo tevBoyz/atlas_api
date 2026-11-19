@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../../common/auth';
 import { DomainError } from '../../common/errors';
 import type { DatabaseService } from '../../db/database.service';
 import type { AuditService } from '../audit';
+import type { IncidentEventService, RecordedIncidentEvent } from './incident-events.service';
 import {
   type IncidentPostCommitHook,
   IncidentPostCommitRunner,
@@ -33,7 +34,10 @@ const EVENT: IncidentSubmittedEvent = {
   recipient_count: 0,
 };
 
-function serviceWith(overrides: Partial<Record<keyof IncidentsRepository, jest.Mock>> = {}) {
+function serviceWith(
+  overrides: Partial<Record<keyof IncidentsRepository, jest.Mock>> = {},
+  recorded: RecordedIncidentEvent[] = [],
+) {
   const repository = {
     useUtcTimestamps: jest.fn().mockResolvedValue(undefined),
     lockProfile: jest.fn().mockResolvedValue({ setup_complete: true }),
@@ -63,7 +67,9 @@ function serviceWith(overrides: Partial<Record<keyof IncidentsRepository, jest.M
     afterNotes: jest.fn().mockResolvedValue(undefined),
     afterRenotify: jest.fn().mockResolvedValue(undefined),
     afterResolved: jest.fn().mockResolvedValue(undefined),
+    afterEvents: jest.fn().mockResolvedValue(undefined),
   };
+  const events = { drain: jest.fn().mockReturnValue(recorded) };
   const database = {
     db: { transaction: (run: (tx: object) => Promise<unknown>) => run({}) },
   };
@@ -72,8 +78,9 @@ function serviceWith(overrides: Partial<Record<keyof IncidentsRepository, jest.M
     repository as unknown as IncidentsRepository,
     audit as unknown as AuditService,
     postCommit as unknown as IncidentPostCommitRunner,
+    events as unknown as IncidentEventService,
   );
-  return { service, repository, audit, postCommit };
+  return { service, repository, audit, postCommit, events };
 }
 
 describe('IncidentsService.submit (API-100-15)', () => {
@@ -445,4 +452,40 @@ describe('submitEmergencyAlertRequestSchema (API-100-15)', () => {
       );
     },
   );
+});
+
+describe('incident.event post-commit hook (API-100-22)', () => {
+  const RECORDED: RecordedIncidentEvent[] = [
+    { id: 'e1', incident_id: INCIDENT_ID, event_type: 'alert_sent' },
+    { id: 'e2', incident_id: INCIDENT_ID, event_type: 'location_sharing_started' },
+  ];
+
+  it('submit: the events the transaction inserted, after commit, with ids only', async () => {
+    const { service, postCommit, events } = serviceWith({}, RECORDED);
+    await service.submit(USER, 'fire');
+    expect(events.drain).toHaveBeenCalledWith({});
+    expect(postCommit.afterEvents).toHaveBeenCalledWith(
+      { incident_id: INCIDENT_ID, resident_id: USER.id, circle_id: null },
+      RECORDED,
+    );
+  });
+
+  it('no inserted event (already-safe no-op, a repeat): no hook', async () => {
+    const { service, postCommit } = serviceWith({
+      lockOwnIncident: jest
+        .fn()
+        .mockResolvedValue({ id: INCIDENT_ID, status: 'resolved', resolved_reason: 'safe' }),
+    });
+    await service.markSafe(USER, INCIDENT_ID);
+    expect(postCommit.afterEvents).not.toHaveBeenCalled();
+  });
+
+  it('a failed transaction runs no hook', async () => {
+    const { service, postCommit } = serviceWith(
+      { recordAlertSent: jest.fn().mockRejectedValue(new Error('boom')) },
+      RECORDED,
+    );
+    await expect(service.submit(USER, 'fire')).rejects.toBeInstanceOf(IncidentSubmitFailedError);
+    expect(postCommit.afterEvents).not.toHaveBeenCalled();
+  });
 });

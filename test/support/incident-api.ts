@@ -276,3 +276,89 @@ export async function countRows(
   const { rows } = await client.query<{ n: number }>(sql, params);
   return rows[0].n;
 }
+
+/** `GET /v1/incidents/{id}/delivery-counts` as `userId` (API-100-20). */
+export async function getDeliveryCounts(
+  app: NestFastifyApplication,
+  userId: string,
+  incidentId: string,
+) {
+  return app.inject({
+    method: 'GET',
+    url: `/v1/incidents/${incidentId}/delivery-counts`,
+    headers: await authHeader(userId),
+  });
+}
+
+/** `POST /v1/incidents/{id}/acknowledge` as `userId` (API-100-20; no body, no Idempotency-Key). */
+export async function acknowledgeIncident(
+  app: NestFastifyApplication,
+  userId: string,
+  incidentId: string,
+) {
+  return app.inject({
+    method: 'POST',
+    url: `/v1/incidents/${incidentId}/acknowledge`,
+    headers: await authHeader(userId),
+  });
+}
+
+/**
+ * Runs `select <call>` as `userId` like {@link callSqlAs}, but returns the outcome instead of
+ * throwing: the JSON, or the `fn:code` (P0001) / `sqlstate:<code>` of the error.
+ */
+export async function sqlOutcomeAs(
+  client: Client,
+  userId: string,
+  call: string,
+  params: unknown[] = [],
+): Promise<SqlOutcome> {
+  try {
+    return {
+      ok: true,
+      body: await callSqlAs<Record<string, unknown>>(client, userId, call, params),
+    };
+  } catch (error) {
+    const { code, message } = error as { code?: string; message?: string };
+    return {
+      ok: false,
+      code: code === 'P0001' ? String(message) : `sqlstate:${code}`,
+      sqlState: String(code),
+    };
+  }
+}
+
+/** `GET /v1/responder/incidents` as `userId` (API-100-21). */
+export async function listResponderIncidents(app: NestFastifyApplication, userId: string) {
+  return app.inject({
+    method: 'GET',
+    url: '/v1/responder/incidents',
+    headers: await authHeader(userId),
+  });
+}
+
+/** `GET /v1/incidents/{id}` as `userId` (API-100-21). */
+export async function getIncidentDetails(
+  app: NestFastifyApplication,
+  userId: string,
+  incidentId: string,
+) {
+  return app.inject({
+    method: 'GET',
+    url: `/v1/incidents/${incidentId}`,
+    headers: await authHeader(userId),
+  });
+}
+
+/** `GET /v1/incidents/{id}/events` as `userId` (API-100-22). */
+export async function getIncidentEvents(
+  app: NestFastifyApplication,
+  userId: string,
+  incidentId: string,
+) {
+  return app.inject({
+    method: 'GET',
+    url: `/v1/incidents/${incidentId}/events`,
+    headers: await authHeader(userId),
+  });
+}

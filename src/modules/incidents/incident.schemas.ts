@@ -124,6 +124,80 @@ export const recentIncidentSchema = componentSchema(
 
 export const recentIncidentListSchema = z.array(recentIncidentSchema);
 
+/**
+ * DeliveryCounts (spec §7.4, `_incident_delivery_counts_json`): exactly 4 keys. The body of
+ * `GET /v1/incidents/{id}/delivery-counts` and `POST /v1/incidents/{id}/acknowledge`.
+ */
+export const deliveryCountsSchema = componentSchema(
+  'DeliveryCounts',
+  z.object({
+    incident_id: z.uuid(),
+    delivered_count: z.number().int(),
+    acknowledged_count: z.number().int(),
+    status: incidentStatusSchema,
+  }),
+);
+
+/**
+ * One entry of `list_responder_incidents` (spec §7.4): exactly these 10 keys. Never `resident_id`,
+ * `circle_id` or profile data beyond `resident_name` (API-100-21 AC3).
+ */
+export const responderIncidentSchema = componentSchema(
+  'ResponderIncident',
+  z.object({
+    id: z.uuid(),
+    resident_name: z.string().describe("The resident's full name; empty string when unknown."),
+    emergency_type: emergencyTypeSchema,
+    activated_at: z.string(),
+    status: incidentStatusSchema,
+    sent_at: z.string().nullable(),
+    renotified_at: z.string().nullable(),
+    resolved_at: z.string().nullable(),
+    resolved_reason: z.string().nullable(),
+    auto_closed: z.boolean(),
+  }),
+);
+
+export const responderIncidentListSchema = z.array(responderIncidentSchema);
+
+/**
+ * IncidentDetails (spec §7.4, `get_incident_details`): exactly 19 keys. `share_payload` is the stored
+ * snapshot, `{}` when none. Never `resident_id` or `circle_id` (API-100-21 AC3).
+ */
+export const incidentDetailsSchema = componentSchema(
+  'IncidentDetails',
+  responderIncidentSchema.extend({
+    location_lat: z.number().nullable(),
+    location_lng: z.number().nullable(),
+    location_accuracy_m: z.number().nullable(),
+    location_captured_at: z.string().nullable(),
+    location_source: locationSourceSchema.nullable(),
+    location_sharing_ended_at: z.string().nullable(),
+    incident_notes: z.string().nullable(),
+    incident_notes_updated_at: z.string().nullable(),
+    share_payload: z.record(z.string(), z.string()),
+  }),
+);
+
+/**
+ * One entry of `GET /v1/incidents/{id}/events` (spec §4.7, §11.3 E11). `detail` per spec §5.6; for a
+ * caller who is not the resident, `recipient_ids` is left out (epic §18 D3).
+ */
+export const incidentEventSchema = componentSchema(
+  'IncidentEvent',
+  z.object({
+    id: z.uuid(),
+    event_type: z
+      .string()
+      .describe('See spec §5.6 (alert_sent, renotified, closure_notified, ...).'),
+    occurred_at: z.string(),
+    actor_id: z.uuid().nullable(),
+    detail: z.record(z.string(), z.unknown()),
+  }),
+);
+
+export const incidentEventListSchema = z.array(incidentEventSchema);
+
 /** `list_my_recent_incidents(p_limit integer default 5)`: null → 5, then clamped to 1–20. */
 export const RECENT_INCIDENTS_DEFAULT_LIMIT = 5;
 export const RECENT_INCIDENTS_MIN_LIMIT = 1;

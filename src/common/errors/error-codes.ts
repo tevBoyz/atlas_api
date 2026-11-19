@@ -121,6 +121,8 @@ export const PARITY_ERROR_CODES = {
   acknowledge_incident: ['not_authenticated', 'not_found', 'not_open'],
   list_responder_incidents: ['not_authenticated'],
   get_incident_details: ['not_authenticated', 'not_found'],
+  // §11.3 E11 `GET /v1/incidents/{id}/events` (API-100-22): new code, no SQL function behind it.
+  incident_events: ['not_authenticated', 'not_found'],
 
   // §7.5 Login lockout (prefix `login_lockout`, not the function name)
   login_lockout: [

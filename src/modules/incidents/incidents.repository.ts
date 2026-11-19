@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { type SQL, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 
 import { incidentAlias, incidentResident } from '../../common/policies';
 import type { Database } from '../../db';
+import { IncidentEventService } from './incident-events.service';
 import { INCIDENT_SEND_JSON, INCIDENT_SHARED_JSON } from './incident-json';
 import type { SubmitOutcome, SubmittableEmergencyType } from './incident.schemas';
 
@@ -31,9 +32,6 @@ export const CLOSURE_EVENT_TYPES = [
   'location_sharing_ended',
   'closure_notified',
 ] as const;
-
-type IncidentEventType =
-  'alert_sent' | 'location_sharing_started' | 'renotified' | (typeof CLOSURE_EVENT_TYPES)[number];
 
 export interface WrittenIncidentRow extends Record<string, unknown> {
   id: string;
@@ -87,6 +85,9 @@ const SHARE_PAYLOAD = sql`coalesce(
  */
 @Injectable()
 export class IncidentsRepository {
+  /** Every event goes through the one event writer (API-100-22). */
+  constructor(private readonly events: IncidentEventService) {}
+
   /** Timestamps in the response use the UTC offset whatever the server default is. */
   async useUtcTimestamps(tx: IncidentTransaction): Promise<void> {
     await tx.execute(sql`select set_config('TimeZone', 'UTC', true)`);
@@ -200,7 +201,7 @@ export class IncidentsRepository {
     incidentId: string,
     actorId: string,
   ): Promise<void> {
-    await this.recordEvent(
+    await this.events.record(
       tx,
       incidentId,
       'alert_sent',
@@ -226,7 +227,7 @@ export class IncidentsRepository {
     incidentId: string,
     actorId: string,
   ): Promise<void> {
-    await this.recordEvent(tx, incidentId, 'location_sharing_started', actorId, sql`'{}'::jsonb`);
+    await this.events.record(tx, incidentId, 'location_sharing_started', actorId, sql`'{}'::jsonb`);
   }
 
   /**
@@ -252,7 +253,7 @@ export class IncidentsRepository {
        where incident_id = ${incidentId}::uuid`);
     const refreshed = deliveries.rowCount ?? 0;
 
-    await this.recordEvent(
+    await this.events.record(
       tx,
       incidentId,
       'renotified',
@@ -472,16 +473,16 @@ export class IncidentsRepository {
     actorId: string,
     recipientIds: readonly string[],
   ): Promise<void> {
-    await this.recordEvent(tx, incidentId, 'safe_recorded', actorId, sql`'{}'::jsonb`);
-    await this.recordEvent(
+    await this.events.record(tx, incidentId, 'safe_recorded', actorId, sql`'{}'::jsonb`);
+    await this.events.record(
       tx,
       incidentId,
       'incident_closed',
       actorId,
       sql`jsonb_build_object('resolved_reason', 'safe')`,
     );
-    await this.recordEvent(tx, incidentId, 'location_sharing_ended', actorId, sql`'{}'::jsonb`);
-    await this.recordEvent(
+    await this.events.record(tx, incidentId, 'location_sharing_ended', actorId, sql`'{}'::jsonb`);
+    await this.events.record(
       tx,
       incidentId,
       'closure_notified',
@@ -491,29 +492,5 @@ export class IncidentsRepository {
             'recipient_ids', ${JSON.stringify(recipientIds)}::jsonb
           )`,
     );
-  }
-
-  /** `_incident_record_event`: once-only lifecycle types are no-ops on repeat. */
-  private async recordEvent(
-    tx: IncidentTransaction,
-    incidentId: string,
-    eventType: IncidentEventType,
-    actorId: string,
-    detail: SQL,
-  ): Promise<void> {
-    await tx.execute(sql`
-      insert into public.incident_events (incident_id, event_type, actor_id, detail)
-      values (${incidentId}::uuid, ${eventType}::text, ${actorId}::uuid,
-              coalesce(${detail}, '{}'::jsonb))
-      on conflict (incident_id, event_type)
-        where event_type in (
-          'alert_sent',
-          'location_sharing_started',
-          'location_sharing_ended',
-          'safe_recorded',
-          'incident_closed',
-          'closure_notified'
-        )
-      do nothing`);
   }
 }

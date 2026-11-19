@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../../common/auth';
 import { DomainError } from '../../common/errors';
 import { DatabaseService } from '../../db/database.service';
 import { type AuditAction, AuditService, type AuditTransaction } from '../audit';
+import { IncidentEventService, type RecordedIncidentEvent } from './incident-events.service';
 import { IncidentPostCommitRunner, type IncidentSubmittedEvent } from './incident-post-commit';
 import {
   IncidentOperationFailedError,
@@ -27,10 +28,12 @@ export interface SubmitResponse {
 interface CommittedSubmit {
   response: SubmitResponse;
   event: IncidentSubmittedEvent;
+  /** The `incident_events` rows the submit inserted (API-100-22 hook `incident.event`). */
+  events?: RecordedIncidentEvent[];
 }
 
 /** The audit row's session id: the claim only when it is a uuid (a bad claim must not fail a write). */
-function auditSessionId(user: AuthenticatedUser): string | null {
+export function auditSessionId(user: AuthenticatedUser): string | null {
   return user.sessionId && UUID.test(user.sessionId) ? user.sessionId : null;
 }
 
@@ -49,6 +52,7 @@ export class IncidentsService {
     private readonly repository: IncidentsRepository,
     private readonly audit: AuditService,
     private readonly postCommit: IncidentPostCommitRunner,
+    private readonly events: IncidentEventService,
   ) {}
 
   async submit(
@@ -57,11 +61,15 @@ export class IncidentsService {
   ): Promise<SubmitResponse> {
     const committed = await runIncidentTransaction(
       this.database,
-      (tx) => this.submitInTransaction(tx, user, emergencyType),
+      async (tx) => ({
+        ...(await this.submitInTransaction(tx, user, emergencyType)),
+        events: this.events.drain(tx),
+      }),
       (sqlState) => new IncidentSubmitFailedError(sqlState),
     );
     // Not awaited: the alert is committed, so a slow or failing hook must not affect the response.
     void this.postCommit.afterSubmit(committed.event);
+    this.afterEvents(committed.event, committed.events);
     return committed.response;
   }
 
@@ -134,16 +142,17 @@ export class IncidentsService {
         await this.recordAudit(tx, user, 'incident.renotified', incident.id, {
           recipient_count: recipientCount,
         });
-        return { incidentId: incident.id, body, recipientCount };
+        return { incidentId: incident.id, body, recipientCount, events: this.events.drain(tx) };
       },
       (sqlState) => new IncidentOperationFailedError(operation, sqlState),
     );
-    void this.postCommit.afterRenotify({
+    const ref = {
       incident_id: done.incidentId,
       resident_id: user.id,
       circle_id: done.body.circle_id as string | null,
-      recipient_count: done.recipientCount,
-    });
+    };
+    void this.postCommit.afterRenotify({ ...ref, recipient_count: done.recipientCount });
+    this.afterEvents(ref, done.events);
     return done.body;
   }
 
@@ -166,7 +175,11 @@ export class IncidentsService {
         const incident = await this.repository.lockOwnIncident(tx, incidentId, user.id);
         if (!incident) throw new DomainError('mark_incident_safe:not_found');
         if (incident.status === 'resolved' && incident.resolved_reason === 'safe') {
-          return { closed: undefined, body: await this.repository.sendResult(tx, incident.id) };
+          return {
+            closed: undefined,
+            body: await this.repository.sendResult(tx, incident.id),
+            events: [],
+          };
         }
         if (incident.status !== 'active') throw new DomainError('mark_incident_safe:not_open');
 
@@ -187,12 +200,16 @@ export class IncidentsService {
             recipient_count: recipientIds.length,
           },
           body,
+          events: this.events.drain(tx),
         };
       },
       (sqlState) => new IncidentOperationFailedError(operation, sqlState),
     );
     // Only the call that closed the incident, and only once that has committed.
-    if (done.closed) void this.postCommit.afterResolved(done.closed);
+    if (done.closed) {
+      void this.postCommit.afterResolved(done.closed);
+      this.afterEvents(done.closed, done.events);
+    }
     return done.body;
   }
 
@@ -305,6 +322,22 @@ export class IncidentsService {
         recipient_count: recipientCount,
       },
     };
+  }
+
+  /** Realtime `incident.event` for the events a committed write inserted. Not awaited. */
+  private afterEvents(
+    incident: { incident_id: string; resident_id: string; circle_id: string | null },
+    events: RecordedIncidentEvent[] | undefined,
+  ): void {
+    if (!events?.length) return;
+    void this.postCommit.afterEvents(
+      {
+        incident_id: incident.incident_id,
+        resident_id: incident.resident_id,
+        circle_id: incident.circle_id,
+      },
+      events,
+    );
   }
 
   private recordAudit(

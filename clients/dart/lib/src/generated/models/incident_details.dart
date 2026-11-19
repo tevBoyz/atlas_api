@@ -1,0 +1,80 @@
+// coverage:ignore-file
+// GENERATED CODE - DO NOT MODIFY BY HAND
+// ignore_for_file: type=lint, unused_import, invalid_annotation_target, unnecessary_import
+
+import 'package:json_annotation/json_annotation.dart';
+
+import 'incident_details_emergency_type.dart';
+import 'incident_details_location_source.dart';
+import 'incident_details_status.dart';
+
+part 'incident_details.g.dart';
+
+@JsonSerializable()
+class IncidentDetails {
+  const IncidentDetails({
+    required this.activatedAt,
+    required this.autoClosed,
+    required this.emergencyType,
+    required this.id,
+    required this.incidentNotes,
+    required this.incidentNotesUpdatedAt,
+    required this.locationAccuracyM,
+    required this.locationCapturedAt,
+    required this.locationLat,
+    required this.locationLng,
+    required this.locationSharingEndedAt,
+    required this.locationSource,
+    required this.renotifiedAt,
+    required this.residentName,
+    required this.resolvedAt,
+    required this.resolvedReason,
+    required this.sentAt,
+    required this.sharePayload,
+    required this.status,
+  });
+
+  factory IncidentDetails.fromJson(Map<String, Object?> json) =>
+      _$IncidentDetailsFromJson(json);
+
+  @JsonKey(name: 'activated_at')
+  final String activatedAt;
+  @JsonKey(name: 'auto_closed')
+  final bool autoClosed;
+  @JsonKey(name: 'emergency_type')
+  final IncidentDetailsEmergencyType emergencyType;
+  final String id;
+  @JsonKey(name: 'incident_notes')
+  final String? incidentNotes;
+  @JsonKey(name: 'incident_notes_updated_at')
+  final String? incidentNotesUpdatedAt;
+  @JsonKey(name: 'location_accuracy_m')
+  final num? locationAccuracyM;
+  @JsonKey(name: 'location_captured_at')
+  final String? locationCapturedAt;
+  @JsonKey(name: 'location_lat')
+  final num? locationLat;
+  @JsonKey(name: 'location_lng')
+  final num? locationLng;
+  @JsonKey(name: 'location_sharing_ended_at')
+  final String? locationSharingEndedAt;
+  @JsonKey(name: 'location_source')
+  final IncidentDetailsLocationSource? locationSource;
+  @JsonKey(name: 'renotified_at')
+  final String? renotifiedAt;
+
+  /// The resident's full name; empty string when unknown.
+  @JsonKey(name: 'resident_name')
+  final String residentName;
+  @JsonKey(name: 'resolved_at')
+  final String? resolvedAt;
+  @JsonKey(name: 'resolved_reason')
+  final String? resolvedReason;
+  @JsonKey(name: 'sent_at')
+  final String? sentAt;
+  @JsonKey(name: 'share_payload')
+  final Map<String, String> sharePayload;
+  final IncidentDetailsStatus status;
+
+  Map<String, Object?> toJson() => _$IncidentDetailsToJson(this);
+}
