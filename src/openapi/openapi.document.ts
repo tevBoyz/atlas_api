@@ -4,7 +4,8 @@ import { API_VERSION } from '../app.constants';
 import { type ErrorCode, parityCode } from '../common/errors/error-codes';
 import { messageForCode } from '../common/errors/error-messages';
 import { httpStatusForCode } from '../common/errors/http-status';
-import type { ApiContractOptions } from './api-contract.decorator';
+import type { ApiContractOptions, ApiResponseContract } from './api-contract.decorator';
+import { componentNameOf } from './component-schema';
 import type { DiscoveredRoute } from './route-discovery';
 import { errorBodySchema, SHARED_ENUM_SCHEMAS } from './schemas';
 
@@ -40,8 +41,30 @@ function nonSnakeCaseProperties(schema: unknown, path: string, problems: string[
   }
 }
 
-function jsonSchema(schema: z.ZodType, io: 'input' | 'output'): JsonObject {
-  const json = z.toJSONSchema(schema, { target: 'draft-2020-12', io }) as JsonObject;
+/** Called for every {@link componentSchema} nested in a converted schema. */
+type ComponentHandler = (name: string, schema: z.ZodType) => void;
+
+/**
+ * JSON Schema of `schema`. With `onComponent`, a nested schema published with
+ * {@link componentSchema} becomes a `$ref` (the root itself is always written out).
+ */
+function jsonSchema(
+  schema: z.ZodType,
+  io: 'input' | 'output',
+  onComponent?: ComponentHandler,
+): JsonObject {
+  const json = z.toJSONSchema(schema, {
+    target: 'draft-2020-12',
+    io,
+    override: ({ zodSchema, jsonSchema: converted, path }) => {
+      const name = onComponent && path.length > 0 ? componentNameOf(zodSchema) : undefined;
+      if (!name || !onComponent) return;
+      onComponent(name, zodSchema as unknown as z.ZodType);
+      const target = converted as JsonObject;
+      for (const key of Object.keys(target)) delete target[key];
+      target.$ref = `#/components/schemas/${name}`;
+    },
+  }) as JsonObject;
   delete json.$schema;
   return json;
 }
@@ -164,7 +187,7 @@ function buildOperation(
   problems: string[],
 ): JsonObject {
   const register = (name: string, schema: z.ZodType, io: 'input' | 'output') => {
-    const json = jsonSchema(schema, io);
+    const json = jsonSchema(schema, io, (component, inner) => register(component, inner, io));
     nonSnakeCaseProperties(json, name, problems);
     const existing = schemas.get(name);
     if (existing && JSON.stringify(existing) !== JSON.stringify(json)) {
@@ -174,21 +197,28 @@ function buildOperation(
     return { $ref: `#/components/schemas/${name}` };
   };
 
+  /** A named schema is a component; an unnamed array is written inline (its items carry the name). */
+  const responseSchema = (status: string, response: ApiResponseContract) => {
+    if (!response.schema) return undefined;
+    if (response.name) return register(response.name, response.schema, 'output');
+    if (response.schema instanceof z.ZodArray) {
+      const json = jsonSchema(response.schema, 'output', (component, inner) =>
+        register(component, inner, 'output'),
+      );
+      nonSnakeCaseProperties(json, `${route.name} ${status}`, problems);
+      return json;
+    }
+    problems.push(`${route.name}: the ${status} response schema needs a name`);
+    return undefined;
+  };
+
   const responses: JsonObject = errorResponses(route, contract);
   for (const [status, response] of Object.entries(contract.responses)) {
-    if (response.schema && !response.name) {
-      problems.push(`${route.name}: the ${status} response schema needs a name`);
-      continue;
-    }
+    const schema = responseSchema(status, response);
+    if (response.schema && !schema) continue;
     responses[status] = {
       description: response.description,
-      ...(response.schema && response.name
-        ? {
-            content: {
-              'application/json': { schema: register(response.name, response.schema, 'output') },
-            },
-          }
-        : {}),
+      ...(schema ? { content: { 'application/json': { schema } } } : {}),
     };
   }
 

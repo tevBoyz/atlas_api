@@ -280,11 +280,24 @@ null), `incident.resident`, `incident.memberView`, `incident.eventsView`, `incid
 - Audit `detail` holds `recipient_count` and `submit_outcome` only. Database errors are replaced
   before they are logged, so query parameters and row values never reach the logs.
 
+## Open and recent incidents (API-100-16, `src/modules/incidents`)
+
+- `GET /v1/me/incidents/open` → `{"open_incident": IncidentSend | null}` (always the wrapper). The
+  incident is the same JSON submit returns, minus `submit_outcome`.
+- `GET /v1/me/incidents?limit=n` → the caller's `active`/`resolved` incidents, newest
+  `activated_at` first (then `id` desc). `limit` missing → 5; any integer is clamped to 1-20; a value
+  that is not an integer (`abc`, `2.5`, empty, outside int4) → 422 `validation:invalid_request`
+  with `details.field = "limit"`.
+- Read-only transactions in UTC; only the caller's own incidents (`incident.resident`).
+
 ## OpenAPI and the Dart client (API-100-12, `src/openapi`, `clients/dart`)
 
 - Every route declares `@ApiContract({ operationId, summary, tag, responses, ... })` with zod schemas.
   Bearer security, the `Idempotency-Key` header, 401, 429 and the error envelope are derived from the
   route's own decorators.
+- A schema wrapped in `componentSchema('Name', ...)` is published once and referenced by `$ref`
+  wherever it is nested, so the Dart client gets one class. An array response needs no name: it is
+  written inline and typed as a list of its (named) items.
 - `npm run openapi:generate` writes `openapi.json`; `npm run openapi:check` fails on any byte
   difference. Neither needs a database, Redis or `.env`.
 - `GET /v1/openapi.json` is public while `OPENAPI_ENABLED` is on (default) and always 404 in production.

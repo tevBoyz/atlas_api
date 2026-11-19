@@ -5,7 +5,10 @@ import type { ErrorCode } from '../common/errors/error-codes';
 
 export const API_CONTRACT_METADATA = 'atlas:api-contract';
 
-/** A documented response with a body. `name` becomes the schema (and Dart class) name. */
+/**
+ * A documented response with a body. `name` becomes the schema (and Dart class) name; required for a
+ * body schema except an array, which is written inline (name its items with `componentSchema`).
+ */
 export interface ApiResponseContract {
   description: string;
   name?: string;

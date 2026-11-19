@@ -12,6 +12,7 @@ import { Public, SkipRateLimit } from '../common/guards/route-access';
 import { Idempotent } from '../common/idempotency';
 import { createTestApp, withTestConfig } from '../testing/test-app';
 import { ApiContract } from './api-contract.decorator';
+import { componentSchema } from './component-schema';
 import {
   buildOpenApiDocument,
   OpenApiContractError,
@@ -103,6 +104,56 @@ class CamelCaseController {
   }
 }
 
+const sampleItemSchema = componentSchema('SampleItem', z.object({ item_id: z.string() }));
+
+@Controller('components')
+class ComponentController {
+  @Get('one')
+  @Operation('get_my_open_incident')
+  @ApiContract({
+    operationId: 'componentOne',
+    summary: 'S',
+    tag: 't',
+    responses: {
+      200: {
+        description: 'd',
+        name: 'SampleWrapper',
+        schema: z.object({ item: sampleItemSchema.nullable() }),
+      },
+    },
+  })
+  one() {
+    return {};
+  }
+
+  @Get('list')
+  @Operation('list_my_recent_incidents')
+  @ApiContract({
+    operationId: 'componentList',
+    summary: 'S',
+    tag: 't',
+    responses: { 200: { description: 'd', schema: z.array(sampleItemSchema) } },
+  })
+  list() {
+    return [];
+  }
+}
+
+@Controller('unnamed')
+class UnnamedObjectController {
+  @Get()
+  @Operation('get_my_open_incident')
+  @ApiContract({
+    operationId: 'unnamed',
+    summary: 'S',
+    tag: 't',
+    responses: { 200: { description: 'd', schema: z.object({ a: z.string() }) } },
+  })
+  get() {
+    return {};
+  }
+}
+
 @Controller('dup')
 class DuplicateIdController {
   @Get('a')
@@ -178,6 +229,8 @@ describe('OpenAPI document (API-100-12)', () => {
         '/healthz',
         '/readyz',
         '/v1/incidents',
+        '/v1/me/incidents',
+        '/v1/me/incidents/open',
         '/v1/openapi.json',
       ]);
     });
@@ -275,14 +328,55 @@ describe('OpenAPI document (API-100-12)', () => {
       expect(schemas.MemberStatus.enum).toContain('declined');
     });
 
+    it('a componentSchema is published once and referenced by $ref', () => {
+      const components = buildOpenApiDocument(discoverRoutes([ComponentController])) as any;
+      expect(components.components.schemas.SampleItem).toMatchObject({
+        type: 'object',
+        properties: { item_id: { type: 'string' } },
+      });
+      expect(components.components.schemas.SampleWrapper.properties.item).toEqual({
+        anyOf: [{ $ref: '#/components/schemas/SampleItem' }, { type: 'null' }],
+      });
+    });
+
+    it('an unnamed array response is inline, its items a $ref', () => {
+      const components = buildOpenApiDocument(discoverRoutes([ComponentController])) as any;
+      const list = components.paths['/v1/components/list'].get.responses['200'];
+      expect(list.content['application/json'].schema).toEqual({
+        type: 'array',
+        items: { $ref: '#/components/schemas/SampleItem' },
+      });
+    });
+
+    it('the app publishes IncidentSend and RecentIncident as components', () => {
+      const doc = appDocument();
+      expect(doc.components.schemas.OpenIncidentResult.properties.open_incident).toEqual({
+        anyOf: [{ $ref: '#/components/schemas/IncidentSend' }, { type: 'null' }],
+      });
+      expect(Object.keys(doc.components.schemas.IncidentSend.properties)).toHaveLength(24);
+      expect(
+        doc.paths['/v1/me/incidents'].get.responses['200'].content['application/json'].schema,
+      ).toEqual({ type: 'array', items: { $ref: '#/components/schemas/RecentIncident' } });
+      expect(doc.paths['/v1/me/incidents'].get.parameters).toEqual([
+        expect.objectContaining({
+          name: 'limit',
+          in: 'query',
+          required: false,
+          schema: expect.objectContaining({ type: 'integer' }),
+        }),
+      ]);
+    });
+
     it('AC3: operationIds are stable and unique', () => {
       const ids = Object.values(appDocument().paths).flatMap((path: any) =>
         Object.values(path).map((op: any) => op.operationId as string),
       );
       expect(ids.sort()).toEqual([
         'getHealth',
+        'getMyOpenIncident',
         'getOpenApiDocument',
         'getReadiness',
+        'listMyRecentIncidents',
         'submitEmergencyAlert',
       ]);
     });
@@ -305,6 +399,10 @@ describe('OpenAPI document (API-100-12)', () => {
 
     it('a property that is not snake_case fails the generation', () => {
       expect(problems(CamelCaseController)).toContain('"userId" is not snake_case');
+    });
+
+    it('an unnamed response object fails the generation', () => {
+      expect(problems(UnnamedObjectController)).toContain('the 200 response schema needs a name');
     });
 
     it('a duplicated operationId fails the generation', () => {

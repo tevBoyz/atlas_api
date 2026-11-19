@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { type SQL, sql } from 'drizzle-orm';
 
+import { incidentAlias, incidentResident } from '../../common/policies';
 import type { Database } from '../../db';
 import type { SubmitOutcome, SubmittableEmergencyType } from './incident.schemas';
 
@@ -53,9 +54,55 @@ const SHARE_PAYLOAD = sql`coalesce(
 )`;
 
 /**
+ * `_incident_send_json(rec)` for the incident aliased `rec`: IncidentShared (`_incident_activation_json`,
+ * 22 keys) plus `delivered_count` and `acknowledged_count`. Submit and the open-incident read both use
+ * it, so their bodies are the same bytes for the same row (microsecond timestamps, jsonb key order).
+ */
+const INCIDENT_SEND_JSON = sql`(
+  jsonb_build_object(
+    'id', rec.id,
+    'resident_id', rec.resident_id,
+    'circle_id', rec.circle_id,
+    'status', rec.status,
+    'activated_at', rec.activated_at,
+    'emergency_type', rec.emergency_type,
+    'location_lat', rec.location_lat,
+    'location_lng', rec.location_lng,
+    'location_accuracy_m', rec.location_accuracy_m,
+    'location_captured_at', rec.location_captured_at,
+    'location_source', rec.location_source,
+    'cancelled_at', rec.cancelled_at,
+    'sent_at', rec.sent_at,
+    'share_payload', rec.share_payload,
+    'incident_notes', rec.incident_notes,
+    'incident_notes_updated_at', rec.incident_notes_updated_at,
+    'renotified_at', rec.renotified_at,
+    'resolved_at', rec.resolved_at,
+    'resolved_reason', rec.resolved_reason,
+    'auto_closed', rec.auto_closed,
+    'activity_confirmed_at', rec.activity_confirmed_at,
+    'location_sharing_ended_at', rec.location_sharing_ended_at
+  )
+  || jsonb_build_object(
+    'delivered_count', (
+      select count(*)::int
+        from public.incident_deliveries d
+       where d.incident_id = rec.id
+    ),
+    'acknowledged_count', (
+      select count(*)::int
+        from public.incident_deliveries d
+       where d.incident_id = rec.id
+         and d.acknowledged_at is not null
+    )
+  )
+)`;
+
+/**
  * The SQL statements of `submit_emergency_alert` (final definition: baseline migration
  * 20261023150000), one method per step, in the order the function runs them. Every method takes the
- * caller's transaction, so all of a submit commits or rolls back together.
+ * caller's transaction, so all of a submit commits or rolls back together. Also the resident reads
+ * `get_my_open_incident` and `list_my_recent_incidents`.
  *
  * JSON is built by Postgres, as the SQL function does, so timestamps keep their microseconds and
  * format. Medical values stay inside these statements except for the response body itself.
@@ -244,46 +291,65 @@ export class IncidentsRepository {
     outcome: SubmitOutcome,
   ): Promise<Record<string, unknown>> {
     const result = await tx.execute<{ body: Record<string, unknown> }>(sql`
-      select jsonb_build_object(
-               'id', rec.id,
-               'resident_id', rec.resident_id,
-               'circle_id', rec.circle_id,
-               'status', rec.status,
-               'activated_at', rec.activated_at,
-               'emergency_type', rec.emergency_type,
-               'location_lat', rec.location_lat,
-               'location_lng', rec.location_lng,
-               'location_accuracy_m', rec.location_accuracy_m,
-               'location_captured_at', rec.location_captured_at,
-               'location_source', rec.location_source,
-               'cancelled_at', rec.cancelled_at,
-               'sent_at', rec.sent_at,
-               'share_payload', rec.share_payload,
-               'incident_notes', rec.incident_notes,
-               'incident_notes_updated_at', rec.incident_notes_updated_at,
-               'renotified_at', rec.renotified_at,
-               'resolved_at', rec.resolved_at,
-               'resolved_reason', rec.resolved_reason,
-               'auto_closed', rec.auto_closed,
-               'activity_confirmed_at', rec.activity_confirmed_at,
-               'location_sharing_ended_at', rec.location_sharing_ended_at
-             )
-             || jsonb_build_object(
-               'delivered_count', (
-                 select count(*)::int
-                   from public.incident_deliveries d
-                  where d.incident_id = rec.id
-               ),
-               'acknowledged_count', (
-                 select count(*)::int
-                   from public.incident_deliveries d
-                  where d.incident_id = rec.id
-                    and d.acknowledged_at is not null
-               )
-             )
+      select ${INCIDENT_SEND_JSON}
              || jsonb_build_object('submit_outcome', ${outcome}::text) as body
         from public.incidents rec
        where rec.id = ${incidentId}::uuid`);
+    return result.rows[0].body;
+  }
+
+  /**
+   * `get_my_open_incident` (final definition: baseline migration 20261023160000): the caller's
+   * `active` incident as `_incident_send_json`, or null. One statement, so the incident and its counts
+   * come from one snapshot.
+   */
+  async openIncident(
+    tx: IncidentTransaction,
+    residentId: string,
+  ): Promise<Record<string, unknown> | null> {
+    const result = await tx.execute<{ body: Record<string, unknown> }>(sql`
+      select ${INCIDENT_SEND_JSON} as body
+        from public.incidents rec
+       where ${incidentResident.where({ callerId: residentId, incident: incidentAlias('rec') })}
+         and rec.status = 'active'
+       order by rec.activated_at desc
+       limit 1`);
+    return result.rows[0]?.body ?? null;
+  }
+
+  /**
+   * `list_my_recent_incidents` (final definition: baseline migration 20261023160000): the caller's
+   * `active`/`resolved` incidents, newest `activated_at` first then `id` desc. `limit` is already
+   * clamped (see `clampRecentIncidentsLimit`).
+   */
+  async recentIncidents(
+    tx: IncidentTransaction,
+    residentId: string,
+    limit: number,
+  ): Promise<Record<string, unknown>[]> {
+    const result = await tx.execute<{ body: Record<string, unknown>[] }>(sql`
+      select coalesce(
+               jsonb_agg(r.payload order by r.activated_at desc, r.id desc),
+               '[]'::jsonb
+             ) as body
+        from (
+          select i.id,
+                 i.activated_at,
+                 jsonb_build_object(
+                   'id', i.id,
+                   'emergency_type', i.emergency_type,
+                   'status', i.status,
+                   'activated_at', i.activated_at,
+                   'sent_at', i.sent_at,
+                   'resolved_at', i.resolved_at,
+                   'resolved_reason', i.resolved_reason
+                 ) as payload
+            from public.incidents i
+           where ${incidentResident.where({ callerId: residentId, incident: incidentAlias('i') })}
+             and i.status in ('active', 'resolved')
+           order by i.activated_at desc, i.id desc
+           limit ${limit}::int
+        ) as r`);
     return result.rows[0].body;
   }
 

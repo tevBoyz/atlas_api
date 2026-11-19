@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { componentSchema } from '../../openapi/component-schema';
 import {
   emergencyTypeSchema,
   incidentStatusSchema,
@@ -52,13 +53,76 @@ export const incidentSharedSchema = z.object({
   location_sharing_ended_at: z.string().nullable(),
 });
 
-/** IncidentSend (spec §7.0): IncidentShared plus the delivery counts. */
-export const incidentSendSchema = incidentSharedSchema.extend({
-  delivered_count: z.number().int(),
-  acknowledged_count: z.number().int(),
-});
+/** IncidentSend (spec §7.0): IncidentShared plus the delivery counts. Submit and the open read. */
+export const incidentSendSchema = componentSchema(
+  'IncidentSend',
+  incidentSharedSchema.extend({
+    delivered_count: z.number().int(),
+    acknowledged_count: z.number().int(),
+  }),
+);
 
 /** The body of `POST /v1/incidents`: IncidentSend plus `submit_outcome`. */
 export const incidentSubmitResultSchema = incidentSendSchema.extend({
   submit_outcome: z.enum(SUBMIT_OUTCOMES),
+});
+
+/**
+ * The body of `GET /v1/me/incidents/open` (epic §18 D2): always this wrapper, `null` when the caller
+ * has no active incident. `get_my_open_incident` itself returned IncidentSend or bare JSON `null`.
+ */
+export const openIncidentResultSchema = z.object({
+  open_incident: incidentSendSchema.nullable(),
+});
+
+/** One entry of `list_my_recent_incidents`: exactly these 7 keys. */
+export const recentIncidentSchema = componentSchema(
+  'RecentIncident',
+  z.object({
+    id: z.uuid(),
+    emergency_type: emergencyTypeSchema,
+    status: incidentStatusSchema,
+    activated_at: z.string(),
+    sent_at: z.string().nullable(),
+    resolved_at: z.string().nullable(),
+    resolved_reason: z.string().nullable(),
+  }),
+);
+
+export const recentIncidentListSchema = z.array(recentIncidentSchema);
+
+/** `list_my_recent_incidents(p_limit integer default 5)`: null → 5, then clamped to 1–20. */
+export const RECENT_INCIDENTS_DEFAULT_LIMIT = 5;
+export const RECENT_INCIDENTS_MIN_LIMIT = 1;
+export const RECENT_INCIDENTS_MAX_LIMIT = 20;
+
+/** `least(greatest(coalesce(p_limit, 5), 1), 20)`. */
+export function clampRecentIncidentsLimit(limit: number | undefined): number {
+  return Math.min(
+    Math.max(limit ?? RECENT_INCIDENTS_DEFAULT_LIMIT, RECENT_INCIDENTS_MIN_LIMIT),
+    RECENT_INCIDENTS_MAX_LIMIT,
+  );
+}
+
+const INT4_MIN = -2_147_483_648;
+const INT4_MAX = 2_147_483_647;
+/** A base-10 integer with an optional sign: what a client sends for an `integer` parameter. */
+const DECIMAL_INTEGER = /^[+-]?\d+$/;
+
+/**
+ * `?limit=`. The SQL parameter is a Postgres `integer`, so any value Postgres would refuse as one
+ * (letters, decimals, empty, out of int4 range) is 422 `validation:invalid_request` with
+ * `details.field = "limit"`, never silently defaulted. Any integer, including 0 and negatives, is
+ * accepted and clamped like the SQL. Missing → 5 (a query string cannot carry JSON `null`).
+ */
+export const recentIncidentsQuerySchema = z.object({
+  limit: z
+    .preprocess(
+      (value) => (typeof value === 'string' && DECIMAL_INTEGER.test(value) ? Number(value) : value),
+      z.int().min(INT4_MIN).max(INT4_MAX),
+    )
+    .optional()
+    .describe(
+      `How many incidents to return. Default ${RECENT_INCIDENTS_DEFAULT_LIMIT}; any integer is clamped to ${RECENT_INCIDENTS_MIN_LIMIT}-${RECENT_INCIDENTS_MAX_LIMIT}.`,
+    ),
 });

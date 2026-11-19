@@ -61,6 +61,205 @@
         ],
         "type": "object"
       },
+      "IncidentSend": {
+        "additionalProperties": false,
+        "properties": {
+          "acknowledged_count": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "activated_at": {
+            "type": "string"
+          },
+          "activity_confirmed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "auto_closed": {
+            "type": "boolean"
+          },
+          "cancelled_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "circle_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivered_count": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "emergency_type": {
+            "enum": [
+              "medical",
+              "domestic_violence",
+              "fire",
+              "burglary",
+              "other",
+              "unspecified"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "incident_notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "incident_notes_updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_accuracy_m": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "location_captured_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_lat": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "location_lng": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "location_sharing_ended_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "current",
+                  "last_known",
+                  "unavailable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "renotified_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resident_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sent_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "share_payload": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "active",
+              "resolved",
+              "activating",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "resident_id",
+          "circle_id",
+          "status",
+          "activated_at",
+          "emergency_type",
+          "location_lat",
+          "location_lng",
+          "location_accuracy_m",
+          "location_captured_at",
+          "location_source",
+          "cancelled_at",
+          "sent_at",
+          "share_payload",
+          "incident_notes",
+          "incident_notes_updated_at",
+          "renotified_at",
+          "resolved_at",
+          "resolved_reason",
+          "auto_closed",
+          "activity_confirmed_at",
+          "location_sharing_ended_at",
+          "delivered_count",
+          "acknowledged_count"
+        ],
+        "type": "object"
+      },
       "IncidentStatus": {
         "enum": [
           "active",
@@ -310,6 +509,25 @@
         "properties": {},
         "type": "object"
       },
+      "OpenIncidentResult": {
+        "additionalProperties": false,
+        "properties": {
+          "open_incident": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IncidentSend"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "open_incident"
+        ],
+        "type": "object"
+      },
       "ReadinessUnavailable": {
         "additionalProperties": false,
         "properties": {
@@ -332,6 +550,67 @@
         "required": [
           "status",
           "failed"
+        ],
+        "type": "object"
+      },
+      "RecentIncident": {
+        "additionalProperties": false,
+        "properties": {
+          "activated_at": {
+            "type": "string"
+          },
+          "emergency_type": {
+            "enum": [
+              "medical",
+              "domestic_violence",
+              "fire",
+              "burglary",
+              "other",
+              "unspecified"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sent_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "enum": [
+              "active",
+              "resolved",
+              "activating",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "emergency_type",
+          "status",
+          "activated_at",
+          "sent_at",
+          "resolved_at",
+          "resolved_reason"
         ],
         "type": "object"
       },
@@ -677,6 +956,232 @@
           }
         ],
         "summary": "Create the emergency alert, or re-notify the one already open",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/v1/me/incidents": {
+      "get": {
+        "operationId": "listMyRecentIncidents",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "description": "How many incidents to return. Default 5; any integer is clamped to 1-20.",
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RecentIncident"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Newest `activated_at` first; legacy cancelled/activating incidents are left out"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "list_my_recent_incidents:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "list_my_recent_incidents:not_authenticated"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The active and resolved incidents of the caller, newest first",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/v1/me/incidents/open": {
+      "get": {
+        "operationId": "getMyOpenIncident",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenIncidentResult"
+                }
+              }
+            },
+            "description": "`open_incident` is the active incident, or null when there is none"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "get_my_open_incident:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "get_my_open_incident:not_authenticated"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The active incident of the caller, to restore Alert Sent after a restart or a lost response",
         "tags": [
           "incidents"
         ]
