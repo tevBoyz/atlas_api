@@ -24,12 +24,15 @@ function sectionLines(markdown: string, heading: string): string[] {
 }
 
 function cellsOf(row: string): string[] {
-  return row
-    .trim()
-    .replace(/^\|/, '')
-    .replace(/\|$/, '')
-    .split('|')
-    .map((cell) => cell.trim());
+  return (
+    row
+      .trim()
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      // `\|` is a pipe inside a cell (e.g. `{circle: ...\|null}`), not a column separator.
+      .split(/(?<!\\)\|/)
+      .map((cell) => cell.trim())
+  );
 }
 
 const withoutRemarks = (cell: string) => cell.replace(/\([^)]*\)/g, '');
@@ -65,4 +68,89 @@ export function specIncidentEventsCodes(markdown: string): string[] {
 export function specIncidentErrorCodes(file: string = SPEC_FILE): string[] {
   const markdown = readFileSync(file, 'utf8');
   return [...new Set([...specIncidentRpcCodes(markdown), ...specIncidentEventsCodes(markdown)])];
+}
+
+/**
+ * Backticked codes of one cell or line, as full `fn:code` strings: `fn:code` is taken as is (and
+ * becomes the prefix of what follows), `:code` and a bare `code` get the current prefix. Wildcards
+ * (`fn:*`) are skipped.
+ */
+function codesIn(text: string, prefix: string | undefined): string[] {
+  const codes: string[] = [];
+  let current = prefix;
+  for (const match of withoutRemarks(text).matchAll(/`([^`]+)`/g)) {
+    const token = match[1];
+    if (!/^[a-z_]*:?[a-z_*]+$/.test(token)) throw new Error(`not a code: ${token}`);
+    const colon = token.indexOf(':');
+    const fn = colon < 0 ? undefined : token.slice(0, colon);
+    const code = colon < 0 ? token : token.slice(colon + 1);
+    if (fn) current = fn;
+    if (code === '*') continue;
+    if (!current) throw new Error(`code without a prefix: ${token}`);
+    codes.push(`${current}:${code}`);
+  }
+  return codes;
+}
+
+/** `fn:code` strings of spec §7.2 (owner side): one table row per RPC, errors in the 3rd cell. */
+export function specCircleOwnerCodes(markdown: string): string[] {
+  const rows = sectionLines(markdown, '### 7.2 Circles and invites (owner side)').filter((line) =>
+    /^\| `\w+\(/.test(line),
+  );
+  const codes: string[] = [];
+  for (const row of rows) {
+    const cells = cellsOf(row);
+    const fn = /^`(\w+)\(/.exec(cells[0])?.[1];
+    // Columns: RPC (args) | Returns | Errors (prefix = RPC name) | Notes
+    if (!fn || cells.length !== 4) throw new Error(`unexpected §7.2 row: ${row.slice(0, 60)}`);
+    codes.push(...codesIn(cells[2], fn));
+  }
+  return codes;
+}
+
+/**
+ * `fn:code` strings of spec §7.3 (invitee / member side): one `####` heading per RPC; its codes are
+ * the backticked ones after `Errors:` on the same line (none for `lookup_circle_invite`).
+ */
+export function specCircleInviteeCodes(markdown: string): string[] {
+  const lines = sectionLines(markdown, '### 7.3 Circles and invites (invitee / member side)');
+  const codes: string[] = [];
+  let fn: string | undefined;
+  for (const line of lines) {
+    const heading = /^#### `(\w+)\(/.exec(line);
+    if (heading) {
+      fn = heading[1];
+      continue;
+    }
+    const at = line.indexOf('Errors:');
+    if (at >= 0 && fn) codes.push(...codesIn(line.slice(at + 'Errors:'.length), fn));
+  }
+  return codes;
+}
+
+/** Full codes named in the errors cell of the spec §11.3 rows C1-C6 and I1-I11. */
+export function specCircleEndpointCodes(markdown: string): string[] {
+  const codes: string[] = [];
+  for (const line of markdown.split(/\r?\n/)) {
+    if (!/^\| [CI]\d+ \|/.test(line)) continue;
+    const cells = cellsOf(line);
+    // Columns: # | Method + path | Replaces | Request | Response | Errors | Authorization | Tag
+    if (cells.length !== 8) throw new Error(`unexpected §11.3 row: ${line.slice(0, 60)}`);
+    // Only full codes start a prefix here; a bare word (e.g. a status) is not a code.
+    if (!/`[a-z_]+:/.test(cells[5])) continue;
+    codes.push(...codesIn(cells[5], undefined));
+  }
+  return codes;
+}
+
+/** Every circle / invite error code the spec names (§7.2, §7.3, §11.3 C/I rows), deduplicated. */
+export function specCircleErrorCodes(file: string = SPEC_FILE): string[] {
+  const markdown = readFileSync(file, 'utf8');
+  return [
+    ...new Set([
+      ...specCircleOwnerCodes(markdown),
+      ...specCircleInviteeCodes(markdown),
+      ...specCircleEndpointCodes(markdown),
+    ]),
+  ];
 }

@@ -185,8 +185,8 @@ describe('remove and leave (API-100-32)', () => {
       404,
       'remove_circle_member:not_found',
     );
-    // A member row of another circle is not found under this circle (decision: the path's circle
-    // must be the row's), also for the owner of that other circle.
+    // A member row of another circle is not found under this circle (D15, 2026-11-20: the path's
+    // circle must be the row's; stricter than the SQL), also for the owner of that other circle.
     expectCode(
       await removeMember(app, owner.id, circle.id, other.benRow.id),
       404,

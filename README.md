@@ -274,6 +274,9 @@ null), `incident.resident`, `incident.memberView`, `incident.eventsView`, `incid
   open. The body is IncidentSend plus `submit_outcome`.
 - One transaction with the locks of `submit_emergency_alert`, in its order: the profile row, then
   the open incident. SQL and API callers can run side by side on the same database.
+- D14 (2026-11-20, "an SOS must always go through"): the delivery insert reads the circle's active
+  member rows `FOR KEY SHARE` in the same statement, so a member who leaves or is removed at the
+  same moment is not notified instead of failing the submit with 23503 (the SQL function can).
 - The audit row is written inside the transaction. Post-commit hooks
   (`INCIDENT_POST_COMMIT_HOOKS`, empty until API-100-41 and API-100-48) run only after the commit,
   are not awaited, and can never fail an alert that has committed.
@@ -405,9 +408,11 @@ capacity: null}` when the caller owns no circle. Never `invite_token`. 401 code
   (epic §18.1 P1).
 - Locks as the SQL: the member row only, `FOR UPDATE`; no `safety_circles` lock. Races with
   acknowledge, mark safe, re-notify, submit and the invite writes are covered by
-  `test/int/circles-membership-races.int-spec.ts` (no deadlock). Known SQL behaviour mirrored: a
-  leave/remove committing in the middle of a submit's delivery insert makes that submit fail with
-  23503 (foreign key), in the SQL function as in the API (a 500).
+  `test/int/circles-membership-races.int-spec.ts` (no deadlock). A leave/remove committing in the
+  middle of the SQL function's delivery insert makes that submit fail with 23503 (foreign key). The
+  API does not (D14, 2026-11-20: "an SOS must always go through"): its delivery insert reads the
+  member rows `FOR KEY SHARE` first, so the leaver is simply not notified
+  (`test/int/incidents-submit-membership-race.int-spec.ts`, with the SQL failure for contrast).
 - **Design note (SCRUM-30/31, not implemented):** stored statuses replace the hard delete.
   Additive status values `removed` and `left` (with `removed_at`/`removed_by`, `left_at`) written by
   `MembershipService.end` instead of the DELETE (its callers and hooks stay); the partial unique
@@ -452,16 +457,33 @@ Needs Docker running. No suite uses the compose stack or reads `.env`.
 
 ### Phase 1 gate (API-100-23)
 
-| Script                   | What it does                                                                                                                                                                                                                                                                                                                  |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run parity:report`  | Runs `test:parity` and prints the Phase 1 checklist: one line per assertion of the four incident SQL files with its parity test and result. Fails on any incident assertion that is missing, `it.todo` or not passing. `-- --results <jest.json>` reuses a Jest JSON report; `-- --out <file>` also writes the Markdown file. |
-| `npm run load:incidents` | Load check against the **built** app (`npm run build` first): own throwaway containers, 50 residents x 3 members, 180 s of pings and counts polling, then mark safe. Prints p50/p95/p99 per route; fails on any error or p99 submit ≥ 2 s. Options: `--residents`, `--members`, `--duration`, `--out`, `--rate-limit-env`.    |
+| Script                   | What it does                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run parity:report`  | Runs `test:parity` and prints the Phase 1 checklist (default; `-- --phase 2` for Phase 2): one line per assertion of the four incident SQL files with its parity test and result. Fails on any incident assertion that is missing, `it.todo` or not passing. `-- --results <jest.json>` reuses a Jest JSON report; `-- --out <file>` also writes the Markdown file. |
+| `npm run load:incidents` | Load check against the **built** app (`npm run build` first): own throwaway containers, 50 residents x 3 members, 180 s of pings and counts polling, then mark safe. Prints p50/p95/p99 per route; fails on any error or p99 submit ≥ 2 s. Options: `--residents`, `--members`, `--duration`, `--out`, `--rate-limit-env`.                                          |
 
 - `test/int/phase1-error-codes.int-spec.ts` reads every incident error code from `docs/api_doc.md`
   (§7.4 and §11.3 E11) and produces each one with a real request.
 - `test/int/phase1-mixed-writers.int-spec.ts` runs one incident scenario four ways (SQL only, API
   only, SQL submit then API, API submit then SQL) and requires the same answers and final rows.
 - App hand-off: `docs/phase1_handoff.md`; generated checklist: `docs/phase1_parity_checklist.md`.
+
+### Phase 2 gate (API-100-33)
+
+| Script                               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run parity:report -- --phase 2` | Runs `test:parity` and prints the Phase 2 checklist: every assertion of `scrum28_accept_amendment.sql`, `scrum29_cancel_invite.sql`, `member_names_expired_invites.sql` and the membership parts of `membership_access_window.sql`. Fails on any of them missing, `it.todo` or not passing; the `complete_profile_setup` assertions (API-100-36) are listed separately and only have to exist. `-- --out docs/phase2_parity_checklist.md` writes the file. |
+| `npm run load:circles`               | Load check of the circles and invites routes against the **built** app on the shared harness (`test/load/load-harness.ts`): 40 owners x 4 invitees, invites, lookups, previews, accepts, declines, resend/cancel, leave, remove, 60 s of screen reloads. Prints p50/p95/p99 per route; fails on any error or a p99 at or above the client's 15 s cap. Options: `--owners`, `--duration`, `--out`, `--rate-limit-env`.                                      |
+
+- `test/int/phase2-error-codes.int-spec.ts` reads every circle/invite code from `docs/api_doc.md`
+  (§7.2, §7.3, §11.3 C/I rows), checks it equals the catalogue and produces each one with a real
+  request (`resend_circle_invite:invalid_display_name` is proved unreachable).
+- `test/int/phase2-mixed-writers.int-spec.ts` runs one circles scenario five ways (SQL only, API
+  only, SQL invites then API, API invites then SQL, alternating) and requires the same answers and
+  final rows; it also pins the timestamp-text ordering of the lists.
+- `test/int/phase2-capacity-sweep.int-spec.ts`: capacity never above 5 under mixed concurrent writes.
+- `test/int/incidents-submit-membership-race.int-spec.ts`: D14 (an SOS always goes through).
+- App hand-off: `docs/phase2_handoff.md`; generated checklist: `docs/phase2_parity_checklist.md`.
 
 ## Observability (API-100-06, `src/observability`)
 

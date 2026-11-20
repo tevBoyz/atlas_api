@@ -178,7 +178,18 @@ export class IncidentsRepository {
     return result.rows[0];
   }
 
-  /** One row per active member with an account, never the resident and never a pending invite. */
+  /**
+   * One row per active member with an account, never the resident and never a pending invite.
+   *
+   * D14 ("an SOS must always go through", 2026-11-20): the member rows are read `FOR KEY SHARE` in
+   * the same statement, before the insert. That is the lock the foreign key check
+   * (`incident_deliveries_member_id_fkey`) takes anyway, only taken earlier. A member who leaves or is
+   * removed concurrently is then either deleted before the read (the read waits for that delete to
+   * commit and skips the row: that member is simply not notified) or kept until this submit commits
+   * (the delete waits, then cascades the new delivery). The SQL function reads the rows without a
+   * lock, so a delete committing between its read and its foreign key check fails the whole submit
+   * with 23503; this statement cannot. Everything else (rows, events, counts, response) is unchanged.
+   */
   async insertDeliveries(
     tx: IncidentTransaction,
     incidentId: string,
@@ -187,12 +198,16 @@ export class IncidentsRepository {
   ): Promise<void> {
     await tx.execute(sql`
       insert into public.incident_deliveries (incident_id, member_id, member_user_id)
-      select ${incidentId}::uuid, m.id, m.user_id
-        from public.safety_circle_members m
-       where m.circle_id = ${circleId}::uuid
-         and m.status = 'active'
-         and m.user_id is not null
-         and m.user_id is distinct from ${residentId}::uuid
+      select ${incidentId}::uuid, r.id, r.user_id
+        from (
+          select m.id, m.user_id
+            from public.safety_circle_members m
+           where m.circle_id = ${circleId}::uuid
+             and m.status = 'active'
+             and m.user_id is not null
+             and m.user_id is distinct from ${residentId}::uuid
+             for key share of m
+        ) as r
       on conflict (incident_id, member_user_id) do nothing`);
   }
 

@@ -37,9 +37,9 @@ const LOCKED_COLUMNS = sql`m.id::text as id,
 export class MembershipRepository {
   /**
    * `remove_circle_member`'s lock: the row `memberId`, locked. The function looks the row up by id
-   * alone; the API's path also names the circle, and a row of another circle is not found (decision
-   * of API-100-32, see the service), so the predicate carries the circle and such a row is never
-   * locked.
+   * alone; the API's path also names the circle, and a row of another circle is not found (D15,
+   * approved 2026-11-20; see the service), so the predicate carries the circle and such a row is
+   * never locked.
    */
   async lockMemberInCircle(
     tx: MembershipExecutor,

@@ -34,7 +34,8 @@
     "auth:test-token": "tsx src/testing/mint-test-token.ts",
     "db:introspect": "drizzle-kit pull --config drizzle.config.ts && tsx src/db/tooling/assemble-schema.ts && prettier --write src/db/schema.ts",
     "parity:report": "tsx test/tools/parity-report.ts",
-    "load:incidents": "tsx test/load/incident-load.ts"
+    "load:incidents": "tsx test/load/incident-load.ts",
+    "load:circles": "tsx test/load/circles-load.ts"
   },
   "dependencies": {
     "@fastify/otel": "1.0.1",

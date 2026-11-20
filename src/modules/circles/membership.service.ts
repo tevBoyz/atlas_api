@@ -109,8 +109,8 @@ export class MembershipService {
 
   /**
    * `remove_circle_member(member_id)` (final: baseline 20261019160000), checks in its order: null or
-   * unknown id → 404 `not_found` (also a row of another circle than the path's: decision of
-   * API-100-32, the function takes no circle); lock the member row; caller does not own the row's
+   * unknown id → 404 `not_found` (also a row of another circle than the path's: D15, approved
+   * 2026-11-20; the function takes no circle); lock the member row; caller does not own the row's
    * circle (`circle.owner`) → 403 `not_authorized`; the owner row → 409 `cannot_remove_owner`; any
    * other row (pending, active, declined) is deleted. 200 `{member_id, circle_id, removed: true}`.
    * No location-sharing or profile check.

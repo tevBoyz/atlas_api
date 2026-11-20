@@ -160,14 +160,29 @@ describe('only accept activates a member row (API-100-30 AC5)', () => {
       }
     }
     expect(statuses.length).toBeGreaterThan(routes.length);
-    // The routes of API-100-31/32 ran too (they are discovered like every other route).
+    // Every Phase 2 route ran (API-100-33 AC5; they are discovered like every other route). Accept
+    // is the positive control below.
     for (const route of [
-      'get /v1/me/invites',
-      'get /v1/me/joined-circles',
+      'get /v1/me/circle',
+      'get /v1/me/circle/capacity',
+      'get /v1/circles/{circle_id}/members',
       'delete /v1/circles/{circle_id}/members/{member_id}',
       'post /v1/circles/{circle_id}/leave',
+      'get /v1/me/joined-circles',
+      'post /v1/me/circle/invites/phone',
+      'post /v1/me/circle/invites/phone/batch',
+      'post /v1/me/circle/invites/link',
+      'post /v1/me/circle/invites/{member_id}/resend',
+      'post /v1/me/circle/invites/{member_id}/cancel',
+      'get /v1/invites/{token}/status',
+      'post /v1/invites/{token}/preview',
+      'post /v1/invites/{token}/decline',
+      'get /v1/me/invites',
     ]) {
-      expect(statuses.some((line) => line.startsWith(`${route} → `))).toBe(true);
+      expect({ route, ran: statuses.some((line) => line.startsWith(`${route} → `)) }).toEqual({
+        route,
+        ran: true,
+      });
     }
     // Remove and leave DELETE rows (Ben leaves; the owner removes invites): rows may be gone, but
     // no row became active, no activated_at moved, and no active row was added.

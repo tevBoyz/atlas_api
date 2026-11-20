@@ -1,11 +1,21 @@
+import { randomUUID } from 'node:crypto';
+
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 
-import { aliasColumn, deliveryOwn } from '../../src/common/policies';
+import { AppModule } from '../../src/app.module';
+import {
+  ActivatedAtWriteError,
+  aliasColumn,
+  assertNoActivatedAt,
+  deliveryOwn,
+} from '../../src/common/policies';
+import { collectControllers, discoverRoutes } from '../../src/openapi/route-discovery';
 import { createTestApp } from '../../src/testing/test-app';
+import { authHeader } from '../../src/testing/test-tokens';
 import {
   acceptInvite,
   createInviteLink,
@@ -53,8 +63,14 @@ import {
  * the pending user declines the `Pending Window` link through the API (`decline`, API-100-30;
  * the script sets `declined` by hand) and L456 checks it has no `activated_at`.
  *
- * Still `it.todo`, with the story that completes them: L84 (owner row) with API-100-36, L189 (no
- * client-chosen activated_at; `membership.activate`) with the Phase 2 gate API-100-33. Nothing of
+ * L189 (no client-chosen activated_at; `membership.activate`, completed by the Phase 2 gate
+ * API-100-33): right after the accept, the owner and the member call every Phase 2 route with a
+ * backdated `activated_at` (and `status: active`) in the body; the trigger's value does not move.
+ * The script's own write (the owner's direct UPDATE as `authenticated`, the app's RLS path) is
+ * checked too: the trigger keeps the value. test/int/membership-activation-routes.int-spec.ts does
+ * the same for every route of the API.
+ *
+ * Still `it.todo`, with the story that completes it: L84 (owner row) with API-100-36. Nothing of
  * the membership parts still goes through the SQL functions.
  *
  * The window case for closure recipients (rule 54 in `_incident_active_recipient_ids`, used by
@@ -135,6 +151,15 @@ describe('membership_access_window.sql', () => {
   let activation: { stamped_now: boolean; activated: boolean };
   let declineStatus: number;
   let declinedRow: { status: string; activated_at: string | null };
+  let backdating: {
+    called: string[];
+    before: { activated_at: string; consumed_at: string };
+    after: { activated_at: string; consumed_at: string };
+  };
+  let rlsBackdate: {
+    updated: number | null;
+    stored: { activated_at: string; consumed_at: string };
+  };
 
   /**
    * Runs `statement` (a `count(*)::int as n` query) as the `authenticated` role with `userId`'s JWT
@@ -210,6 +235,100 @@ describe('membership_access_window.sql', () => {
     return { incidents: 0, deliveries, deliveriesByPolicy: result.rows[0].n };
   };
 
+  /** The Phase 2 routes (circles and invites), discovered from the controllers. */
+  const phase2Routes = () =>
+    discoverRoutes(collectControllers(AppModule)).filter((route) =>
+      /^\/v1\/(me\/circle|circles\/|invites\/|me\/invites|me\/joined-circles)/.test(route.path),
+    );
+
+  const activationOf = async (memberId: string) =>
+    (
+      await client.query<{ activated_at: string; consumed_at: string }>(
+        `select activated_at::text as activated_at, invite_consumed_at::text as consumed_at
+           from public.safety_circle_members where id = $1`,
+        [memberId],
+      )
+    ).rows[0];
+
+  /**
+   * L189 through the API: every Phase 2 route, called by the owner and by the member with real ids
+   * and token in the path and a body that asks for a backdated activation. Remove and leave run as
+   * the caller they refuse (member / owner), so the member row stays. Rows the invite routes create
+   * are deleted afterwards (raw), so the script's later capacity is unchanged.
+   */
+  async function backdateThroughEveryRoute(circleId: string, memberId: string, token: string) {
+    const before = await activationOf(memberId);
+    const rowsBefore = (
+      await client.query<{ id: string }>(
+        'select id::text from public.safety_circle_members where circle_id = $1',
+        [circleId],
+      )
+    ).rows.map((r) => r.id);
+    const hostile = {
+      activated_at: '2000-01-01T00:00:00Z',
+      status: 'active',
+      member_id: memberId,
+      display_name: 'Backdate',
+      phone: '+447700900990',
+      invites: [{ phone: '+447700900991', display_name: 'Backdate', activated_at: '2000-01-01' }],
+    };
+    const called: string[] = [];
+    for (const route of phase2Routes()) {
+      const method = route.method.toUpperCase();
+      const url = route.path
+        .replace('{circle_id}', circleId)
+        .replace('{member_id}', memberId)
+        .replace('{token}', token);
+      for (const caller of [resident, member]) {
+        if (method === 'DELETE' && caller === resident) continue;
+        if (route.path.endsWith('/leave') && caller === member) continue;
+        const reply = await app.inject({
+          method: method as 'GET',
+          url,
+          headers: {
+            ...(await authHeader(caller.id)),
+            'idempotency-key': randomUUID(),
+            ...(method === 'GET' || method === 'DELETE'
+              ? {}
+              : { 'content-type': 'application/json' }),
+          },
+          ...(method === 'GET' || method === 'DELETE' ? {} : { payload: JSON.stringify(hostile) }),
+        });
+        expect(reply.statusCode).toBeLessThan(500);
+        called.push(`${method} ${route.path}`);
+      }
+    }
+    const after = await activationOf(memberId);
+    await client.query(
+      `delete from public.safety_circle_members where circle_id = $1 and id <> all($2::uuid[])`,
+      [circleId, rowsBefore],
+    );
+    return { called: [...new Set(called)], before, after };
+  }
+
+  /** The script's L189 write: the owner's direct UPDATE as `authenticated` (rolled back). */
+  async function backdateThroughRls(memberId: string) {
+    await client.query('begin');
+    try {
+      await client.query(
+        `select set_config('request.jwt.claim.sub', $1, true),
+                set_config('request.jwt.claims', $2, true)`,
+        [resident.id, JSON.stringify({ sub: resident.id, role: 'authenticated' })],
+      );
+      await client.query('set local role authenticated');
+      const { rowCount } = await client.query(
+        `update public.safety_circle_members set activated_at = now() - interval '10 days'
+          where id = $1`,
+        [memberId],
+      );
+      await client.query('reset role');
+      const stored = await activationOf(memberId);
+      return { updated: rowCount, stored };
+    } finally {
+      await client.query('rollback');
+    }
+  }
+
   beforeAll(async () => {
     ({ app } = await createTestApp());
     client = await openTestClient();
@@ -271,6 +390,12 @@ describe('membership_access_window.sql', () => {
         [memberRow.id],
       )
     ).rows[0];
+
+    // L189: the owner (and the member) try every Phase 2 route with a backdated `activated_at` in
+    // the body; nothing can move the trigger's value. Then the script's own check: the owner's
+    // direct UPDATE through RLS (the app's path) is ignored by the trigger.
+    backdating = await backdateThroughEveryRoute(circle.id, memberRow.id, memberToken);
+    rlsBackdate = await backdateThroughRls(memberRow.id);
 
     // Incident B: started after the member joined.
     bId = (await submitAlert(app, resident.id, 'fire')).json<Body>().id as string;
@@ -399,7 +524,39 @@ describe('membership_access_window.sql', () => {
     expect(deliveriesToB).toBe(3);
   });
 
-  it.todo('L189: owner backdated activated_at: %');
+  it('L189: owner backdated activated_at: %', () => {
+    // Every Phase 2 route ran (owner and member), with a backdated activated_at in the body.
+    expect(backdating.called).toEqual(
+      expect.arrayContaining([
+        'GET /v1/me/circle',
+        'GET /v1/me/circle/capacity',
+        'GET /v1/circles/{circle_id}/members',
+        'DELETE /v1/circles/{circle_id}/members/{member_id}',
+        'POST /v1/circles/{circle_id}/leave',
+        'GET /v1/me/joined-circles',
+        'POST /v1/me/circle/invites/phone',
+        'POST /v1/me/circle/invites/phone/batch',
+        'POST /v1/me/circle/invites/link',
+        'POST /v1/me/circle/invites/{member_id}/resend',
+        'POST /v1/me/circle/invites/{member_id}/cancel',
+        'GET /v1/invites/{token}/status',
+        'POST /v1/invites/{token}/preview',
+        'POST /v1/invites/{token}/accept',
+        'POST /v1/invites/{token}/decline',
+        'GET /v1/me/invites',
+      ]),
+    );
+    // The trigger's value (the accept's now(), = invite_consumed_at) did not move.
+    expect(backdating.after).toEqual(backdating.before);
+    expect(backdating.after.activated_at).toBe(backdating.after.consumed_at);
+    // The script's write itself (owner, RLS): the row is updated but activated_at is kept.
+    expect(rlsBackdate.updated).toBe(1);
+    expect(rlsBackdate.stored).toEqual(backdating.before);
+    // `membership.activate`: no API write may carry activated_at (programming error → refused).
+    expect(() => assertNoActivatedAt({ activated_at: '2000-01-01T00:00:00Z' })).toThrow(
+      ActivatedAtWriteError,
+    );
+  });
 
   it('L195: resident sees % own incidents', () => {
     expect(residentSeen.incidents).toBe(2);

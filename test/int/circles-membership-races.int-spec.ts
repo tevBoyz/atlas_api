@@ -299,13 +299,14 @@ describe('remove, leave and the incoming-list claim under concurrency (API-100-3
 
   /**
    * Leave racing submit. No deadlock is possible (leave locks the member row, submit's delivery
-   * insert takes `FOR KEY SHARE` on it through the foreign key check; neither then waits on the
-   * other). But when the leave deletes the row after submit read the active members and before its
-   * foreign key check, the check fails with 23503 (`incident_deliveries_member_id_fkey`): the SQL
-   * `submit_emergency_alert` does exactly the same (same INSERT ... SELECT), so the API (story 15,
-   * unchanged here) mirrors it as a 500. The only failure allowed here is that 23503, on either side.
+   * insert takes `FOR KEY SHARE` on it; neither then waits on the other). When the leave deletes the
+   * row after the SQL `submit_emergency_alert` read the active members and before its foreign key
+   * check, that check fails with 23503 (`incident_deliveries_member_id_fkey`). Since D14
+   * (2026-11-20) the API reads the member rows `FOR KEY SHARE` before its insert, so the API submit
+   * always succeeds (the leaver is simply not notified); only the SQL side may still fail with 23503.
+   * The full D14 proof is incidents-submit-membership-race.int-spec.ts.
    */
-  it('leave racing the resident’s submit (API and SQL mixed): no deadlock; submit fails only with the 23503 the SQL also has', async () => {
+  it('leave racing the resident’s submit (API and SQL mixed): no deadlock; the API submit always succeeds (D14), the SQL one fails only with 23503', async () => {
     const before = await deadlocks();
     const outcomes: string[] = [];
     for (let round = 0; round < ROUNDS * 2; round += 1) {
@@ -327,16 +328,8 @@ describe('remove, leave and the incoming-list claim under concurrency (API-100-3
         expect(left.error).toBeUndefined();
       }
       if ('statusCode' in submitted) {
-        if (submitted.statusCode >= 500) {
-          const failure = logs.lines.findLast(
-            (line) => line.operation === 'submit_emergency_alert' && line.level === 'error',
-          );
-          expect((failure?.err as Body | undefined)?.sqlState).toBe('23503');
-          outcomes.push('api:23503');
-        } else {
-          expect(submitted.statusCode).toBe(201);
-          outcomes.push('api:201');
-        }
+        expect(submitted.statusCode).toBe(201);
+        outcomes.push('api:201');
       } else {
         expect(submitted.sqlState).not.toBe('40P01');
         if (submitted.error) expect(submitted.sqlState).toBe('23503');
@@ -352,9 +345,12 @@ describe('remove, leave and the incoming-list claim under concurrency (API-100-3
         ).rowCount,
       ).toBe(0);
     }
-    expect(outcomes.every((o) => ['api:201', 'api:23503', 'sql:ok', 'sql:23503'].includes(o))).toBe(
-      true,
-    );
+    expect(outcomes.every((o) => ['api:201', 'sql:ok', 'sql:23503'].includes(o))).toBe(true);
+    expect(
+      logs.lines.filter(
+        (line) => line.operation === 'submit_emergency_alert' && line.level === 'error',
+      ),
+    ).toEqual([]);
     expect(await deadlocks()).toBe(before);
   });
 
