@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { componentSchema } from '../../openapi/component-schema';
+import { inviteLookupStatusSchema } from '../../openapi/schemas';
 
 /**
  * Contract schemas of the owner invite routes (API-100-26/27/28, spec §7.0, §7.2, §11.3 I1-I5). The
@@ -108,6 +109,86 @@ export const canceledInviteSchema = componentSchema(
     member_id: z.uuid(),
     circle_id: z.uuid(),
     status: z.literal('canceled'),
+    owner_name: z.string().nullable().describe("The owner row's stored display name."),
+  }),
+);
+
+/** `{token}` of the invitee routes (API-100-29/30, spec §11.3 I6-I9). */
+export const inviteTokenParamsSchema = z.object({
+  token: z
+    .string()
+    .describe(
+      'The invite token (64 lowercase hex characters), trimmed (spaces). Blank or unknown: `not_found`. A secret: never logged (the log line carries the route template only).',
+    ),
+});
+
+/** The body of `lookup_circle_invite` (spec §7.3): status only, never a name, phone or id. */
+export const inviteLookupSchema = componentSchema(
+  'InviteLookup',
+  z.object({
+    status: inviteLookupStatusSchema,
+    invite_expires_at: z.string().nullable().describe('Null when the token is not found.'),
+  }),
+);
+
+/** The body of `preview_circle_invite` (spec §7.3). */
+export const invitePreviewSchema = componentSchema(
+  'InvitePreview',
+  z.object({
+    status: z
+      .enum([
+        'pending',
+        'expired',
+        'consumed',
+        'canceled',
+        'not_found',
+        'own_circle',
+        'already_member',
+        'circle_full',
+      ])
+      .describe(
+        'Lookup status, or the display statuses `own_circle`, `already_member`, `circle_full`.',
+      ),
+    invite_expires_at: z.string().nullable(),
+    member_id: z.uuid().nullable().describe('Only when the row is shown.'),
+    circle_id: z.uuid().nullable().describe('Only when the row is shown.'),
+    owner_name: z
+      .string()
+      .nullable()
+      .describe("Only when the owner is shown: the owner row's stored display name."),
+    invited_at: z.string().nullable().describe('Only when the row is shown.'),
+    claimed: z
+      .boolean()
+      .nullable()
+      .describe(
+        'True when the invitation is (now) bound to the caller. Null where the SQL function returns null (e.g. the owner previewing an unclaimed invitation).',
+      ),
+    recipient_ok: z.boolean().describe('The caller may accept this invitation (spec rule 18).'),
+    owner_avatar_url: z
+      .string()
+      .nullable()
+      .describe("Only when the owner is shown: the owner's public avatar URL, or null."),
+  }),
+);
+
+/** The body of `accept_circle_invite` (spec §7.3). */
+export const acceptedInviteSchema = componentSchema(
+  'AcceptedInvite',
+  z.object({
+    circle_id: z.uuid(),
+    member_id: z.uuid(),
+    status: z.literal('active'),
+    owner_name: z.string().nullable().describe("The owner row's stored display name."),
+  }),
+);
+
+/** The body of `decline_circle_invite` (spec §7.3). */
+export const declinedInviteSchema = componentSchema(
+  'DeclinedInvite',
+  z.object({
+    circle_id: z.uuid(),
+    member_id: z.uuid(),
+    status: z.literal('declined'),
     owner_name: z.string().nullable().describe("The owner row's stored display name."),
   }),
 );

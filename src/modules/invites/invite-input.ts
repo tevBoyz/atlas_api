@@ -98,6 +98,16 @@ export function batchInvitesFromBody(body: unknown): unknown {
   return value;
 }
 
+/**
+ * The `{token}` path parameter of the invitee routes (`token text` of the SQL functions): any text
+ * Postgres can hold, as sent (the operation trims it, as the functions do). Text Postgres cannot hold
+ * (`\u0000`, an unpaired surrogate) → 422 on `token`; the value is never echoed or logged.
+ */
+export function requireInviteToken(value: unknown): string {
+  if (typeof value !== 'string' || !isPostgresText(value)) throw invalidRequest('token');
+  return value;
+}
+
 /** The `{member_id}` path parameter of resend and cancel: uuid input, else 422 on `member_id`. */
 export function requireMemberId(value: unknown): string {
   if (!isPostgresUuidInput(value)) throw invalidRequest('member_id');

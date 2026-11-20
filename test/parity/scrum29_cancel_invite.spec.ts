@@ -6,7 +6,14 @@ import type { Client } from 'pg';
 import { OwnerInvitesRepository } from '../../src/modules/invites/owner-invites.repository';
 import { OwnerInvitesService } from '../../src/modules/invites/owner-invites.service';
 import { createTestApp } from '../../src/testing/test-app';
-import { cancelInvite, errorOf, getCapacity, listMembers, sqlAs } from '../support/circle-api';
+import {
+  cancelInvite,
+  errorOf,
+  getCapacity,
+  listMembers,
+  lookupInvite,
+  sqlAs,
+} from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import { createUser, fakeInviteToken, fakePhone, type UserFixture } from '../support/fixtures';
 
@@ -17,9 +24,9 @@ import { createUser, fakeInviteToken, fakePhone, type UserFixture } from '../sup
  * `beforeAll` walks the script's scenario in its order, with the same fixtures (raw inserts as the
  * migration role). Every cancel goes through the API (`POST /v1/me/circle/invites/{id}/cancel`);
  * capacity (`GET /v1/me/circle/capacity`) and the member lists (`GET /v1/circles/{id}/members`) too.
- * Still through the SQL functions, read-only, because their endpoints come later:
- * `list_my_joined_circles` (L220, L239, L456; API-100-31) and `lookup_circle_invite` (L415;
- * API-100-29). The static checks (L47-L86) read the database the API shares; L47 also checks the
+ * The canceled token's lookup (L415) goes through `GET /v1/invites/{token}/status` (API-100-29). Still
+ * through the SQL function, read-only, because its endpoint comes later: `list_my_joined_circles`
+ * (L220, L239, L456; API-100-31). The static checks (L47-L86) read the database the API shares; L47 also checks the
  * API's own cancel write.
  *
  * `cancel_circle_invite(null)` (L302/L306): a path cannot carry SQL null. The route answers a
@@ -245,9 +252,7 @@ describe('scrum29_cancel_invite.sql', () => {
 
     pendingCancel = replyOf(await cancelInvite(app, owner.id, pendingId));
     pendingAfter = await row(pendingId);
-    lookupCanceled = await sqlAs<Body>(client, owner.id, 'public.lookup_circle_invite($1)', [
-      tPending,
-    ]);
+    lookupCanceled = (await lookupInvite(app, tPending)).json<Body>();
     cap3 = await capacity();
     memberRows = (
       await client.query<{ n: number }>(

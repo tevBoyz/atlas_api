@@ -6,7 +6,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 
 import { aliasColumn, deliveryOwn } from '../../src/common/policies';
 import { createTestApp } from '../../src/testing/test-app';
-import { createInviteLink } from '../support/circle-api';
+import { acceptInvite, createInviteLink, declineInvite } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import { addActiveMember, createCircle, createUser, type UserFixture } from '../support/fixtures';
 import {
@@ -40,10 +40,14 @@ import {
  * invite (`POST /v1/me/circle/invites/link`, API-100-27) by the resident, who owns the circle; L121
  * checks that the API's pending row has no `activated_at`.
  *
- * Still `it.todo`: the other membership-trigger assertions (activated_at of the owner, newly active
- * and declined rows, and a client backdating it), with the story that completes them: L84 (owner
- * row) with API-100-36, L148 (accept) and L456 (decline) with API-100-30, L189 (no client-chosen
- * activated_at; `membership.activate`) with the Phase 2 gate API-100-33.
+ * The member joins through the API's accept (`POST /v1/invites/{token}/accept`, API-100-30) of the
+ * `Member Window` link (the script writes the same row change by hand); L148 checks that the
+ * trigger stamped the transaction's `now()` (= `invite_consumed_at` of the same write). At the end
+ * the pending user declines the `Pending Window` link through the API (`decline`, API-100-30;
+ * the script sets `declined` by hand) and L456 checks it has no `activated_at`.
+ *
+ * Still `it.todo`, with the story that completes them: L84 (owner row) with API-100-36, L189 (no
+ * client-chosen activated_at; `membership.activate`) with the Phase 2 gate API-100-33.
  *
  * The window case for closure recipients (rule 54 in `_incident_active_recipient_ids`, used by
  * `mark_incident_safe`; the script closes incident A at L131 but has no assertion of its own) is
@@ -117,6 +121,10 @@ describe('membership_access_window.sql', () => {
   let removedEvents: Seen;
   let leftEvents: Seen;
   let pendingActivatedAt: string | null;
+  let acceptStatus: number;
+  let activation: { stamped_now: boolean; activated: boolean };
+  let declineStatus: number;
+  let declinedRow: { status: string; activated_at: string | null };
 
   /**
    * Runs `statement` (a `count(*)::int as n` query) as the `authenticated` role with `userId`'s JWT
@@ -223,6 +231,9 @@ describe('membership_access_window.sql', () => {
     });
     expect([memberInvite.statusCode, pendingInvite.statusCode]).toEqual([201, 201]);
     const memberRow = { id: memberInvite.json<Body>().member_id as string };
+    const memberToken = memberInvite.json<Body>().invite_token as string;
+    const pendingToken = pendingInvite.json<Body>().invite_token as string;
+    const pendingRowId = pendingInvite.json<Body>().member_id as string;
     pendingActivatedAt = (
       await client.query<{ activated_at: string | null }>(
         'select activated_at from public.safety_circle_members where id = $1',
@@ -240,13 +251,16 @@ describe('membership_access_window.sql', () => {
       [aId],
     );
 
-    // The member accepts now (the same write accept_circle_invite does).
-    await client.query(
-      `update public.safety_circle_members
-          set user_id = $2, status = 'active', invite_consumed_at = now(), invite_token = null
-        where id = $1`,
-      [memberRow.id, member.id],
-    );
+    // The member accepts now, through the API (API-100-30).
+    acceptStatus = (await acceptInvite(app, member.id, memberToken)).statusCode;
+    activation = (
+      await client.query<{ stamped_now: boolean; activated: boolean }>(
+        `select activated_at = invite_consumed_at as stamped_now,
+                status = 'active' and activated_at is not null as activated
+           from public.safety_circle_members where id = $1`,
+        [memberRow.id],
+      )
+    ).rows[0];
 
     // Incident B: started after the member joined.
     bId = (await submitAlert(app, resident.id, 'fire')).json<Body>().id as string;
@@ -326,6 +340,15 @@ describe('membership_access_window.sql', () => {
     leftList = await listOf(member.id);
     leftEvents = await eventsSeen(member.id, both);
     leftAckB = await acknowledgeIncident(app, member.id, bId);
+
+    // Declined rows carry no activation time: the pending user declines (API-100-30).
+    declineStatus = (await declineInvite(app, pendingUser.id, pendingToken)).statusCode;
+    declinedRow = (
+      await client.query<{ status: string; activated_at: string | null }>(
+        'select status, activated_at from public.safety_circle_members where id = $1',
+        [pendingRowId],
+      )
+    ).rows[0];
   });
 
   afterAll(async () => {
@@ -357,7 +380,10 @@ describe('membership_access_window.sql', () => {
   it('L121: pending row has activated_at', () => {
     expect(pendingActivatedAt).toBeNull();
   });
-  it.todo('L148: activation did not stamp now(): %');
+  it('L148: activation did not stamp now(): %', () => {
+    expect(acceptStatus).toBe(200);
+    expect(activation).toEqual({ stamped_now: true, activated: true });
+  });
 
   it('L159: B should deliver to early, member, removed: %', () => {
     expect(deliveriesToB).toBe(3);
@@ -570,5 +596,8 @@ describe('membership_access_window.sql', () => {
     expect(codeOf(leftAckB)).toBe('acknowledge_incident:not_found');
   });
 
-  it.todo('L456: declined row has activated_at');
+  it('L456: declined row has activated_at', () => {
+    expect(declineStatus).toBe(200);
+    expect(declinedRow).toEqual({ status: 'declined', activated_at: null });
+  });
 });

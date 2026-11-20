@@ -93,7 +93,8 @@ function causes(error: unknown): unknown[] {
   return chain;
 }
 
-function sqlStateOf(error: unknown): string | undefined {
+/** The SQLSTATE of a database error anywhere in its cause chain (Drizzle wraps the pg error). */
+export function sqlStateOf(error: unknown): string | undefined {
   for (const item of causes(error)) {
     const code = (item as { code?: unknown } | null)?.code;
     if (typeof code === 'string') return code;

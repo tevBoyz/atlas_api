@@ -3,13 +3,19 @@ import { randomUUID } from 'node:crypto';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
+import { InviteeInvitesRepository } from '../../src/modules/invites/invitee-invites.repository';
+import { InviteeInvitesService } from '../../src/modules/invites/invitee-invites.service';
 import { createTestApp } from '../../src/testing/test-app';
 import {
+  acceptInvite,
   cancelInvite,
   createInviteLink,
+  declineInvite,
   errorOf,
   getCapacity,
   listMembers,
+  lookupInvite,
+  previewInvite,
   resendInvite,
   sqlAs,
 } from '../support/circle-api';
@@ -21,27 +27,23 @@ import { createUser, fakeInviteToken, fakePhone, type UserFixture } from '../sup
  * per SQL assertion: the name quotes the SQL message, prefixed with its line in the file.
  *
  * `beforeAll` walks the script's scenario in its order. Reads go through the API: capacity
- * (`GET /v1/me/circle/capacity`, API-100-24) and the member list (`GET /v1/circles/{id}/members`,
- * API-100-25). The owner's invite writes go through the API too: every link invite
- * (`POST /v1/me/circle/invites/link`, API-100-27), every resend and cancel
- * (`POST /v1/me/circle/invites/{id}/resend|cancel`, API-100-28). Writes the API does not have yet
- * are done as the script does them: the SQL functions (`complete_profile_setup`,
- * `accept_circle_invite`, `decline_circle_invite`, `preview_circle_invite`) as the same callers, and
- * raw inserts/updates as the migration role. The story that ships each write replaces the SQL call
- * with the API call.
+ * (`GET /v1/me/circle/capacity`, API-100-24), the member list (`GET /v1/circles/{id}/members`,
+ * API-100-25) and every token lookup (`GET /v1/invites/{token}/status`, API-100-29). The writes go
+ * through the API too: every link invite (`POST /v1/me/circle/invites/link`, API-100-27), every
+ * resend and cancel (`POST /v1/me/circle/invites/{id}/resend|cancel`, API-100-28), every preview,
+ * accept and decline (`POST /v1/invites/{token}/preview|accept|decline`, API-100-29/30), as the
+ * script's callers. Only `complete_profile_setup` is still the SQL function (API-100-36), and the
+ * script's raw inserts/updates stay raw writes as the migration role.
  *
- * Done here: API-100-24/25 the capacity reads (L235, L302, L346, L353, L370, L452), the member list
- * names, statuses and visibility (L195, L202, L208, L214, L244, L248, L264, L269, L376), the two
- * static privacy checks about profile names (L65, L70) and the fixture phones (L89); API-100-27 the
- * link placeholder (L144); API-100-28 resend at 5/5 (L307, L311, L317), cancel of an expired invite
- * (L334, L339) and resend of an expired invite (L362).
+ * L54 (static): the SQL `accept_circle_invite` stores the accepter's name through
+ * `_member_profile_name(uid)`, the API's accept (service method and its write) through
+ * `memberProfileNameSql(`; neither references location sharing or updates `profiles`. L156/L162
+ * show the behaviour.
  *
  * The script has no phone invite: the expired-phone refresh of API-100-26 is covered by
  * test/int/circles-invites.int-spec.ts (incl. its interchangeability tests against the SQL).
  *
  * Still `it.todo`, with the story that completes them:
- * - API-100-29 (lookup / preview): L342, L365, L421, L425, L437.
- * - API-100-30 (accept / decline): L54, L156, L162, L281, L285, L391.
  * - API-100-36 (complete setup): L137, L404, L418, L458.
  */
 type Member = Record<string, unknown>;
@@ -63,6 +65,17 @@ describe('member_names_expired_invites.sql', () => {
   let noprofRow: string;
   let oldId: string;
 
+  let sqlAcceptSrc: string;
+  let apiAcceptSrc: string;
+  let linkAccept: { status: number; body: Body };
+  let linkerStoredName: string;
+  let expiredAccept: { status: number; code: string };
+  let old2Lookup: Body;
+  let resentLookup: Body;
+  let contactDecline: { status: number; body: Body };
+  let newContactLookup: Body;
+  let oldContactLookup: Body;
+  let contactPreview: Body;
   let profilesPolicyOpened: boolean;
   let profileNameCallable: boolean;
   let ownerList1: Member[];
@@ -112,6 +125,19 @@ describe('member_names_expired_invites.sql', () => {
     ({ app } = await createTestApp());
     client = await openTestClient();
 
+    // Static check (L54): the SQL function and the API's accept.
+    sqlAcceptSrc = (
+      await client.query<{ src: string }>(
+        `select pg_get_functiondef('public.accept_circle_invite(text)'::regprocedure) as src`,
+      )
+    ).rows[0].src;
+    apiAcceptSrc = [
+      String(Object.getOwnPropertyDescriptor(InviteeInvitesService.prototype, 'accept')?.value),
+      String(
+        Object.getOwnPropertyDescriptor(InviteeInvitesRepository.prototype, 'acceptWrite')?.value,
+      ),
+    ].join('\n');
+
     // Static checks (L65, L70): the API reads profile names itself; RLS stays closed.
     profilesPolicyOpened =
       (
@@ -146,7 +172,7 @@ describe('member_names_expired_invites.sql', () => {
     linker = await createUser(client, { fullName: 'Link Joiner', phone: phoneLinker });
     noprof = await createUser(client, { phone: phoneNoprof, profile: false });
     contact = await createUser(client, { fullName: 'Contact Account', phone: phoneContact });
-    await createUser(client, { fullName: 'Outsider', phone: phoneOutsider });
+    const outsider = await createUser(client, { fullName: 'Outsider', phone: phoneOutsider });
     await client.query(
       `update public.profiles
           set emergency_contact_full_name = 'Contact Person',
@@ -161,10 +187,17 @@ describe('member_names_expired_invites.sql', () => {
     const setup = await asUser<Body>(owner, 'public.complete_profile_setup()');
     cid = setup.circle_id as string;
     const contactId = setup.member_id as string;
-    // Link invite through the API (API-100-27); accepted through SQL (API-100-30).
+    // Link invite (API-100-27), accepted by the linker (API-100-30): stored under the profile name.
     link1 = await linkViaApi();
     linkerRow = link1.member_id as string;
-    await asUser(linker, 'public.accept_circle_invite($1)', [link1.invite_token]);
+    const accepted = await acceptInvite(app, linker.id, link1.invite_token as string);
+    linkAccept = { status: accepted.statusCode, body: accepted.json<Body>() };
+    linkerStoredName = (
+      await client.query<{ name: string }>(
+        'select display_name as name from public.safety_circle_members where id = $1',
+        [linkerRow],
+      )
+    ).rows[0].name;
 
     // Active member without a profile keeps the stored name.
     noprofRow = randomUUID();
@@ -209,6 +242,10 @@ describe('member_names_expired_invites.sql', () => {
       rows: memberReply.json<Member[]>(),
     };
 
+    // Accepting an expired token still fails (an outsider, API-100-30).
+    const expiredReply = await acceptInvite(app, outsider.id, tOld);
+    expiredAccept = { status: expiredReply.statusCode, code: errorOf(expiredReply).code };
+
     // Fill to 5/5 (API link invite); a resend of the expired invite re-checks capacity (API).
     const fillId = (await linkViaApi()).member_id as string;
     cap2 = await capacityOf(owner);
@@ -223,12 +260,13 @@ describe('member_names_expired_invites.sql', () => {
 
     // An expired row can be inserted at 5/5 (holds no slot) and canceled (API).
     const old2Id = randomUUID();
+    const tOld2 = fakeInviteToken();
     await client.query(
       `insert into public.safety_circle_members (id, circle_id, role, status, display_name,
          invite_token, invited_at, invite_expires_at)
        values ($1, $2, 'member', 'pending', 'Old Two', $3, now() - interval '9 days',
                now() - interval '2 days')`,
-      [old2Id, cid, fakeInviteToken()],
+      [old2Id, cid, tOld2],
     );
     const cancelReply = await cancelInvite(app, owner.id, old2Id);
     cancelOld2 = { status: cancelReply.statusCode, body: cancelReply.json<Body>() };
@@ -238,6 +276,7 @@ describe('member_names_expired_invites.sql', () => {
         [old2Id],
       )
     ).rows[0];
+    old2Lookup = (await lookupInvite(app, tOld2)).json<Body>();
     cap3 = await capacityOf(owner);
 
     // Free one slot (API cancel), then resend the expired invite (API): same row, new token.
@@ -250,17 +289,20 @@ describe('member_names_expired_invites.sql', () => {
     ).rows[0].t;
     const resent = await resendInvite(app, owner.id, oldId);
     resendOld = { status: resent.statusCode, body: resent.json<Body>(), sixDaysOn };
+    resentLookup = (await lookupInvite(app, resendOld.body.invite_token as string)).json<Body>();
     cap5 = await capacityOf(owner);
     ownerList3 = await listOf(owner);
 
-    // complete_profile_setup re-run after decline (SQL), decline again, refill (API link invite).
+    // The contact declines (API); complete_profile_setup re-run (SQL, API-100-36) gives a usable
+    // invite; lookups and preview (API), decline again (API), refill (API link invite).
     const tContact = (
       await client.query<{ t: string }>(
         'select invite_token as t from public.safety_circle_members where id = $1',
         [contactId],
       )
     ).rows[0].t;
-    await asUser(contact, 'public.decline_circle_invite($1)', [tContact]);
+    const declineReply = await declineInvite(app, contact.id, tContact);
+    contactDecline = { status: declineReply.statusCode, body: declineReply.json<Body>() };
     await asUser(owner, 'public.complete_profile_setup()');
     const tContactNew = (
       await client.query<{ t: string }>(
@@ -268,8 +310,10 @@ describe('member_names_expired_invites.sql', () => {
         [contactId],
       )
     ).rows[0].t;
-    await asUser(contact, 'public.preview_circle_invite($1)', [tContactNew]);
-    await asUser(contact, 'public.decline_circle_invite($1)', [tContactNew]);
+    newContactLookup = (await lookupInvite(app, tContactNew)).json<Body>();
+    oldContactLookup = (await lookupInvite(app, tContact)).json<Body>();
+    contactPreview = (await previewInvite(app, contact.id, tContactNew)).json<Body>();
+    expect((await declineInvite(app, contact.id, tContactNew)).statusCode).toBe(200);
     await linkViaApi();
     cap6 = await capacityOf(owner);
   });
@@ -279,7 +323,14 @@ describe('member_names_expired_invites.sql', () => {
     await app?.close();
   });
 
-  it.todo('L54: accept_circle_invite name write missing or touches profiles/location');
+  it('L54: accept_circle_invite name write missing or touches profiles/location', () => {
+    expect(sqlAcceptSrc).toMatch(/_member_profile_name\(uid\)/i);
+    expect(apiAcceptSrc).toMatch(/memberProfileNameSql\(/);
+    for (const src of [sqlAcceptSrc, apiAcceptSrc]) {
+      expect(src).not.toMatch(/location_sharing/i);
+      expect(src).not.toMatch(/update public\.profiles/i);
+    }
+  });
 
   it('L65: profiles RLS was opened to circle members', () => {
     expect(profilesPolicyOpened).toBe(false);
@@ -313,8 +364,14 @@ describe('member_names_expired_invites.sql', () => {
   it('L144: link placeholder changed: %', () => {
     expect(link1.display_name).toBe('Invited member');
   });
-  it.todo('L156: link accept failed: %');
-  it.todo('L162: accept did not store the profile name: %');
+  it('L156: link accept failed: %', () => {
+    expect(linkAccept.status).toBe(200);
+    expect(linkAccept.body.status).toBe('active');
+  });
+
+  it('L162: accept did not store the profile name: %', () => {
+    expect(linkerStoredName).toBe('Link Joiner');
+  });
 
   it('L195: owner list did not show profile name: %', () => {
     const elem = find(ownerList1, linkerRow);
@@ -367,8 +424,13 @@ describe('member_names_expired_invites.sql', () => {
     expect(find(memberListReply.rows, linkerRow)?.display_name).toBe('Link Joiner');
   });
 
-  it.todo('L281: expired accept did not raise');
-  it.todo('L285: expired accept got %');
+  it('L281: expired accept did not raise', () => {
+    expect(expiredAccept.status).toBe(410);
+  });
+
+  it('L285: expired accept got %', () => {
+    expect(expiredAccept.code).toBe('accept_circle_invite:expired');
+  });
 
   it('L302: fill failed: %', () => {
     expect(cap2).toMatchObject({ used: 5, available: 0 });
@@ -396,7 +458,9 @@ describe('member_names_expired_invites.sql', () => {
     expect(old2Row.status).toBe('declined');
     expect(old2Row.invite_canceled_at).not.toBeNull();
   });
-  it.todo('L342: canceled expired token lookup wrong');
+  it('L342: canceled expired token lookup wrong', () => {
+    expect(old2Lookup.status).toBe('canceled');
+  });
 
   it('L346: cancel on expired changed capacity: %', () => {
     expect(cap3.used).toBe(5);
@@ -416,7 +480,9 @@ describe('member_names_expired_invites.sql', () => {
       Number(resendOld.sixDaysOn),
     );
   });
-  it.todo('L365: resent token is not pending');
+  it('L365: resent token is not pending', () => {
+    expect(resentLookup.status).toBe('pending');
+  });
 
   it('L370: resend did not take the slot: %', () => {
     expect(cap5).toMatchObject({ used: 5, pending_count: 3 });
@@ -426,12 +492,23 @@ describe('member_names_expired_invites.sql', () => {
     expect(find(ownerList3, oldId)?.status).toBe('pending');
   });
 
-  it.todo('L391: contact decline failed: %');
+  it('L391: contact decline failed: %', () => {
+    expect(contactDecline.status).toBe(200);
+    expect(contactDecline.body.status).toBe('declined');
+  });
   it.todo('L404: setup re-run after decline failed: %');
   it.todo('L418: setup re-run left an unusable invite');
-  it.todo('L421: setup re-run token does not look up as pending: %');
-  it.todo('L425: old declined token still resolves');
-  it.todo('L437: contact preview after re-run failed: %');
+  it('L421: setup re-run token does not look up as pending: %', () => {
+    expect(newContactLookup.status).toBe('pending');
+  });
+
+  it('L425: old declined token still resolves', () => {
+    expect(oldContactLookup.status).toBe('not_found');
+  });
+
+  it('L437: contact preview after re-run failed: %', () => {
+    expect(contactPreview.status).toBe('pending');
+  });
 
   it('L452: refill failed: %', () => {
     expect(cap6.available).toBe(0);

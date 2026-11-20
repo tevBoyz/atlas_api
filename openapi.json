@@ -1,6 +1,39 @@
 {
   "components": {
     "schemas": {
+      "AcceptedInvite": {
+        "additionalProperties": false,
+        "properties": {
+          "circle_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "member_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "owner_name": {
+            "description": "The owner row's stored display name.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "const": "active",
+            "type": "string"
+          }
+        },
+        "required": [
+          "circle_id",
+          "member_id",
+          "status",
+          "owner_name"
+        ],
+        "type": "object"
+      },
       "AttachIncidentLocationRequest": {
         "properties": {
           "location_accuracy_m": {
@@ -372,6 +405,39 @@
           "invited_at",
           "user_id",
           "avatar_url"
+        ],
+        "type": "object"
+      },
+      "DeclinedInvite": {
+        "additionalProperties": false,
+        "properties": {
+          "circle_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "member_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "owner_name": {
+            "description": "The owner row's stored display name.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "const": "declined",
+            "type": "string"
+          }
+        },
+        "required": [
+          "circle_id",
+          "member_id",
+          "status",
+          "owner_name"
         ],
         "type": "object"
       },
@@ -1265,6 +1331,33 @@
         ],
         "type": "object"
       },
+      "InviteLookup": {
+        "additionalProperties": false,
+        "properties": {
+          "invite_expires_at": {
+            "description": "Null when the token is not found.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "consumed",
+              "canceled",
+              "expired",
+              "not_found"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "invite_expires_at"
+        ],
+        "type": "object"
+      },
       "InviteLookupStatus": {
         "enum": [
           "pending",
@@ -1274,6 +1367,101 @@
           "not_found"
         ],
         "type": "string"
+      },
+      "InvitePreview": {
+        "additionalProperties": false,
+        "properties": {
+          "circle_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only when the row is shown."
+          },
+          "claimed": {
+            "description": "True when the invitation is (now) bound to the caller. Null where the SQL function returns null (e.g. the owner previewing an unclaimed invitation).",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "invite_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "invited_at": {
+            "description": "Only when the row is shown.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "member_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only when the row is shown."
+          },
+          "owner_avatar_url": {
+            "description": "Only when the owner is shown: the owner's public avatar URL, or null.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "owner_name": {
+            "description": "Only when the owner is shown: the owner row's stored display name.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipient_ok": {
+            "description": "The caller may accept this invitation (spec rule 18).",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "Lookup status, or the display statuses `own_circle`, `already_member`, `circle_full`.",
+            "enum": [
+              "pending",
+              "expired",
+              "consumed",
+              "canceled",
+              "not_found",
+              "own_circle",
+              "already_member",
+              "circle_full"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "invite_expires_at",
+          "member_id",
+          "circle_id",
+          "owner_name",
+          "invited_at",
+          "claimed",
+          "recipient_ok",
+          "owner_avatar_url"
+        ],
+        "type": "object"
       },
       "LinkInviteRequest": {
         "properties": {
@@ -3667,6 +3855,672 @@
         "summary": "Re-notify the members of the caller's active alert",
         "tags": [
           "incidents"
+        ]
+      }
+    },
+    "/v1/invites/{token}/accept": {
+      "post": {
+        "operationId": "acceptCircleInvite",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "description": "The invite token (64 lowercase hex characters), trimmed (spaces). Blank or unknown: `not_found`. A secret: never logged (the log line carries the route template only).",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedInvite"
+                }
+              }
+            },
+            "description": "The caller is an active member. Repeating it returns the same body without a second write. No profile or location sharing is needed; no circle is created for the caller."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "accept_circle_invite:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "accept_circle_invite:not_authenticated"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "accept_circle_invite:not_recipient",
+                    "details": {},
+                    "message": "This invitation was sent to someone else."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not allowed",
+            "x-error-codes": [
+              "accept_circle_invite:not_recipient"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "accept_circle_invite:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "accept_circle_invite:not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "accept_circle_invite:already_member",
+                    "details": {},
+                    "message": "You are already a member of this Safety Circle."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "accept_circle_invite:already_member",
+              "accept_circle_invite:canceled",
+              "accept_circle_invite:circle_full",
+              "accept_circle_invite:consumed",
+              "accept_circle_invite:duplicate_membership",
+              "accept_circle_invite:own_circle"
+            ]
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "accept_circle_invite:expired",
+                    "details": {},
+                    "message": "This invitation has expired."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Gone",
+            "x-error-codes": [
+              "accept_circle_invite:expired"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Join the circle of this invitation under my own name",
+        "tags": [
+          "invites"
+        ]
+      }
+    },
+    "/v1/invites/{token}/decline": {
+      "post": {
+        "operationId": "declineCircleInvite",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "description": "The invite token (64 lowercase hex characters), trimmed (spaces). Blank or unknown: `not_found`. A secret: never logged (the log line carries the route template only).",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclinedInvite"
+                }
+              }
+            },
+            "description": "The invitation is declined and its token looks up as `canceled`. Not repeatable: a second decline is `canceled`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "decline_circle_invite:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "decline_circle_invite:not_authenticated"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "decline_circle_invite:not_recipient",
+                    "details": {},
+                    "message": "This invitation was sent to someone else."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not allowed",
+            "x-error-codes": [
+              "decline_circle_invite:not_recipient"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "decline_circle_invite:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "decline_circle_invite:not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "decline_circle_invite:canceled",
+                    "details": {},
+                    "message": "This invitation is no longer available."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "decline_circle_invite:canceled",
+              "decline_circle_invite:consumed"
+            ]
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "decline_circle_invite:expired",
+                    "details": {},
+                    "message": "This invitation has expired."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Gone",
+            "x-error-codes": [
+              "decline_circle_invite:expired"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Decline this invitation (frees its place)",
+        "tags": [
+          "invites"
+        ]
+      }
+    },
+    "/v1/invites/{token}/preview": {
+      "post": {
+        "operationId": "previewCircleInvite",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "description": "The invite token (64 lowercase hex characters), trimmed (spaces). Blank or unknown: `not_found`. A secret: never logged (the log line carries the route template only).",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitePreview"
+                }
+              }
+            },
+            "description": "Status and what the caller may see. A pending invitation the caller may accept is claimed (bound to the caller, still pending). The owner previewing their own invitation never claims it. Safe to repeat."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "preview_circle_invite:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "preview_circle_invite:not_authenticated"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "preview_circle_invite:duplicate_membership",
+                    "details": {},
+                    "message": "This person is already linked to this Safety Circle."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "preview_circle_invite:duplicate_membership"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Who invited me, and can I accept? (claims the invitation for the caller)",
+        "tags": [
+          "invites"
+        ]
+      }
+    },
+    "/v1/invites/{token}/status": {
+      "get": {
+        "operationId": "lookupCircleInvite",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "description": "The invite token (64 lowercase hex characters), trimmed (spaces). Blank or unknown: `not_found`. A secret: never logged (the log line carries the route template only).",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteLookup"
+                }
+              }
+            },
+            "description": "The lookup status and expiry only: never a name, phone or id. A blank or unknown token is `not_found`."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [],
+        "summary": "Is this invitation still valid? (no sign-in; status only)",
+        "tags": [
+          "invites"
         ]
       }
     },

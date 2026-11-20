@@ -11,6 +11,7 @@ import {
   getCapacity,
   invitePhone,
   inviteBatch,
+  lookupInvite,
   resendInvite,
   sqlAs,
   sqlRolledBack,
@@ -148,8 +149,7 @@ describe('owner invitations (API-100-26/27/28)', () => {
       )
     ).rows[0].n;
   const capacityOf = async (user: UserFixture) => (await getCapacity(app, user.id)).json<Body>();
-  const lookup = async (token: string) =>
-    (await sqlAs<Body>(client, randomUUID(), 'public.lookup_circle_invite($1)', [token])).status;
+  const lookup = async (token: string) => (await lookupInvite(app, token)).json<Body>().status;
   const auditRows = async (targetId: string) =>
     (
       await client.query<{ action: string; target_type: string; detail: Body; actor: string }>(

@@ -101,6 +101,59 @@ export function cancelInvite(app: NestFastifyApplication, userId: string | null,
 }
 
 /**
+ * The invitee routes (API-100-29/30). `token` is URL-encoded into the path; pass `{ raw: true }` to
+ * put it in the path exactly as given (e.g. `%20`).
+ */
+export interface TokenPathOptions {
+  raw?: boolean;
+}
+const tokenPath = (token: string, options: TokenPathOptions) =>
+  options.raw ? token : encodeURIComponent(token);
+
+/** `GET /v1/invites/{token}/status` (I6). Public: no token is sent unless `userId` is given. */
+export async function lookupInvite(
+  app: NestFastifyApplication,
+  token: string,
+  options: TokenPathOptions & { userId?: string; headers?: Record<string, string> } = {},
+) {
+  return app.inject({
+    method: 'GET',
+    url: `/v1/invites/${tokenPath(token, options)}/status`,
+    headers: { ...(await headersFor(options.userId ?? null)), ...(options.headers ?? {}) },
+  });
+}
+
+/** `POST /v1/invites/{token}/preview` (I7). */
+export function previewInvite(
+  app: NestFastifyApplication,
+  userId: string | null,
+  token: string,
+  options: TokenPathOptions = {},
+) {
+  return postJson(app, userId, `/v1/invites/${tokenPath(token, options)}/preview`, undefined);
+}
+
+/** `POST /v1/invites/{token}/accept` (I8). */
+export function acceptInvite(
+  app: NestFastifyApplication,
+  userId: string | null,
+  token: string,
+  options: TokenPathOptions = {},
+) {
+  return postJson(app, userId, `/v1/invites/${tokenPath(token, options)}/accept`, undefined);
+}
+
+/** `POST /v1/invites/{token}/decline` (I9). */
+export function declineInvite(
+  app: NestFastifyApplication,
+  userId: string | null,
+  token: string,
+  options: TokenPathOptions = {},
+) {
+  return postJson(app, userId, `/v1/invites/${tokenPath(token, options)}/decline`, undefined);
+}
+
+/**
  * Runs `select <call> as body` as `userId` like {@link sqlAs}, then reads `inspect` (as the
  * migration role, same transaction) and ROLLS BACK: the SQL function's answer and its effect for a
  * state the API is then called on. `error` is the `fn:code` when the function raised.
@@ -111,14 +164,20 @@ export async function sqlRolledBack<T = unknown, R = unknown>(
   call: string,
   params: unknown[] = [],
   inspect?: { statement: string; params?: unknown[] },
+  options: SqlCallOptions = {},
 ): Promise<{ body?: T; error?: string; rows?: R[] }> {
   await client.query('begin');
   try {
     await client.query(
       `select set_config('request.jwt.claim.sub', $1, true),
               set_config('request.jwt.claims', $2, true),
+              set_config('request.headers', $3, true),
               set_config('TimeZone', 'UTC', true)`,
-      [userId, JSON.stringify({ sub: userId, role: 'authenticated' })],
+      [
+        userId,
+        JSON.stringify({ sub: userId, role: 'authenticated' }),
+        JSON.stringify(options.host ? { host: options.host } : {}),
+      ],
     );
     await client.query('savepoint call');
     let body: T | undefined;

@@ -5,9 +5,13 @@
 import 'package:dio/dio.dart';
 import 'package:retrofit/retrofit.dart';
 
+import '../models/accepted_invite.dart';
 import '../models/batch_invite_request.dart';
 import '../models/batch_invite_result.dart';
 import '../models/canceled_invite.dart';
+import '../models/declined_invite.dart';
+import '../models/invite_lookup.dart';
+import '../models/invite_preview.dart';
 import '../models/link_invite_request.dart';
 import '../models/member_invite_payload.dart';
 import '../models/phone_invite_request.dart';
@@ -17,6 +21,30 @@ part 'invites_client.g.dart';
 @RestApi()
 abstract class InvitesClient {
   factory InvitesClient(Dio dio, {String? baseUrl}) = _InvitesClient;
+
+  /// Join the circle of this invitation under my own name
+  @POST('/v1/invites/{token}/accept')
+  Future<AcceptedInvite> acceptCircleInvite({
+    @Path('token') required String token,
+  });
+
+  /// Decline this invitation (frees its place)
+  @POST('/v1/invites/{token}/decline')
+  Future<DeclinedInvite> declineCircleInvite({
+    @Path('token') required String token,
+  });
+
+  /// Who invited me, and can I accept? (claims the invitation for the caller)
+  @POST('/v1/invites/{token}/preview')
+  Future<InvitePreview> previewCircleInvite({
+    @Path('token') required String token,
+  });
+
+  /// Is this invitation still valid? (no sign-in; status only)
+  @GET('/v1/invites/{token}/status')
+  Future<InviteLookup> lookupCircleInvite({
+    @Path('token') required String token,
+  });
 
   /// Create a single-use invitation link (reserves one slot).
   ///

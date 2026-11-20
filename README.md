@@ -342,6 +342,29 @@ capacity: null}` when the caller owns no circle. Never `invite_token`. 401 code
   `_circle_invite_lookup_status`. Every Phase 2 story uses them.
 - Reads only; no row locks (the SQL functions take none) and no audit rows.
 
+## Invitee side of an invitation (API-100-29/30, `src/modules/invites`)
+
+- `GET /v1/invites/{token}/status` (`lookup_circle_invite`): **public**, limited per IP by the
+  `public` policy (`RATE_LIMIT_PUBLIC_*`, default 60 / 5 min), `cache-control: no-store`. Body
+  `{status, invite_expires_at}` only (lookup precedence of spec §5.3); blank or unknown token →
+  `not_found`. Never a name, phone or id.
+- `POST /v1/invites/{token}/preview` (`preview_circle_invite`): the status logic of spec §7.3
+  (`own_circle`, `already_member`, `consumed`, `canceled`, `expired`, `circle_full`, `pending`,
+  `not_found`) and its key rules; claims a pending invitation the caller may accept (`user_id`, still
+  `pending`; a clash is 409 `duplicate_membership`). `claimed` is `null` where the SQL returns null
+  (e.g. the owner previewing an unclaimed invitation). `owner_avatar_url` as the member list's.
+- `POST /v1/invites/{token}/accept` (`accept_circle_invite`): locks the circle row, then the member
+  row; checks and codes in the SQL order; the write stores the accepter's profile name (or keeps the
+  stored one) and is the **only** member-row write that sets `active` (`membership.activate`,
+  covered by `test/int/membership-activation-routes.int-spec.ts`). `activated_at` comes from its
+  trigger. Same body without a write when already active for the caller.
+- `POST /v1/invites/{token}/decline` (`decline_circle_invite`): member-row lock only; `declined`,
+  with the caller as `user_id` unless that clashes; a second decline is `canceled`.
+- Tokens are trimmed (spaces only, as Postgres `trim`); text Postgres cannot hold is 422 on `token`.
+  Logs carry the route template only; traces and free text scrub `invites/<token>`.
+- Audit `circle.invite.accepted` / `circle.invite.declined` in the same transaction (ids, channel,
+  previous status; never a phone, name or token). No SMS, email or push.
+
 ## OpenAPI and the Dart client (API-100-12, `src/openapi`, `clients/dart`)
 
 - Every route declares `@ApiContract({ operationId, summary, tag, responses, ... })` with zod schemas.

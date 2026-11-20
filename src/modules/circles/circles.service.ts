@@ -5,6 +5,7 @@ import { DomainError } from '../../common/errors';
 import { ApiConfigService } from '../../config';
 import { DatabaseService } from '../../db/database.service';
 import {
+  avatarUrlBase,
   type AvatarUrlBase,
   type CapacityJson,
   type CircleMemberJson,
@@ -35,10 +36,7 @@ export class CirclesService {
     private readonly repository: CirclesRepository,
     config: ApiConfigService,
   ) {
-    this.avatars = {
-      origin: (config.get('SUPABASE_URL') ?? '').replace(/\/+$/, ''),
-      bucket: config.get('AVATARS_BUCKET'),
-    };
+    this.avatars = avatarUrlBase(config);
   }
 
   /**

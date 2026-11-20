@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { type SQL, sql } from 'drizzle-orm';
 
 import { circleActiveMember, circleOwner } from '../../common/policies';
+import type { ApiConfigService } from '../../config';
 import type { Database } from '../../db/database.service';
 import { capacityJsonSql, memberAlias, shownMemberStatusSql } from './invite-slots';
 
@@ -42,6 +43,14 @@ export interface AvatarUrlBase {
   origin: string;
   /** Storage bucket, `avatars` by default (`AVATARS_BUCKET`). */
   bucket: string;
+}
+
+/** {@link AvatarUrlBase} from config: `SUPABASE_URL` without trailing slashes, `AVATARS_BUCKET`. */
+export function avatarUrlBase(config: ApiConfigService): AvatarUrlBase {
+  return {
+    origin: (config.get('SUPABASE_URL') ?? '').replace(/\/+$/, ''),
+    bucket: config.get('AVATARS_BUCKET'),
+  };
 }
 
 /**
