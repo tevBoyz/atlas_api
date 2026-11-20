@@ -45,6 +45,8 @@ export interface RequestOptions {
   idempotent?: boolean;
   /** Extra headers (e.g. `x-forwarded-for` behind the trusted proxy). */
   headers?: Record<string, string>;
+  /** Another started app (its `url`); default the app started last. */
+  baseUrl?: string;
 }
 
 /**
@@ -66,7 +68,7 @@ export async function request(
   if (options.idempotent) headers['idempotency-key'] = randomUUID();
   const started = performance.now();
   try {
-    const res = await fetch(`${baseUrl}${path}`, {
+    const res = await fetch(`${options.baseUrl ?? baseUrl}${path}`, {
       method,
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
@@ -262,6 +264,8 @@ export function errorLogLines(logFile: string): string[] {
 
 export interface StartedApp {
   child: ChildProcess;
+  /** `http://127.0.0.1:<port>` of this app. */
+  url: string;
   logFile: string;
   /** Stops the app (its own PID) and flushes its log file. */
   stop: () => Promise<void>;
@@ -272,7 +276,11 @@ export interface LoadStack {
   client: Client;
   /** Signs a throwaway test JWT for `sub`, accepted by the app of this run. */
   token: (sub: string) => Promise<string>;
-  /** Starts the built app with the run's settings (plus `env`); resolves when /readyz is 200. */
+  /**
+   * Starts the built app with the run's settings (plus `env`); resolves when /readyz is 200. May be
+   * called more than once (several instances on one database and Redis, e.g. the realtime check):
+   * each gets its own port and log file; requests go to the app started last unless they name one.
+   */
   startApp: (env: Record<string, string>) => Promise<StartedApp>;
 }
 
@@ -285,9 +293,8 @@ export async function withLoadStack(body: (stack: LoadStack) => Promise<number>)
   if (!existsSync(mainJs)) throw new Error('dist/main.js not found: run `npm run build` first');
 
   const work = mkdtempSync(join(tmpdir(), 'atlas-load-'));
-  const logFile = join(work, 'app.log');
   const containers: StartedTestContainer[] = [];
-  let child: ChildProcess | undefined;
+  const children: ChildProcess[] = [];
   let client: Client | undefined;
   try {
     const password = randomBytes(24).toString('hex');
@@ -315,9 +322,14 @@ export async function withLoadStack(body: (stack: LoadStack) => Promise<number>)
         }),
       startApp: async (env) => {
         const port = await spareTcpPort();
-        baseUrl = `http://127.0.0.1:${port}`;
+        const url = `http://127.0.0.1:${port}`;
+        baseUrl = url;
+        const logFile = join(
+          work,
+          children.length === 0 ? 'app.log' : `app-${children.length + 1}.log`,
+        );
         const log = createWriteStream(logFile);
-        child = spawn(process.execPath, [mainJs], {
+        const child = spawn(process.execPath, [mainJs], {
           cwd: work,
           env: appEnvironment({
             NODE_ENV: 'development',
@@ -332,15 +344,17 @@ export async function withLoadStack(body: (stack: LoadStack) => Promise<number>)
           }),
           stdio: ['ignore', 'pipe', 'pipe'],
         });
+        children.push(child);
         child.stdout?.pipe(log);
         child.stderr?.pipe(log);
         process.stderr.write(
           `Built app (pid ${child.pid}) on port ${port}; waiting for /readyz...\n`,
         );
         const started = child;
-        await waitUntilReady(baseUrl, started, 60_000);
+        await waitUntilReady(url, started, 60_000);
         return {
           child: started,
+          url,
           logFile,
           stop: async () => {
             await stopApp(started);
@@ -351,7 +365,7 @@ export async function withLoadStack(body: (stack: LoadStack) => Promise<number>)
     };
     return await body(stack);
   } finally {
-    if (child) await stopApp(child);
+    await Promise.all(children.map((child) => stopApp(child)));
     await client?.end().catch(() => undefined);
     process.stderr.write('Removing the load containers...\n');
     await Promise.all(containers.map((c) => c.stop({ remove: true, removeVolumes: true })));

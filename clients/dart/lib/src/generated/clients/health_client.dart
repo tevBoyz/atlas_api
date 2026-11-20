@@ -17,7 +17,7 @@ abstract class HealthClient {
   @GET('/healthz')
   Future<HealthOk> getHealth();
 
-  /// Readiness: database, Redis and migrations
+  /// Readiness: database, Redis, migrations and the realtime adapter
   @GET('/readyz')
   Future<HealthOk> getReadiness();
 }

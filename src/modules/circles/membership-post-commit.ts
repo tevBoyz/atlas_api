@@ -23,14 +23,14 @@ export interface MembershipEndedEvent {
 
 /**
  * Work that follows a committed membership end: the revocation of live access. API-100-40 makes the
- * user's sockets leave that circle's incident rooms, API-100-42 their user-room subscriptions. Until
- * then no hook is registered (the seam is a no-op).
+ * user's sockets leave that circle's incident rooms on every instance (`MembershipRevocationHook`).
+ * User rooms need nothing: API-100-42 sends to a user room only while its user passes the window.
  */
 export interface MembershipPostCommitHook {
   afterMembershipEnded?(event: MembershipEndedEvent): void | Promise<void>;
 }
 
-/** The registered hooks. Empty until API-100-40 and API-100-42 add theirs. */
+/** The registered hooks: the realtime revocation (API-100-40). */
 export const MEMBERSHIP_POST_COMMIT_HOOKS = Symbol('MEMBERSHIP_POST_COMMIT_HOOKS');
 
 /**

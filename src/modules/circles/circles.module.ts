@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 
+import { MembershipRevocationHook } from '../../realtime/membership-revocation.hook';
+import { RealtimeModule } from '../../realtime/realtime.module';
 import { AuditModule } from '../audit/audit.module';
 import { CirclesController } from './circles.controller';
 import { CirclesRepository } from './circles.repository';
@@ -16,7 +18,7 @@ import { MembershipService } from './membership.service';
  * (API-100-32).
  */
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, RealtimeModule],
   controllers: [MeCircleController, MeJoinedCirclesController, CirclesController],
   providers: [
     CirclesRepository,
@@ -24,8 +26,14 @@ import { MembershipService } from './membership.service';
     MembershipRepository,
     MembershipService,
     MembershipPostCommitRunner,
-    // Revocation hooks of a committed membership end: none until API-100-40/42 (sockets).
-    { provide: MEMBERSHIP_POST_COMMIT_HOOKS, useValue: [] },
+    // Revocation hooks of a committed membership end: the user's sockets leave the circle's incident
+    // rooms (API-100-40). User-room events need no revocation: they go only to delivery recipients
+    // who still pass the window when the event is sent (API-100-42).
+    {
+      provide: MEMBERSHIP_POST_COMMIT_HOOKS,
+      inject: [MembershipRevocationHook],
+      useFactory: (revocation: MembershipRevocationHook) => [revocation],
+    },
   ],
   // The invite stories (API-100-26 to 32) reuse the reads and the shared slot rules (invite-slots.ts).
   exports: [CirclesRepository, CirclesService, MembershipService],

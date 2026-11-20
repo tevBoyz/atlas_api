@@ -9,6 +9,7 @@ import { HealthModule } from './health/health.module';
 import { FEATURE_MODULES } from './modules';
 import { ObservabilityModule } from './observability';
 import { OpenApiModule } from './openapi/openapi.module';
+import { RealtimeModule } from './realtime/realtime.module';
 import { RedisModule } from './redis';
 
 @Module({
@@ -22,6 +23,7 @@ import { RedisModule } from './redis';
     IdempotencyModule,
     HealthModule,
     OpenApiModule,
+    RealtimeModule,
     ...FEATURE_MODULES,
   ],
 })

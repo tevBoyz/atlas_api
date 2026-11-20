@@ -107,16 +107,16 @@ Fake only: Ada (circle owner), Ben and Cara (active members), Dan (pending phone
 
 ## Health and readiness (API-100-07, `src/health`)
 
-| Route          | Answers                                                                                                                                  |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /healthz` | Always `200 {"status":"ok"}` while the process runs. No dependency checks.                                                               |
-| `GET /readyz`  | `200 {"status":"ok"}` when a DB query, a Redis `PING` and the migrations check pass; else `503 {"status":"unavailable","failed":[...]}`. |
+| Route          | Answers                                                                                                                                                                             |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /healthz` | Always `200 {"status":"ok"}` while the process runs. No dependency checks.                                                                                                          |
+| `GET /readyz`  | `200 {"status":"ok"}` when a DB query, a Redis `PING`, the migrations check and the realtime adapter's Redis (`realtime`) pass; else `503 {"status":"unavailable","failed":[...]}`. |
 
 - Both are at the root (no `/v1`), send `cache-control: no-store`, and are marked `@Public()` and
   `@SkipRateLimit()` (`src/common/guards/route-access.ts`). **The JWT guard (API-100-08) and the
   rate limiter (API-100-11) must skip routes carrying that metadata** (`isPublicRoute`,
   `skipsRateLimit`).
-- `failed` lists only the failing checks, always in the order `db`, `redis`, `migrations`.
+- `failed` lists only the failing checks, always in the order `db`, `redis`, `migrations`, `realtime`.
 - **Exemption from the error envelope**: the 503 body is exactly `{"status","failed"}`, not
   `{"error":{...}}`. The controller sets the status and returns the body; nothing is thrown, so the
   global filter never sees it. Every other non-2xx response still uses the envelope.
@@ -543,6 +543,39 @@ Needs Docker running. No suite uses the compose stack or reads `.env`.
 - `test/int/profile-setup-races.int-spec.ts`: D18 (setup racing resend, invites and accepts; the SQL
   deadlock for contrast).
 - App hand-off: `docs/phase3_handoff.md`; generated checklist: `docs/phase3_parity_checklist.md`.
+
+### Phase 4 gate (API-100-43)
+
+- `npm run build && npm run load:realtime`: two built instances on one throwaway database and Redis,
+  200 sockets (40 incidents x resident + 4 members, alternating instances), one location ping per
+  incident every 12 s for 180 s, then mark safe. Fails on any lost, duplicated or foreign event, any
+  failed request or app error log line. Options: `--incidents`, `--members`, `--duration`, `--out`.
+- `test/int/realtime-privacy.int-spec.ts`: a whole incident on two instances; only the resident and
+  members inside the window receive anything (pre-join, pending, removed after removal, outsider:
+  nothing); the reconnect contract (no replay, join again, REST has the state).
+- App hand-off: `docs/phase4_handoff.md` (decisions D19-D21).
+
+## Realtime (API-100-39 to 42, `src/realtime`)
+
+- Socket.IO on the API's own HTTP server: path `/socket.io`, namespace `/v1/realtime` only,
+  websocket transport only, Redis adapter (`@socket.io/redis-adapter`, channel prefix
+  `REALTIME_ADAPTER_KEY`, its own publisher and subscriber connections; `/readyz` check `realtime`).
+- Handshake `auth: {token}` through the REST token verifier; refusals are `connect_error`
+  `auth:session_expired` (`internal:error` when the token cannot be checked). Each socket joins
+  `user:{id}` and is disconnected at the token's `exp` after `session.expired`.
+- `incident.join` / `incident.leave` (`realtime.gateway.ts`): `incident.resident` OR
+  `incident.memberView` re-checked per join (`realtime-access.repository.ts`). Remove and leave
+  (`MembershipService.end`) revoke through the membership post-commit hook on every instance
+  (`membership-revocation.hook.ts`, adapter `serverSideEmit`); `revocation-log.ts` closes the
+  join/removal race.
+- Broadcasts (`incident-broadcaster.ts`): the realtime incident post-commit hook reads the committed
+  state (`realtime-reads.repository.ts`) and emits per room and receiver (D3/D11 for `incident.event`,
+  counts to `user:{resident}`, `incident.incoming` / `incident.renotified` to the recipients' user
+  rooms). A failed broadcast is logged by the runner and never fails the request.
+- The contract as data: `realtime.contract.ts`, published as `x-realtime` in `openapi.json`.
+- Tests on two instances: `realtime-gateway`, `realtime-rooms`, `realtime-broadcasts`,
+  `realtime-user-rooms`, `realtime-privacy` (`test/int`); client helper `test/support/realtime-client.ts`.
+  Each Jest worker uses its own adapter key (Redis pub/sub ignores the database index).
 
 ## Observability (API-100-06, `src/observability`)
 

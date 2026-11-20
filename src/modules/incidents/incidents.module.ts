@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 
+import { IncidentBroadcaster } from '../../realtime/incident-broadcaster';
+import { RealtimeModule } from '../../realtime/realtime.module';
 import { AuditModule } from '../audit/audit.module';
 import { IncidentDeliveriesController } from './incident-deliveries.controller';
 import { IncidentDeliveriesRepository } from './incident-deliveries.repository';
@@ -17,7 +19,7 @@ import { ResponderIncidentsRepository } from './responder-incidents.repository';
 import { ResponderIncidentsService } from './responder-incidents.service';
 
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, RealtimeModule],
   controllers: [
     IncidentsController,
     MeIncidentsController,
@@ -35,8 +37,12 @@ import { ResponderIncidentsService } from './responder-incidents.service';
     ResponderIncidentsRepository,
     ResponderIncidentsService,
     IncidentPostCommitRunner,
-    // API-100-41 (realtime) and API-100-48 (outbox) register their hooks here.
-    { provide: INCIDENT_POST_COMMIT_HOOKS, useValue: [] },
+    // Realtime broadcasts (API-100-41/42); the outbox (API-100-48) adds its hook here.
+    {
+      provide: INCIDENT_POST_COMMIT_HOOKS,
+      inject: [IncidentBroadcaster],
+      useFactory: (broadcaster: IncidentBroadcaster) => [broadcaster],
+    },
   ],
   // The locations module (attach location) shares the row lock, the JSON shapes and the hooks.
   exports: [IncidentsRepository, IncidentPostCommitRunner],

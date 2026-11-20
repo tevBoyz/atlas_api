@@ -71,8 +71,8 @@ export interface MembershipChange {
  * the one place a membership ends, which (a) performs the parity write, (b) writes the audit row
  * `circle.member.removed` / `circle.member.left` in the same transaction, and (c) once the
  * transaction has committed, and never after a rollback, hands the end to the post-commit
- * revocation hooks ({@link MembershipPostCommitRunner}: a no-op until API-100-40/42 force the user's
- * sockets out of the circle's incident rooms; a failing hook never fails the committed change).
+ * revocation hooks ({@link MembershipPostCommitRunner}: the user's sockets leave the circle's incident
+ * rooms on every instance, API-100-40; a failing hook never fails the committed change).
  *
  * Parity (spec rule 24): the member row is HARD-DELETED, as the SQL functions do; its
  * `incident_deliveries` go with it (`on delete cascade`). Access ends at once because every incident

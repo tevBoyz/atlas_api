@@ -12,6 +12,8 @@ enum ReadinessUnavailableFailed {
   redis('redis'),
   @JsonValue('migrations')
   migrations('migrations'),
+  @JsonValue('realtime')
+  realtime('realtime'),
 
   /// Default value for all unparsed values, allows backward compatibility when adding new values on the backend.
   $unknown(null);

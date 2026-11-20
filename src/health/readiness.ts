@@ -1,10 +1,11 @@
 /**
  * Readiness checks (API-100-07 AC2), framework-free so they are easy to test.
  * Each check gets a short timeout so `/readyz` never hangs; checks run in parallel; `failed` lists
- * failing checks in the fixed order db, redis, migrations.
+ * failing checks in the fixed order db, redis, migrations, realtime.
  */
 
-export const READINESS_CHECKS = ['db', 'redis', 'migrations'] as const;
+/** `realtime` = the Socket.IO Redis adapter's publisher and subscriber (API-100-39 AC5). */
+export const READINESS_CHECKS = ['db', 'redis', 'migrations', 'realtime'] as const;
 export type ReadinessCheckName = (typeof READINESS_CHECKS)[number];
 
 /** Per-check time budget. A check still running after this counts as failed. */

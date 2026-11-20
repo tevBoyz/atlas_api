@@ -17,6 +17,11 @@ import { createTestApp } from '../../src/testing/test-app';
 const CLOSED_PORT_DB = 'postgresql://postgres:postgres@127.0.0.1:1/postgres';
 const CLOSED_PORT_REDIS = 'redis://127.0.0.1:1';
 
+/** Redis (main client or the realtime adapter's) still connecting in the background. */
+function redisPending(failed: string[]): boolean {
+  return failed.includes('redis') || failed.includes('realtime');
+}
+
 /** An app whose config is the environment plus `overrides` (validated like the real one). */
 async function appWith(
   overrides: Record<string, string>,
@@ -56,7 +61,7 @@ describe('Health and readiness against local Postgres and Redis (API-100-07)', (
       expect(res.json()).toEqual({ status: 'ok' });
     });
 
-    it('GET /readyz → 200 {"status":"ok"} (DB query, Redis PING, migrations all applied)', async () => {
+    it('GET /readyz → 200 {"status":"ok"} (DB query, Redis PING, migrations, realtime adapter)', async () => {
       // Redis connects in the background after startup; give it a moment on a slow machine.
       let res = await app.inject({ method: 'GET', url: '/readyz' });
       for (let i = 0; i < 20 && res.statusCode !== 200; i++) {
@@ -87,7 +92,7 @@ describe('Health and readiness against local Postgres and Redis (API-100-07)', (
     it('GET /readyz → 503 failed ["migrations"]', async () => {
       // Wait for Redis to be connected so only the migrations check fails.
       let res = await app.inject({ method: 'GET', url: '/readyz' });
-      for (let i = 0; i < 20 && res.json<{ failed: string[] }>().failed.includes('redis'); i++) {
+      for (let i = 0; i < 20 && redisPending(res.json<{ failed: string[] }>().failed); i++) {
         await new Promise((resolve) => setTimeout(resolve, 100));
         res = await app.inject({ method: 'GET', url: '/readyz' });
       }
@@ -107,13 +112,13 @@ describe('Health and readiness against local Postgres and Redis (API-100-07)', (
       await app.close();
     });
 
-    it('/healthz still 200; /readyz → 503 failed ["redis"] within the timeout', async () => {
+    it('/healthz still 200; /readyz → 503 failed ["redis","realtime"] within the timeout', async () => {
       expect((await app.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(200);
       const started = Date.now();
       const res = await app.inject({ method: 'GET', url: '/readyz' });
       expect(Date.now() - started).toBeLessThan(READINESS_CHECK_TIMEOUT_MS + 500);
       expect(res.statusCode).toBe(503);
-      expect(res.body).toBe('{"status":"unavailable","failed":["redis"]}');
+      expect(res.body).toBe('{"status":"unavailable","failed":["redis","realtime"]}');
     });
   });
 
@@ -131,7 +136,7 @@ describe('Health and readiness against local Postgres and Redis (API-100-07)', (
     it('/healthz still 200; /readyz → 503 failed ["db","migrations"] within the timeout', async () => {
       expect((await app.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(200);
       let res = await app.inject({ method: 'GET', url: '/readyz' });
-      for (let i = 0; i < 20 && res.json<{ failed: string[] }>().failed.includes('redis'); i++) {
+      for (let i = 0; i < 20 && redisPending(res.json<{ failed: string[] }>().failed); i++) {
         await new Promise((resolve) => setTimeout(resolve, 100));
         res = await app.inject({ method: 'GET', url: '/readyz' });
       }

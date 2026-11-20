@@ -112,6 +112,12 @@ export const configSchema = z.object({
   // Longest wait for Redis before the limiter lets the request through (fail open).
   RATE_LIMIT_REDIS_TIMEOUT_MS: integerInRange(1, 5_000).default(100),
 
+  // Channel prefix of the Socket.IO Redis adapter (API-100-39). Instances that share it share rooms.
+  REALTIME_ADAPTER_KEY: z
+    .string()
+    .regex(/^[A-Za-z0-9:._-]{1,64}$/)
+    .default('atlas:realtime'),
+
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   SENTRY_DSN: urlWithProtocol(['http:', 'https:']).optional(),
   OTEL_EXPORTER_OTLP_ENDPOINT: urlWithProtocol(['http:', 'https:']).optional(),
@@ -161,6 +167,7 @@ const RULES: Record<ConfigKey, string> = {
   RATE_LIMIT_AVATAR_UPLOAD_MAX: 'must be an integer from 1 to 1000000',
   RATE_LIMIT_AVATAR_UPLOAD_WINDOW_SECONDS: 'must be an integer from 1 to 86400',
   RATE_LIMIT_REDIS_TIMEOUT_MS: 'must be an integer from 1 to 5000',
+  REALTIME_ADAPTER_KEY: 'must be 1-64 letters, digits, ":", ".", "_" or "-"',
   LOG_LEVEL: `must be one of ${LOG_LEVELS.join(', ')}`,
   SENTRY_DSN: 'must be an http(s) URL',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'must be an http(s) URL',

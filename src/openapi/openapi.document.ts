@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { API_VERSION } from '../app.constants';
+import { REALTIME_CONTRACT } from '../realtime/realtime.contract';
 import { type ErrorCode, parityCode } from '../common/errors/error-codes';
 import { messageForCode } from '../common/errors/error-messages';
 import { httpStatusForCode } from '../common/errors/http-status';
@@ -289,6 +290,8 @@ export function buildOpenApiDocument(routes: readonly DiscoveredRoute[]): JsonOb
     },
     servers: [{ url: '/' }],
     paths,
+    // Socket.IO events (API-100-39 to 43): not REST, published as data for the client authors.
+    'x-realtime': REALTIME_CONTRACT,
     components: {
       securitySchemes: {
         bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },

@@ -36,7 +36,8 @@
     "parity:report": "tsx test/tools/parity-report.ts",
     "load:incidents": "tsx test/load/incident-load.ts",
     "load:circles": "tsx test/load/circles-load.ts",
-    "load:profiles": "tsx test/load/profiles-load.ts"
+    "load:profiles": "tsx test/load/profiles-load.ts",
+    "load:realtime": "tsx test/load/realtime-load.ts"
   },
   "dependencies": {
     "@fastify/otel": "1.0.1",
@@ -53,6 +54,7 @@
     "@opentelemetry/sdk-node": "0.301.2",
     "@opentelemetry/semantic-conventions": "1.45.0",
     "@sentry/node": "11.14.0",
+    "@socket.io/redis-adapter": "8.3.0",
     "drizzle-orm": "0.45.4",
     "fastify": "5.12.7",
     "ioredis": "6.0.0",
@@ -63,6 +65,7 @@
     "pino-http": "11.0.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
+    "socket.io": "4.8.4",
     "zod": "4.6.7"
   },
   "devDependencies": {
@@ -79,6 +82,7 @@
     "globals": "17.14.0",
     "jest": "30.5.2",
     "prettier": "3.9.10",
+    "socket.io-client": "4.8.4",
     "testcontainers": "12.2.1",
     "ts-jest": "29.4.15",
     "tsx": "4.23.15",

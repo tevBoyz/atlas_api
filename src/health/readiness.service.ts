@@ -4,6 +4,7 @@ import type { Logger } from 'pino';
 import { DatabaseService } from '../db/database.service';
 import { MIGRATIONS_TABLE } from '../db/tooling/migrate';
 import { ROOT_LOGGER } from '../observability/logger';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { RedisService } from '../redis/redis.service';
 import { EXPECTED_MIGRATIONS, type ExpectedMigrations } from './expected-migrations';
 import { checkMigrationsApplied, type ReadinessReport, runReadinessChecks } from './readiness';
@@ -12,7 +13,8 @@ import { checkMigrationsApplied, type ReadinessReport, runReadinessChecks } from
 export const READINESS_TIMEOUT_MS = Symbol('READINESS_TIMEOUT_MS');
 
 /**
- * Runs the readiness checks (API-100-07 AC2): a DB query, a Redis PING and the migrations check.
+ * Runs the readiness checks (API-100-07 AC2): a DB query, a Redis PING, the migrations check and the
+ * realtime adapter's Redis connections (API-100-39 AC5).
  *
  * Logging (AC3): `/readyz` is polled often, so results are not logged per call. Only changes are
  * logged: the first result after startup and every switch between ready and unavailable
@@ -25,6 +27,7 @@ export class ReadinessService {
   constructor(
     private readonly database: DatabaseService,
     private readonly redis: RedisService,
+    private readonly realtime: RealtimeGateway,
     @Inject(EXPECTED_MIGRATIONS) private readonly expected: ExpectedMigrations,
     @Inject(READINESS_TIMEOUT_MS) private readonly timeoutMs: number,
     @Inject(ROOT_LOGGER) private readonly logger: Logger,
@@ -36,6 +39,7 @@ export class ReadinessService {
         db: () => this.database.ping(),
         redis: () => this.redis.ping(),
         migrations: () => this.checkMigrations(),
+        realtime: () => this.realtime.ping(),
       },
       this.timeoutMs,
     );

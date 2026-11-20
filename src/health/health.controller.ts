@@ -5,13 +5,13 @@ import { z } from 'zod';
 import { Public, SkipRateLimit } from '../common/guards/route-access';
 import { QuietRequestLog } from '../observability/http-hooks';
 import { ApiContract } from '../openapi/api-contract.decorator';
-import type { ReadyBody, UnavailableBody } from './readiness';
+import { READINESS_CHECKS, type ReadyBody, type UnavailableBody } from './readiness';
 import { ReadinessService } from './readiness.service';
 
 const healthOkSchema = z.object({ status: z.literal('ok') });
 const readinessUnavailableSchema = z.object({
   status: z.literal('unavailable'),
-  failed: z.array(z.enum(['db', 'redis', 'migrations'])),
+  failed: z.array(z.enum(READINESS_CHECKS)),
 });
 
 /**
@@ -39,7 +39,7 @@ export class HealthController {
   }
 
   /**
-   * AC2: 200 `{"status":"ok"}` when DB, Redis and migrations pass, else 503
+   * AC2: 200 `{"status":"ok"}` when DB, Redis, migrations and the realtime adapter pass, else 503
    * `{"status":"unavailable","failed":[...]}`.
    *
    * Documented exemption from the error envelope (API-100-05): the 503 is a normal return with
@@ -48,7 +48,7 @@ export class HealthController {
   @Get('readyz')
   @ApiContract({
     operationId: 'getReadiness',
-    summary: 'Readiness: database, Redis and migrations',
+    summary: 'Readiness: database, Redis, migrations and the realtime adapter',
     tag: 'health',
     responses: {
       200: { description: 'Ready', name: 'HealthOk', schema: healthOkSchema },

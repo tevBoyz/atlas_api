@@ -1,5 +1,5 @@
 import { useTestJwtEnvironment } from '../../src/testing/test-auth-config';
-import { workerDatabaseUrl, workerRedisUrl } from './stack';
+import { workerDatabaseUrl, workerId, workerRedisUrl } from './stack';
 
 /**
  * Jest setupFiles for the container-backed suites (API-100-13). Runs in every worker before any
@@ -9,7 +9,7 @@ import { workerDatabaseUrl, workerRedisUrl } from './stack';
  * in-memory fake (no Storage key, no network).
  */
 const INHERITED_SETTINGS =
-  /^(RATE_LIMIT_|OPENAPI_|TRUST_PROXY$|ALLOW_REMOTE_DATA_STORES$|SUPABASE_STORAGE_SERVICE_KEY$|AVATAR_STORAGE$)/;
+  /^(RATE_LIMIT_|REALTIME_|OPENAPI_|TRUST_PROXY$|ALLOW_REMOTE_DATA_STORES$|SUPABASE_STORAGE_SERVICE_KEY$|AVATAR_STORAGE$)/;
 
 for (const key of Object.keys(process.env)) {
   if (INHERITED_SETTINGS.test(key)) delete process.env[key];
@@ -17,6 +17,9 @@ for (const key of Object.keys(process.env)) {
 process.env.NODE_ENV = 'test';
 process.env.DATABASE_URL = workerDatabaseUrl();
 process.env.REDIS_URL = workerRedisUrl();
+// Redis pub/sub ignores the database index: each worker gets its own Socket.IO adapter channels, so
+// parallel suites never see each other's broadcasts (API-100-39).
+process.env.REALTIME_ADAPTER_KEY = `atlas:realtime:test:w${workerId()}`;
 // Profile photos go to the in-memory fake: tests never call Supabase Storage (API-100-37).
 process.env.AVATAR_STORAGE = 'memory';
 useTestJwtEnvironment();

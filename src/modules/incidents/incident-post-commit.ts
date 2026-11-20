@@ -83,7 +83,7 @@ export interface IncidentPostCommitHook {
   afterEvent?(event: IncidentEventRecordedEvent): void | Promise<void>;
 }
 
-/** The registered hooks. Empty until API-100-41 and API-100-48 add theirs. */
+/** The registered hooks: the realtime broadcaster (API-100-41/42); the outbox (API-100-48) later. */
 export const INCIDENT_POST_COMMIT_HOOKS = Symbol('INCIDENT_POST_COMMIT_HOOKS');
 
 type HookName = keyof IncidentPostCommitHook;
