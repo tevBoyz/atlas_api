@@ -30,6 +30,18 @@ export type CapacityJson = Record<string, unknown> & {
 /** One element of `list_circle_members` (spec §7.2): 8 keys, or 14 in the owner view. */
 export type CircleMemberJson = Record<string, unknown>;
 
+/** One element of `list_my_joined_circles` (spec §7.3), exactly as the SQL builds it. */
+export type JoinedCircleJson = Record<string, unknown> & {
+  circle_id: string;
+  name: string;
+  role: 'owner' | 'member';
+  member_id: string;
+  status: 'active';
+  owner_name: string | null;
+  joined_at: string;
+  active_member_count: number;
+};
+
 /** Where the caller stands towards a circle (the first checks of `list_circle_members`). */
 export interface CircleAccessRow extends Record<string, unknown> {
   exists: boolean;
@@ -70,6 +82,18 @@ export function avatarUrlSql(avatarPath: SQL, base: AvatarUrlBase): SQL {
       when ${raw} ~* '^https?://' then ${raw}
       else ${prefix}::text || ${raw}
     end)`;
+}
+
+/**
+ * `_circle_owner_display_name(circle)` (baseline 20261019130000): the owner row's STORED
+ * `display_name`, not the profile name (spec §7.3 `owner_name`). `circleId` is a uuid SQL expression.
+ */
+export function circleOwnerNameSql(circleId: SQL): SQL {
+  return sql`(select om.display_name
+                from public.safety_circle_members om
+               where om.circle_id = ${circleId}
+                 and om.role = 'owner'
+               limit 1)`;
 }
 
 /**
@@ -223,6 +247,50 @@ export class CirclesRepository {
                where scm.circle_id = ${circleId}::uuid
                  and (${ownerView}::boolean or scm.status = 'active')
             ) r
+        ) listed`);
+    return result.rows[0].body;
+  }
+
+  /**
+   * `list_my_joined_circles()` (final: baseline 20261021140000) as one jsonb array, built by Postgres
+   * with the function's `jsonb_build_object` (same keys, key order, types and timestamp text): every
+   * `active` member row of the caller (owner rows included: the caller's own circle is listed with
+   * `role: owner`, parity; SCRUM-81 changes this later), `joined_at` = the member row's `updated_at`,
+   * `active_member_count` = rows of that circle with `role = 'member'` and `status = 'active'`
+   * (owner, pending and declined excluded), `owner_name` = the owner row's stored name. Order: the
+   * function's `(payload->>'joined_at') desc` (the same expression, so the same order); the SQL
+   * leaves equal `joined_at` values in no defined order, the API then orders by `member_id`. No
+   * phone, email, emergency or medical field. No lock (the function is `stable`).
+   */
+  async joinedCircles(tx: CirclesExecutor, callerId: string): Promise<JoinedCircleJson[]> {
+    const result = await tx.execute<{ body: JoinedCircleJson[] }>(sql`
+      select coalesce(
+               jsonb_agg(listed.payload
+                         order by (listed.payload->>'joined_at') desc, listed.member_id),
+               '[]'::jsonb
+             ) as body
+        from (
+          select scm.id as member_id,
+                 jsonb_build_object(
+                   'circle_id', c.id,
+                   'name', c.name,
+                   'role', scm.role,
+                   'member_id', scm.id,
+                   'status', scm.status,
+                   'owner_name', ${circleOwnerNameSql(sql`c.id`)},
+                   'joined_at', scm.updated_at,
+                   'active_member_count', (
+                     select count(*)::integer
+                       from public.safety_circle_members active_members
+                      where active_members.circle_id = c.id
+                        and active_members.role = 'member'
+                        and active_members.status = 'active'
+                   )
+                 ) as payload
+            from public.safety_circle_members scm
+            join public.safety_circles c on c.id = scm.circle_id
+           where scm.user_id = ${callerId}::uuid
+             and scm.status = 'active'
         ) listed`);
     return result.rows[0].body;
   }

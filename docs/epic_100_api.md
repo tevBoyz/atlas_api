@@ -587,7 +587,7 @@ All invite/circle writes lock the `safety_circles` row first, then member rows, 
 
 **Acceptance criteria**
 1. `GET /v1/invites/{token}/status` — **public**, rate-limited per IP; → `{status: pending|expired|consumed|canceled|not_found, invite_expires_at|null}`; lookup precedence of spec §5.3; blank/unknown → `not_found`; never names, phones or ids.
-2. `POST /v1/invites/{token}/preview` (auth) → `{status, invite_expires_at, member_id, circle_id, owner_name, invited_at, claimed, recipient_ok, owner_avatar_url}` with the exact status logic and key inclusion rules of spec §7.3 (`own_circle`, `already_member`, `consumed`, `canceled`, `expired`, `circle_full`, `pending`, `not_found`).
+2. `POST /v1/invites/{token}/preview` (auth) → `{status, invite_expires_at, member_id, circle_id, owner_name, invited_at, claimed, recipient_ok, owner_avatar_url}` (`claimed` is boolean or null exactly as the SQL returns: null for unclaimed rows in the `own_circle`/`canceled`/`expired` branches) with the exact status logic and key inclusion rules of spec §7.3 (`own_circle`, `already_member`, `consumed`, `canceled`, `expired`, `circle_full`, `pending`, `not_found`).
 3. Recipient rule (spec rule 18): claimed row only for that user; phone invite requires the caller's normalized Auth phone (`auth.users.phone`, normalized) = row phone; link invite (phone null) → any holder.
 4. Side effect: claim (`user_id=caller`) on a pending row the caller may accept (status stays `pending`); unique clash → 409 `preview_circle_invite:duplicate_membership`; owner previews never claim. Safe to repeat.
 5. `circle_full` in preview uses other active + other valid pending + 1 > 5.
@@ -649,7 +649,7 @@ All invite/circle writes lock the `safety_circles` row first, then member rows, 
 **Acceptance criteria**
 1. All assertions of `scrum28_accept_amendment.sql`, `scrum29_cancel_invite.sql`, `member_names_expired_invites.sql` (except the `complete_profile_setup` parts, which belong to API-100-36) and the membership parts of `membership_access_window.sql` pass as API tests (checklist).
 2. Every error code of spec §7.2–§7.3 is produced by at least one test.
-3. Concurrency: 6 parallel invites into a circle with 1 free slot → exactly 1 succeeds; 2 parallel accepts for the last slot → exactly 1 succeeds; capacity never above 5.
+3. Concurrency: 6 parallel invites into a circle with 1 free slot → exactly 1 succeeds; two different users accepting the **same** invite token in parallel → exactly 1 succeeds (the other gets `accept_circle_invite:consumed`) — an accept never takes a new slot (the pending row already holds it), so that is the real contention; capacity never above 5.
 4. Mixed-writer test: invites created via SQL RPC can be accepted via the API and vice versa.
 5. Security test: no API route inserts or activates a member row except accept (and the setup owner row).
 6. Hand-off note for the app: endpoint ↔ repository method table (`fetchOwnCircle`, `listCircleMembers`, `circleInviteCapacity`, `inviteCircleMemberByPhone`, `inviteCircleMembersByPhone`, `createCircleInviteLink`, `resendCircleInvite`, `cancelCircleInvite`, `removeCircleMember`, `lookupCircleInvite`, `previewCircleInvite`, `acceptCircleInvite`, `declineCircleInvite`, `listMyCircleInvites`, `listMyJoinedCircles`, `leaveSafetyCircle`).

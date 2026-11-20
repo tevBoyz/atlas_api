@@ -10,6 +10,7 @@ import '../models/batch_invite_request.dart';
 import '../models/batch_invite_result.dart';
 import '../models/canceled_invite.dart';
 import '../models/declined_invite.dart';
+import '../models/incoming_invite.dart';
 import '../models/invite_lookup.dart';
 import '../models/invite_preview.dart';
 import '../models/link_invite_request.dart';
@@ -84,4 +85,8 @@ abstract class InvitesClient {
   Future<MemberInvitePayload> resendCircleInvite({
     @Path('member_id') required String memberId,
   });
+
+  /// Invitations sent to me (pending, expired and canceled), newest first
+  @GET('/v1/me/invites')
+  Future<List<IncomingInvite>> listMyCircleInvites();
 }

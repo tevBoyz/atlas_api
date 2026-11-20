@@ -90,3 +90,55 @@ export const ownCircleSchema = componentSchema(
 export const circleIdParamsSchema = z.object({
   circle_id: z.guid().describe('The circle id.'),
 });
+
+/** One element of `list_my_joined_circles` (spec §7.3): exactly these 8 keys. */
+export const joinedCircleSchema = componentSchema(
+  'JoinedCircle',
+  z.object({
+    circle_id: z.uuid(),
+    name: z.string(),
+    role: z
+      .enum(['owner', 'member'])
+      .describe('`owner` for the circle the caller owns (it is listed too, as today).'),
+    member_id: z.uuid().describe("The caller's member row in that circle."),
+    status: z.literal('active'),
+    owner_name: z.string().nullable().describe("The owner row's stored display name."),
+    joined_at: z.string().describe("The caller's member row `updated_at`."),
+    active_member_count: z
+      .number()
+      .int()
+      .describe('Active members of the circle, owner excluded (pending and declined excluded).'),
+  }),
+);
+
+export const joinedCircleListSchema = z.array(joinedCircleSchema);
+
+/**
+ * `{circle_id}` and `{member_id}` of `DELETE /v1/circles/{circle_id}/members/{member_id}`
+ * (documentation). Each accepts what Postgres accepts as uuid input; anything else is 422
+ * `validation:invalid_request` on that field.
+ */
+export const circleMemberParamsSchema = z.object({
+  circle_id: z.guid().describe('The circle id. A member row of another circle is `not_found`.'),
+  member_id: z.guid().describe('The member row id (any non-owner row: active, pending, declined).'),
+});
+
+/** The body of `remove_circle_member` (spec §7.2). */
+export const removedMemberSchema = componentSchema(
+  'RemovedMember',
+  z.object({
+    member_id: z.uuid(),
+    circle_id: z.uuid(),
+    removed: z.literal(true),
+  }),
+);
+
+/** The body of `leave_safety_circle` (spec §7.3). */
+export const leftCircleSchema = componentSchema(
+  'LeftCircle',
+  z.object({
+    circle_id: z.uuid(),
+    member_id: z.uuid().describe("The caller's member row, now deleted."),
+    left: z.literal(true),
+  }),
+);

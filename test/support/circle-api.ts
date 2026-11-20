@@ -4,7 +4,7 @@ import type { Client } from 'pg';
 import { authHeader } from '../../src/testing/test-tokens';
 
 /**
- * Circle routes (API-100-24/25) and their SQL counterparts, for integration and parity tests.
+ * Circle routes (API-100-24/25/31/32) and their SQL counterparts, for integration and parity tests.
  * `userId: null` sends no token.
  */
 const headersFor = async (userId: string | null) => (userId ? await authHeader(userId) : {});
@@ -151,6 +151,39 @@ export function declineInvite(
   options: TokenPathOptions = {},
 ) {
   return postJson(app, userId, `/v1/invites/${tokenPath(token, options)}/decline`, undefined);
+}
+
+/** `GET /v1/me/invites` (I10, `list_my_circle_invites`). */
+export async function listMyInvites(app: NestFastifyApplication, userId: string | null) {
+  return app.inject({ method: 'GET', url: '/v1/me/invites', headers: await headersFor(userId) });
+}
+
+/** `GET /v1/me/joined-circles` (C6, `list_my_joined_circles`). */
+export async function listJoinedCircles(app: NestFastifyApplication, userId: string | null) {
+  return app.inject({
+    method: 'GET',
+    url: '/v1/me/joined-circles',
+    headers: await headersFor(userId),
+  });
+}
+
+/** `DELETE /v1/circles/{circle_id}/members/{member_id}` (C4, `remove_circle_member`). */
+export async function removeMember(
+  app: NestFastifyApplication,
+  userId: string | null,
+  circleId: string,
+  memberId: string,
+) {
+  return app.inject({
+    method: 'DELETE',
+    url: `/v1/circles/${circleId}/members/${memberId}`,
+    headers: await headersFor(userId),
+  });
+}
+
+/** `POST /v1/circles/{circle_id}/leave` (C5, `leave_safety_circle`). */
+export function leaveCircle(app: NestFastifyApplication, userId: string | null, circleId: string) {
+  return postJson(app, userId, `/v1/circles/${circleId}/leave`, undefined);
 }
 
 /**

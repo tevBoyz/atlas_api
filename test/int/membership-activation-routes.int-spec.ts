@@ -21,10 +21,12 @@ import { insertExpiredMember, insertMember, memberRow } from '../support/invite-
  * profile setup arrives with API-100-36).
  *
  * - Dynamic: every route the app registers (discovered from the controllers, so a new route is
- *   covered automatically) is called by the circle owner, an active member and the invitees, with
- *   real ids and tokens in its path and a hostile body (`status: active`, `activated_at`, ...).
- *   Afterwards no row of the database has become active, no `activated_at` has moved, and no active
- *   row was added. Then accept, the positive control, does activate.
+ *   covered automatically: since API-100-31/32 also `GET /v1/me/invites` with its claim,
+ *   `GET /v1/me/joined-circles`, remove and leave) is called by the circle owner, an active member
+ *   and the invitees, with real ids and tokens in its path and a hostile body (`status: active`,
+ *   `activated_at`, ...). Afterwards no row of the database has become active, no `activated_at`
+ *   has moved, and no active row was added (remove and leave may have deleted rows). Then accept,
+ *   the positive control, does activate.
  * - Static: in the source, the only member-row write that sets `status` to `active` is the accept
  *   write, and nothing writes `activated_at`.
  */
@@ -158,9 +160,23 @@ describe('only accept activates a member row (API-100-30 AC5)', () => {
       }
     }
     expect(statuses.length).toBeGreaterThan(routes.length);
-    expect(await activeState()).toEqual(before);
+    // The routes of API-100-31/32 ran too (they are discovered like every other route).
+    for (const route of [
+      'get /v1/me/invites',
+      'get /v1/me/joined-circles',
+      'delete /v1/circles/{circle_id}/members/{member_id}',
+      'post /v1/circles/{circle_id}/leave',
+    ]) {
+      expect(statuses.some((line) => line.startsWith(`${route} → `))).toBe(true);
+    }
+    // Remove and leave DELETE rows (Ben leaves; the owner removes invites): rows may be gone, but
+    // no row became active, no activated_at moved, and no active row was added.
+    const activeAfter = await activeState();
+    const beforeById = new Map(before.map((row) => [row.id, row]));
+    for (const row of activeAfter) expect(beforeById.get(row.id as string)).toEqual(row);
     for (const row of [link, phoneRow, expired, declined]) {
-      expect((await memberRow(client, row.id)).status).not.toBe('active');
+      const stored = (await memberRow(client, row.id)) as Body | undefined;
+      expect(stored?.status).not.toBe('active');
     }
 
     // Positive control: accept activates, with the trigger's time (a fresh circle and invite: the

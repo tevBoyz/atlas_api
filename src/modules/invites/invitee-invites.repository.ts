@@ -7,8 +7,13 @@ import {
   circleOwner,
   inviteRecipient,
   membershipActivate,
+  normalizeE164Sql,
 } from '../../common/policies';
-import { type AvatarUrlBase, avatarUrlSql } from '../circles/circles.repository';
+import {
+  type AvatarUrlBase,
+  avatarUrlSql,
+  circleOwnerNameSql,
+} from '../circles/circles.repository';
 import {
   holdsSlotSql,
   inviteLookupStatusSql,
@@ -100,12 +105,39 @@ export function memberProfileNameSql(uid: SQL): SQL {
 }
 
 /** `_circle_owner_display_name(circle)`: the owner row's STORED `display_name` (not the profile). */
-function ownerNameSql(circleId: SQL): SQL {
-  return sql`(select om.display_name
-                from public.safety_circle_members om
-               where om.circle_id = ${circleId}
-                 and om.role = 'owner'
-               limit 1)`;
+const ownerNameSql = circleOwnerNameSql;
+
+/** One element of `list_my_circle_invites` (spec §7.3), exactly as the SQL builds it. */
+export type IncomingInviteJson = Record<string, unknown> & {
+  member_id: string;
+  circle_id: string;
+  status: 'pending' | 'expired' | 'canceled';
+  owner_name: string | null;
+  invited_at: string;
+  invite_expires_at: string | null;
+  invite_token: string | null;
+};
+
+/**
+ * The rows `list_my_circle_invites` considers the caller's (final: baseline 20261019170000), over
+ * the member alias `scm`: `role = 'member'` and either claimed by the caller (`user_id = uid`) or
+ * unclaimed with a phone equal, after `_normalize_e164`, to the caller's normalized Auth phone (no
+ * Auth phone: claimed rows only). `authPhone` is `auth.users.phone` as stored; it is normalized
+ * here (the function normalizes it in `_auth_user_phone` and again in the comparison, which changes
+ * nothing).
+ */
+function incomingInviteMatchSql(callerId: string, authPhone: string | null): SQL {
+  const callerPhone = normalizeE164Sql(sql`${authPhone}::text`);
+  return sql`(scm.role = 'member'
+     and (
+       scm.user_id = ${callerId}::uuid
+       or (
+         scm.user_id is null
+         and scm.phone is not null
+         and ${callerPhone} is not null
+         and ${normalizeE164Sql(sql`scm.phone`)} = ${callerPhone}
+       )
+     ))`;
 }
 
 const NOT_FOUND_LOOKUP = sql`jsonb_build_object('status', 'not_found', 'invite_expires_at', null)`;
@@ -347,6 +379,71 @@ export class InviteeInvitesRepository {
          and ${guard}
       returning ${decisionJsonSql(sql`scm.status`)} as body`);
     return result.rows[0]?.body;
+  }
+
+  /**
+   * The claim loop's rows of `list_my_circle_invites`: the caller's stored-`pending` rows
+   * ({@link incomingInviteMatchSql}), locked `FOR UPDATE` (member rows only, no circle lock, as the
+   * function). Lock order: the function's `for m in select ... for update loop` has no `ORDER BY`;
+   * its predicate (an OR across `user_id` and a function of `phone`) can use no index, so Postgres
+   * scans the table sequentially and locks the rows in physical order. The API sorts by `ctid` to lock
+   * them in that same order, so an API and an SQL call of the same caller cannot lock two rows in
+   * opposite orders. A row changed while this waited is re-checked against the predicate (a row
+   * accepted or declined meanwhile is no longer `pending` and drops out), as in the function.
+   */
+  async lockClaimCandidates(
+    tx: InviteExecutor,
+    callerId: string,
+    authPhone: string | null,
+  ): Promise<string[]> {
+    const result = await tx.execute<{ id: string }>(sql`
+      select scm.id::text as id
+        from public.safety_circle_members scm
+       where ${incomingInviteMatchSql(callerId, authPhone)}
+         and scm.status = 'pending'
+       order by scm.ctid
+         for update`);
+    return result.rows.map((row) => row.id);
+  }
+
+  /**
+   * The answer of `list_my_circle_invites` (after its claims), built by Postgres with the function's
+   * `jsonb_build_object` (keys, key order, nulls and timestamp text): the caller's rows
+   * ({@link incomingInviteMatchSql}) whose lookup status is `pending`, `expired` or `canceled`
+   * (`consumed` and `not_found` excluded); `invite_token` only while `pending`; `owner_name` = the
+   * owner row's stored name. Order: the function's `(payload->>'invited_at') desc` (the same
+   * expression, so the same order); equal `invited_at` values are in no defined order in the SQL,
+   * the API then orders by `member_id`.
+   */
+  async listIncoming(
+    tx: InviteExecutor,
+    callerId: string,
+    authPhone: string | null,
+  ): Promise<IncomingInviteJson[]> {
+    const m = memberAlias('scm');
+    const status = inviteLookupStatusSql(m);
+    const result = await tx.execute<{ body: IncomingInviteJson[] }>(sql`
+      select coalesce(
+               jsonb_agg(listed.payload
+                         order by (listed.payload->>'invited_at') desc, listed.member_id),
+               '[]'::jsonb
+             ) as body
+        from (
+          select scm.id as member_id,
+                 jsonb_build_object(
+                   'member_id', scm.id,
+                   'circle_id', scm.circle_id,
+                   'status', ${status},
+                   'owner_name', ${ownerNameSql(sql`scm.circle_id`)},
+                   'invited_at', scm.invited_at,
+                   'invite_expires_at', scm.invite_expires_at,
+                   'invite_token', case when ${status} = 'pending' then scm.invite_token else null end
+                 ) as payload
+            from public.safety_circle_members scm
+           where ${incomingInviteMatchSql(callerId, authPhone)}
+             and ${status} in ('pending', 'expired', 'canceled')
+        ) listed`);
+    return result.rows[0].body;
   }
 
   /**

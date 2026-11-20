@@ -11,6 +11,7 @@ import {
   type CircleMemberJson,
   CirclesRepository,
   type CirclesExecutor,
+  type JoinedCircleJson,
   type SafetyCircleJson,
 } from './circles.repository';
 
@@ -83,6 +84,15 @@ export class CirclesService {
       }
       return this.repository.listMembers(tx, circleId, access.is_owner, this.avatars);
     });
+  }
+
+  /**
+   * `list_my_joined_circles()` (final: baseline 20261021140000): the circles where the caller has an
+   * active row, the own circle included (`role: owner`; parity, SCRUM-81 later excludes it). One
+   * statement, as the `stable` function.
+   */
+  joinedCircles(user: AuthenticatedUser): Promise<JoinedCircleJson[]> {
+    return this.read((tx) => this.repository.joinedCircles(tx, user.id));
   }
 
   private read<T>(query: (tx: CirclesExecutor) => Promise<T>): Promise<T> {

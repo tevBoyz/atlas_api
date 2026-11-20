@@ -1331,6 +1331,63 @@
         ],
         "type": "object"
       },
+      "IncomingInvite": {
+        "additionalProperties": false,
+        "properties": {
+          "circle_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "invite_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "invite_token": {
+            "description": "Only while `pending` (to accept or decline); null otherwise.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "invited_at": {
+            "type": "string"
+          },
+          "member_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "owner_name": {
+            "description": "The owner row's stored display name.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "The lookup status (spec §5.3). Accepted (`consumed`) invitations are not listed.",
+            "enum": [
+              "pending",
+              "expired",
+              "canceled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "member_id",
+          "circle_id",
+          "status",
+          "owner_name",
+          "invited_at",
+          "invite_expires_at",
+          "invite_token"
+        ],
+        "type": "object"
+      },
       "InviteLookup": {
         "additionalProperties": false,
         "properties": {
@@ -1460,6 +1517,91 @@
           "claimed",
           "recipient_ok",
           "owner_avatar_url"
+        ],
+        "type": "object"
+      },
+      "JoinedCircle": {
+        "additionalProperties": false,
+        "properties": {
+          "active_member_count": {
+            "description": "Active members of the circle, owner excluded (pending and declined excluded).",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "circle_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "joined_at": {
+            "description": "The caller's member row `updated_at`.",
+            "type": "string"
+          },
+          "member_id": {
+            "description": "The caller's member row in that circle.",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_name": {
+            "description": "The owner row's stored display name.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "description": "`owner` for the circle the caller owns (it is listed too, as today).",
+            "enum": [
+              "owner",
+              "member"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "const": "active",
+            "type": "string"
+          }
+        },
+        "required": [
+          "circle_id",
+          "name",
+          "role",
+          "member_id",
+          "status",
+          "owner_name",
+          "joined_at",
+          "active_member_count"
+        ],
+        "type": "object"
+      },
+      "LeftCircle": {
+        "additionalProperties": false,
+        "properties": {
+          "circle_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "left": {
+            "const": true,
+            "type": "boolean"
+          },
+          "member_id": {
+            "description": "The caller's member row, now deleted.",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "circle_id",
+          "member_id",
+          "left"
         ],
         "type": "object"
       },
@@ -1772,6 +1914,31 @@
         ],
         "type": "object"
       },
+      "RemovedMember": {
+        "additionalProperties": false,
+        "properties": {
+          "circle_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "member_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "removed": {
+            "const": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "member_id",
+          "circle_id",
+          "removed"
+        ],
+        "type": "object"
+      },
       "ResponderIncident": {
         "additionalProperties": false,
         "properties": {
@@ -2021,6 +2188,194 @@
         ]
       }
     },
+    "/v1/circles/{circle_id}/leave": {
+      "post": {
+        "operationId": "leaveSafetyCircle",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "circle_id",
+            "required": true,
+            "schema": {
+              "description": "The circle id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeftCircle"
+                }
+              }
+            },
+            "description": "The caller's member row is deleted (with its alert deliveries), as today. The owner cannot leave."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "leave_safety_circle:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "leave_safety_circle:not_authenticated"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "leave_safety_circle:not_authorized",
+                    "details": {},
+                    "message": "You do not have access to this."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not allowed",
+            "x-error-codes": [
+              "leave_safety_circle:not_authorized"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "leave_safety_circle:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "leave_safety_circle:not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "leave_safety_circle:is_owner",
+                    "details": {},
+                    "message": "The circle owner cannot leave their own Safety Circle."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "leave_safety_circle:is_owner"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Leave a circle I am a member of (access ends at once)",
+        "tags": [
+          "circles"
+        ]
+      }
+    },
     "/v1/circles/{circle_id}/members": {
       "get": {
         "operationId": "listCircleMembers",
@@ -2187,6 +2542,205 @@
           }
         ],
         "summary": "Who is in the circle, by their current names",
+        "tags": [
+          "circles"
+        ]
+      }
+    },
+    "/v1/circles/{circle_id}/members/{member_id}": {
+      "delete": {
+        "operationId": "removeCircleMember",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "circle_id",
+            "required": true,
+            "schema": {
+              "description": "The circle id. A member row of another circle is `not_found`.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "description": "The member row id (any non-owner row: active, pending, declined).",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovedMember"
+                }
+              }
+            },
+            "description": "The member row is deleted (with its alert deliveries), as today. The person loses every incident of the circle at once, history included."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "remove_circle_member:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "remove_circle_member:not_authenticated"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "remove_circle_member:not_authorized",
+                    "details": {},
+                    "message": "You do not have access to this."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not allowed",
+            "x-error-codes": [
+              "remove_circle_member:not_authorized"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "remove_circle_member:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "remove_circle_member:not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "remove_circle_member:cannot_remove_owner",
+                    "details": {},
+                    "message": "The circle owner cannot be removed."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "remove_circle_member:cannot_remove_owner"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Remove a member or invitation from the circle I own (access ends at once)",
         "tags": [
           "circles"
         ]
@@ -5907,6 +6461,202 @@
         "summary": "The active incident of the caller, to restore Alert Sent after a restart or a lost response",
         "tags": [
           "incidents"
+        ]
+      }
+    },
+    "/v1/me/invites": {
+      "get": {
+        "operationId": "listMyCircleInvites",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/IncomingInvite"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Rows claimed by the caller, or unclaimed phone invitations to the caller's (normalized) phone. Accepted invitations are not listed. Pending invitations the caller may accept are claimed by this call (safe to repeat); `invite_token` is set only while pending."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "list_my_circle_invites:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "list_my_circle_invites:not_authenticated"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Invitations sent to me (pending, expired and canceled), newest first",
+        "tags": [
+          "invites"
+        ]
+      }
+    },
+    "/v1/me/joined-circles": {
+      "get": {
+        "operationId": "listMyJoinedCircles",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JoinedCircle"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Newest `joined_at` first. Includes the circle the caller owns (`role: owner`), as today. No phone, email, emergency or medical field."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "list_my_joined_circles:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "list_my_joined_circles:not_authenticated"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The circles the caller is an active member of (the own circle included)",
+        "tags": [
+          "circles"
         ]
       }
     },

@@ -197,3 +197,24 @@ export const declinedInviteSchema = componentSchema(
 export const memberIdParamsSchema = z.object({
   member_id: z.guid().describe('The invite (member row) id.'),
 });
+
+/** One element of `list_my_circle_invites` (spec §7.3): exactly these 7 keys. */
+export const incomingInviteSchema = componentSchema(
+  'IncomingInvite',
+  z.object({
+    member_id: z.uuid(),
+    circle_id: z.uuid(),
+    status: z
+      .enum(['pending', 'expired', 'canceled'])
+      .describe('The lookup status (spec §5.3). Accepted (`consumed`) invitations are not listed.'),
+    owner_name: z.string().nullable().describe("The owner row's stored display name."),
+    invited_at: z.string(),
+    invite_expires_at: z.string().nullable(),
+    invite_token: z
+      .string()
+      .nullable()
+      .describe('Only while `pending` (to accept or decline); null otherwise.'),
+  }),
+);
+
+export const incomingInviteListSchema = z.array(incomingInviteSchema);

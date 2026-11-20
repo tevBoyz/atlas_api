@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
+import { CirclesRepository } from '../../src/modules/circles/circles.repository';
+import { MembershipRepository } from '../../src/modules/circles/membership.repository';
 import { OwnerInvitesRepository } from '../../src/modules/invites/owner-invites.repository';
 import { OwnerInvitesService } from '../../src/modules/invites/owner-invites.service';
 import { createTestApp } from '../../src/testing/test-app';
@@ -10,9 +12,9 @@ import {
   cancelInvite,
   errorOf,
   getCapacity,
+  listJoinedCircles,
   listMembers,
   lookupInvite,
-  sqlAs,
 } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import { createUser, fakeInviteToken, fakePhone, type UserFixture } from '../support/fixtures';
@@ -24,10 +26,12 @@ import { createUser, fakeInviteToken, fakePhone, type UserFixture } from '../sup
  * `beforeAll` walks the script's scenario in its order, with the same fixtures (raw inserts as the
  * migration role). Every cancel goes through the API (`POST /v1/me/circle/invites/{id}/cancel`);
  * capacity (`GET /v1/me/circle/capacity`) and the member lists (`GET /v1/circles/{id}/members`) too.
- * The canceled token's lookup (L415) goes through `GET /v1/invites/{token}/status` (API-100-29). Still
- * through the SQL function, read-only, because its endpoint comes later: `list_my_joined_circles`
- * (L220, L239, L456; API-100-31). The static checks (L47-L86) read the database the API shares; L47 also checks the
- * API's own cancel write.
+ * The canceled token's lookup (L415) goes through `GET /v1/invites/{token}/status` (API-100-29), and
+ * the joined circles of the owner and the member (L220, L239, L456) through `GET /v1/me/joined-circles`
+ * (API-100-31). The static checks (L47-L86) read the database the API shares; L47 also checks the
+ * API's own cancel write, L57 the API's joined-circles query (count, no contact or medical field),
+ * L64/L71 the API's remove/leave write (`MembershipRepository.deleteMember`, API-100-32: a hard
+ * delete that never sets `invite_canceled_at`). No `it.todo` left.
  *
  * `cancel_circle_invite(null)` (L302/L306): a path cannot carry SQL null. The route answers a
  * `{member_id}` that is not uuid input (including the text `null`) with 422
@@ -56,6 +60,8 @@ describe('scrum29_cancel_invite.sql', () => {
 
   let cancelSrc: string;
   let apiCancelSrc: string;
+  let apiJoinedSrc: string;
+  let apiEndSrc: string;
   let joinedSrc: string;
   let removeSrc: string;
   let leaveSrc: string;
@@ -90,10 +96,11 @@ describe('scrum29_cancel_invite.sql', () => {
         [id],
       )
     ).rows[0];
-  const joined = async (user: UserFixture) =>
-    (await sqlAs<Body[]>(client, user.id, 'public.list_my_joined_circles()')).find(
-      (e) => e.circle_id === cid,
-    );
+  const joined = async (user: UserFixture) => {
+    const reply = await listJoinedCircles(app, user.id);
+    expect(reply.statusCode).toBe(200);
+    return reply.json<Body[]>().find((e) => e.circle_id === cid);
+  };
   const capacity = async () => (await getCapacity(app, owner.id)).json<Body>();
 
   let cap1: Body;
@@ -139,6 +146,13 @@ describe('scrum29_cancel_invite.sql', () => {
     // The API's cancel write (compiled method source, SQL text included).
     apiCancelSrc = Function.prototype.toString.call(
       Object.getOwnPropertyDescriptor(OwnerInvitesRepository.prototype, 'cancel')?.value,
+    );
+    // The API's joined-circles query and its remove/leave write (compiled method source).
+    apiJoinedSrc = Function.prototype.toString.call(
+      Object.getOwnPropertyDescriptor(CirclesRepository.prototype, 'joinedCircles')?.value,
+    );
+    apiEndSrc = Function.prototype.toString.call(
+      Object.getOwnPropertyDescriptor(MembershipRepository.prototype, 'deleteMember')?.value,
     );
 
     phones = [fakePhone(), fakePhone()];
@@ -288,20 +302,26 @@ describe('scrum29_cancel_invite.sql', () => {
   });
 
   it('L57: list_my_joined_circles count or privacy regressed', () => {
-    expect(joinedSrc).toMatch(/active_member_count/i);
-    for (const word of ['phone', 'email', 'emergency', 'medical']) {
-      expect(joinedSrc.toLowerCase()).not.toContain(word);
+    for (const text of [joinedSrc, apiJoinedSrc]) {
+      expect(text).toMatch(/active_member_count/i);
+      for (const word of ['phone', 'email', 'emergency', 'medical']) {
+        expect(text.toLowerCase()).not.toContain(word);
+      }
     }
   });
 
   it('L64: remove_circle_member was changed', () => {
-    expect(removeSrc).toMatch(/delete from public\.safety_circle_members/i);
-    expect(removeSrc).not.toMatch(/invite_canceled_at/i);
+    for (const text of [removeSrc, apiEndSrc]) {
+      expect(text).toMatch(/delete from public\.safety_circle_members/i);
+      expect(text).not.toMatch(/invite_canceled_at/i);
+    }
   });
 
   it('L71: leave_safety_circle was changed', () => {
-    expect(leaveSrc).toMatch(/delete from public\.safety_circle_members/i);
-    expect(leaveSrc).not.toMatch(/invite_canceled_at/i);
+    for (const text of [leaveSrc, apiEndSrc]) {
+      expect(text).toMatch(/delete from public\.safety_circle_members/i);
+      expect(text).not.toMatch(/invite_canceled_at/i);
+    }
   });
 
   it('L79: anon can execute cancel_circle_invite', () => {

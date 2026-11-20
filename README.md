@@ -365,6 +365,58 @@ capacity: null}` when the caller owns no circle. Never `invite_token`. 401 code
 - Audit `circle.invite.accepted` / `circle.invite.declined` in the same transaction (ids, channel,
   previous status; never a phone, name or token). No SMS, email or push.
 
+## Incoming invitations and joined circles (API-100-31, `src/modules/invites`, `src/modules/circles`)
+
+- `GET /v1/me/invites` (`list_my_circle_invites`): rows claimed by the caller (`user_id`), or
+  unclaimed phone invitations whose phone equals the caller's Auth phone after `_normalize_e164`
+  (trim; `+` added to 8-15 digits); lookup status `pending`, `expired` or `canceled` (accepted =
+  `consumed` rows are not listed); `invite_token` only while `pending`; `owner_name` = the owner row's
+  stored name. Order: the function's own expression, `(payload->>'invited_at') desc` (JSON text in
+  the database collation: a whole-second time sorts above fractional times of the same second, as
+  in the SQL); ties by `member_id`. Side effect, as the SQL: the caller's stored-`pending` rows are
+  locked (member rows only, in the function's physical order, `ctid`), and each one the caller may
+  accept (lookup `pending`, `invite.recipient`, no other active row of the caller in that circle) is
+  claimed (`user_id`, still `pending`); a `(circle_id, user_id)` clash is swallowed. Never activates.
+  `cache-control: no-store` (the body carries tokens).
+- `GET /v1/me/joined-circles` (`list_my_joined_circles`): every `active` row of the caller,
+  **including the own circle** (`role: owner`; SCRUM-81 changes this later), `joined_at` = the member
+  row's `updated_at`, `active_member_count` = active `role = 'member'` rows (owner excluded). Order
+  `(payload->>'joined_at') desc`, ties by `member_id`. Read-only, one statement.
+- Both read routes use the default authenticated rate limit; 401 codes
+  `list_my_circle_invites:not_authenticated` / `list_my_joined_circles:not_authenticated`.
+
+## Remove and leave (API-100-32, `src/modules/circles/membership.*`)
+
+- `DELETE /v1/circles/{circle_id}/members/{member_id}` (`remove_circle_member`): 404 `not_found`
+  (unknown id, or a row of another circle than the path's: the SQL takes only the member id, the API
+  refuses a mismatched path), 403 `not_authorized` (caller does not own the row's circle), 409
+  `cannot_remove_owner`; any other row (active, pending, declined) is deleted. 200
+  `{member_id, circle_id, removed: true}`.
+- `POST /v1/circles/{circle_id}/leave` (`leave_safety_circle`): 404 `not_found`, 409 `is_owner`,
+  403 `not_authorized` (not an active non-owner member); the caller's row is deleted. 200
+  `{circle_id, member_id, left: true}`.
+- Both go through `MembershipService.end(change, row, reason, actor)`: the parity write (**hard
+  delete**; the member's `incident_deliveries` cascade), the audit row `circle.member.removed` /
+  `circle.member.left` in the same transaction (member row id, circle, the member's `user_id`,
+  previous stored status), and, after commit only, the revocation hooks
+  (`MEMBERSHIP_POST_COMMIT_HOOKS`, none until API-100-40/42 force sockets out; a failing hook is
+  logged and never fails the change). Access ends at once: every incident read needs a current
+  `active` row inside the window, so the user gets 404 on that circle's incidents, history included
+  (epic §18.1 P1).
+- Locks as the SQL: the member row only, `FOR UPDATE`; no `safety_circles` lock. Races with
+  acknowledge, mark safe, re-notify, submit and the invite writes are covered by
+  `test/int/circles-membership-races.int-spec.ts` (no deadlock). Known SQL behaviour mirrored: a
+  leave/remove committing in the middle of a submit's delivery insert makes that submit fail with
+  23503 (foreign key), in the SQL function as in the API (a 500).
+- **Design note (SCRUM-30/31, not implemented):** stored statuses replace the hard delete.
+  Additive status values `removed` and `left` (with `removed_at`/`removed_by`, `left_at`) written by
+  `MembershipService.end` instead of the DELETE (its callers and hooks stay); the partial unique
+  indexes on `(circle_id, user_id)` and `(circle_id, phone)` limited to `status in ('pending',
+'active')`, so a removed or left person can be invited again (new row, new `activated_at`);
+  removed/left rows hold no slot; `incident_deliveries` are kept (no cascade), so the resident keeps
+  delivery history while the member still loses every read (policies require `active`); remove and
+  leave become idempotent. This changes what the app sees, so it belongs to those stories.
+
 ## OpenAPI and the Dart client (API-100-12, `src/openapi`, `clients/dart`)
 
 - Every route declares `@ApiContract({ operationId, summary, tag, responses, ... })` with zod schemas.

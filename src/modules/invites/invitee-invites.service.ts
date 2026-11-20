@@ -10,6 +10,7 @@ import { CIRCLE_MEMBER_LIMIT, type InviteLookupStatus } from '../circles/invite-
 import { auditSessionId } from '../incidents/incidents.service';
 import { pgTrim } from './invite-input';
 import {
+  type IncomingInviteJson,
   type InviteChecks,
   type InviteDecisionJson,
   InviteeInvitesRepository,
@@ -25,7 +26,11 @@ import {
   sqlStateOf,
 } from './owner-invites.service';
 
-type InviteeOperation = 'preview_circle_invite' | 'accept_circle_invite' | 'decline_circle_invite';
+type InviteeOperation =
+  | 'preview_circle_invite'
+  | 'accept_circle_invite'
+  | 'decline_circle_invite'
+  | 'list_my_circle_invites';
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -201,6 +206,38 @@ export class InviteeInvitesService {
         user_recorded: claimed,
       });
       return body;
+    });
+  }
+
+  /**
+   * `list_my_circle_invites()` (final: baseline 20261019170000), one transaction (read committed, like
+   * the RPC):
+   * 1. the claim loop: the caller's stored-`pending` rows are locked `FOR UPDATE` (member rows only,
+   *    in the function's order, see `lockClaimCandidates`); each row whose lookup status is
+   *    `pending`, whose recipient is the caller (`invite.recipient`) and whose circle has no other
+   *    active row of the caller (`_circle_has_active_membership`; owners included) is claimed
+   *    (`user_id = uid`, still `pending`) when unclaimed, in a savepoint; a `(circle_id, user_id)`
+   *    clash is swallowed (the row stays unclaimed), as the function's `exception when
+   *    unique_violation then null`. The checks run per row in a new statement after the lock
+   *    (`InviteeInvitesRepository.checks`), so a writer that committed meanwhile is seen;
+   * 2. the answer ({@link InviteeInvitesRepository.listIncoming}).
+   * No audit row: a claim is not a membership change (the preview's claim writes none either).
+   * Repeating it is safe (claimed rows are not written again).
+   */
+  listIncoming(user: AuthenticatedUser): Promise<IncomingInviteJson[]> {
+    return this.run('list_my_circle_invites', async (tx) => {
+      await this.repository.useUtcTimestamps(tx);
+      const authPhone = await this.repository.authPhone(tx, user.id);
+      const candidates = await this.repository.lockClaimCandidates(tx, user.id, authPhone);
+      for (const memberId of candidates) {
+        const checks = await this.repository.checks(tx, memberId, user.id, authPhone);
+        if (checks.lookup_status !== 'pending') continue;
+        if (!checks.recipient_ok) continue;
+        if (checks.other_active) continue;
+        // `m.user_id is null` (`mine` is SQL `m.user_id = uid`: null exactly when unclaimed).
+        if (checks.mine === null) await this.claimInSavepoint(tx, memberId, user.id);
+      }
+      return this.repository.listIncoming(tx, user.id, authPhone);
     });
   }
 

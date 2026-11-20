@@ -6,12 +6,17 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 
 import { aliasColumn, deliveryOwn } from '../../src/common/policies';
 import { createTestApp } from '../../src/testing/test-app';
-import { acceptInvite, createInviteLink, declineInvite } from '../support/circle-api';
+import {
+  acceptInvite,
+  createInviteLink,
+  declineInvite,
+  leaveCircle,
+  removeMember,
+} from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import { addActiveMember, createCircle, createUser, type UserFixture } from '../support/fixtures';
 import {
   acknowledgeIncident,
-  callSqlAs,
   getDeliveryCounts,
   getIncidentDetails,
   getIncidentEvents,
@@ -26,9 +31,11 @@ import {
  * entry per SQL assertion: the name quotes the SQL message, prefixed with its line in the file.
  *
  * `beforeAll` walks the script's scenario in its order. Incident writes go through the API (submit,
- * mark safe); membership writes the API does not have yet are done as the script does them (the same
- * raw writes as the migration role, or the SQL functions `remove_circle_member` /
- * `leave_safety_circle`, Phase 2). At each step it records what the API answers for that caller:
+ * mark safe); the removal and the leave too (`DELETE /v1/circles/{circle_id}/members/{member_id}` and
+ * `POST /v1/circles/{circle_id}/leave`, API-100-32, replacing the script's `remove_circle_member` /
+ * `leave_safety_circle`; L396 and L426 also check they answered 200). The script's fixture rows
+ * (the owner row, the backdated early member, the joiner) stay raw writes as the migration role, as
+ * the script does them. At each step it records what the API answers for that caller:
  * delivery counts and acknowledge (API-100-20), the responder list and details (API-100-21) and the
  * event log (API-100-22). The RLS reads of the script ("sees % incidents", "sees % events", "own
  * delivery rows") are checked twice: against the database roles, as the SQL does (the app still reads
@@ -47,7 +54,8 @@ import {
  * the script sets `declined` by hand) and L456 checks it has no `activated_at`.
  *
  * Still `it.todo`, with the story that completes them: L84 (owner row) with API-100-36, L189 (no
- * client-chosen activated_at; `membership.activate`) with the Phase 2 gate API-100-33.
+ * client-chosen activated_at; `membership.activate`) with the Phase 2 gate API-100-33. Nothing of
+ * the membership parts still goes through the SQL functions.
  *
  * The window case for closure recipients (rule 54 in `_incident_active_recipient_ids`, used by
  * `mark_incident_safe`; the script closes incident A at L131 but has no assertion of its own) is
@@ -101,6 +109,8 @@ describe('membership_access_window.sql', () => {
   let outsiderSeen: Seen;
   let removedBefore: Seen;
   let removedAfter: Seen;
+  let removeStatus: number;
+  let leaveStatus: number;
   let leftSeen: Seen;
   let leftAckB: Reply;
   let memberList: string[];
@@ -328,14 +338,14 @@ describe('membership_access_window.sql', () => {
 
     // Removed member: sees B before removal, nothing after.
     removedBefore = await incidentsSeen(removed.id, [bId]);
-    await callSqlAs(client, resident.id, 'public.remove_circle_member($1)', [removedRow.id]);
+    removeStatus = (await removeMember(app, resident.id, circle.id, removedRow.id)).statusCode;
     removedAfter = await incidentsSeen(removed.id, both);
     removedList = await listOf(removed.id);
     removedDetailsB = await getIncidentDetails(app, removed.id, bId);
     removedEvents = await eventsSeen(removed.id, both);
 
     // Member leaves: nothing after.
-    await callSqlAs(client, member.id, 'public.leave_safety_circle($1)', [circle.id]);
+    leaveStatus = (await leaveCircle(app, member.id, circle.id)).statusCode;
     leftSeen = await incidentsSeen(member.id, both);
     leftList = await listOf(member.id);
     leftEvents = await eventsSeen(member.id, both);
@@ -549,6 +559,7 @@ describe('membership_access_window.sql', () => {
   });
 
   it('L396: removed member sees % incidents', () => {
+    expect(removeStatus).toBe(200);
     expect(removedAfter.incidents).toBe(0);
     expect(removedAfter.details).toEqual({ A: 404, B: 404 });
   });
@@ -573,6 +584,7 @@ describe('membership_access_window.sql', () => {
   });
 
   it('L426: left member sees % incidents', () => {
+    expect(leaveStatus).toBe(200);
     expect(leftSeen.incidents).toBe(0);
     expect(leftSeen.details).toEqual({ A: 404, B: 404 });
   });
