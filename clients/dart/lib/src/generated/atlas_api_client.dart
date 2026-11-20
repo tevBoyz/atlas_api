@@ -11,6 +11,7 @@ import 'clients/incidents_client.dart';
 import 'clients/locations_client.dart';
 import 'clients/invites_client.dart';
 import 'clients/profiles_client.dart';
+import 'clients/devices_client.dart';
 import 'clients/meta_client.dart';
 
 /// Atlas API `v0.1.0`.
@@ -31,6 +32,7 @@ class AtlasApiClient {
   LocationsClient? _locations;
   InvitesClient? _invites;
   ProfilesClient? _profiles;
+  DevicesClient? _devices;
   MetaClient? _meta;
 
   HealthClient get health => _health ??= HealthClient(_dio, baseUrl: _baseUrl);
@@ -51,6 +53,9 @@ class AtlasApiClient {
 
   ProfilesClient get profiles =>
       _profiles ??= ProfilesClient(_dio, baseUrl: _baseUrl);
+
+  DevicesClient get devices =>
+      _devices ??= DevicesClient(_dio, baseUrl: _baseUrl);
 
   MetaClient get meta => _meta ??= MetaClient(_dio, baseUrl: _baseUrl);
 }

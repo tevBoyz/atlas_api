@@ -165,6 +165,18 @@ export const PARITY_ERROR_CODES = {
     'email_mismatch',
   ],
 
+  // §11.3 U1/U2 device registration (API-100-44, D22): new codes, prefix = the table, like
+  // `profiles`. `invalid_installation_id` covers a missing or non-UUID `X-Atlas-Installation-Id`;
+  // the body codes follow the body's field order.
+  user_devices: [
+    'not_authenticated',
+    'invalid_installation_id',
+    'invalid_platform',
+    'invalid_app_version',
+    'invalid_push_provider',
+    'invalid_push_token',
+  ],
+
   // §11.2 / §11.3 E1 Idempotency-Key (enforced by API-100-10; `invalid_key` from its AC3)
   idempotency: ['key_mismatch', 'in_progress', 'key_required', 'invalid_key'],
 } as const;

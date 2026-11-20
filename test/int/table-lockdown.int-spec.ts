@@ -6,9 +6,17 @@ import { testDatabaseUrl } from '../support/database';
  * API-owned tables in `public` are not reachable by the Supabase API roles (PostgREST): `anon` and
  * `authenticated` have no table privileges and RLS is enabled with no policy (deny). Covers the
  * migration tracking table (runner + `0002_lock_down_api_schema_migrations.sql`),
- * `idempotency_keys` (`0001`) and `audit_log` (`0003`).
+ * `idempotency_keys` (`0001`), `audit_log` (`0003`), `user_devices` (`0005`),
+ * `notification_outbox` (`0006`) and `notification_deliveries` (`0007`).
  */
-const TABLES = ['public.api_schema_migrations', 'public.idempotency_keys', 'public.audit_log'];
+const TABLES = [
+  'public.api_schema_migrations',
+  'public.idempotency_keys',
+  'public.audit_log',
+  'public.user_devices',
+  'public.notification_outbox',
+  'public.notification_deliveries',
+];
 const ROLES = ['anon', 'authenticated'];
 const PRIVILEGES = ['select', 'insert', 'update', 'delete'];
 

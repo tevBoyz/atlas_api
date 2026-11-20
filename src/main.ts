@@ -12,6 +12,7 @@ import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { configureApp, createFastifyAdapter } from './app.setup';
 import { ApiConfigService } from './config';
+import { WorkerModule } from './worker.module';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -26,4 +27,12 @@ async function bootstrap(): Promise<void> {
   await app.listen({ port: app.get(ApiConfigService).get('PORT'), host: '0.0.0.0' });
 }
 
-void bootstrap();
+/** `WORKER=1` (API-100-45 AC3): the job workers, no HTTP server. Same build, same image. */
+async function bootstrapWorker(): Promise<void> {
+  const worker = await NestFactory.createApplicationContext(WorkerModule, { bufferLogs: true });
+  worker.useLogger(worker.get(Logger));
+  worker.enableShutdownHooks();
+  await worker.init();
+}
+
+void (bootConfig.WORKER ? bootstrapWorker() : bootstrap());

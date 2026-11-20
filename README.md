@@ -107,16 +107,17 @@ Fake only: Ada (circle owner), Ben and Cara (active members), Dan (pending phone
 
 ## Health and readiness (API-100-07, `src/health`)
 
-| Route          | Answers                                                                                                                                                                             |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /healthz` | Always `200 {"status":"ok"}` while the process runs. No dependency checks.                                                                                                          |
-| `GET /readyz`  | `200 {"status":"ok"}` when a DB query, a Redis `PING`, the migrations check and the realtime adapter's Redis (`realtime`) pass; else `503 {"status":"unavailable","failed":[...]}`. |
+| Route          | Answers                                                                                                                                                                                                             |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /healthz` | Always `200 {"status":"ok"}` while the process runs. No dependency checks.                                                                                                                                          |
+| `GET /readyz`  | `200 {"status":"ok"}` when a DB query, a Redis `PING`, the migrations check, the realtime adapter's Redis (`realtime`) and the job queues' Redis (`jobs`) pass; else `503 {"status":"unavailable","failed":[...]}`. |
 
 - Both are at the root (no `/v1`), send `cache-control: no-store`, and are marked `@Public()` and
   `@SkipRateLimit()` (`src/common/guards/route-access.ts`). **The JWT guard (API-100-08) and the
   rate limiter (API-100-11) must skip routes carrying that metadata** (`isPublicRoute`,
   `skipsRateLimit`).
-- `failed` lists only the failing checks, always in the order `db`, `redis`, `migrations`, `realtime`.
+- `failed` lists only the failing checks, always in the order `db`, `redis`, `migrations`, `realtime`,
+  `jobs`.
 - **Exemption from the error envelope**: the 503 body is exactly `{"status","failed"}`, not
   `{"error":{...}}`. The controller sets the status and returns the body; nothing is thrown, so the
   global filter never sees it. Every other non-2xx response still uses the envelope.
@@ -555,6 +556,48 @@ Needs Docker running. No suite uses the compose stack or reads `.env`.
   nothing); the reconnect contract (no replay, join again, REST has the state).
 - App hand-off: `docs/phase4_handoff.md` (decisions D19-D21).
 
+### Phase 5 gate (API-100-49)
+
+- `npm run build && npm run load:notifications [-- --baseline-main <old build>/dist/main.js]`: the
+  built API plus two `WORKER=1` processes on one throwaway database and Redis, push on the fake
+  adapter; 50 residents x 3 members (one device each), `--rounds` (3) SOS bursts (submit, re-notify,
+  mark safe, all at once) with the workers idle, then 3 more while they fan out. Fails on any lost or
+  duplicate outbox row or delivery, any delivery not `sent` after one attempt, any failed request,
+  failed job or error log line, or p99 submit at or above 2 s. With `--baseline-main` the same bursts
+  run first against that other build (e.g. the Phase 4 release) for a before/after latency table.
+- `test/int/notifications-e2e.int-spec.ts`: HTTP submit → outbox → job → fake push → delivery `sent`;
+  the failure path with the default backoff (3 retries, 2/4/8 s) → `failed`; re-notify, mark safe,
+  sign-out (U2).
+- App hand-off: `docs/phase5_handoff.md` (decisions D22-D26).
+
+## Notifications (API-100-44 to 48, `src/modules/notifications`, `src/jobs`)
+
+- **Devices** (U1/U2): `PUT /v1/me/devices/current` and `DELETE /v1/me/devices/current/push-token`
+  with `X-Atlas-Installation-Id` (UUID); `user_devices` (migration 0005). A push token is on one
+  device only. Push tokens are never logged, audited or echoed (`devices.service.ts` replaces
+  database errors, the scrubber redacts `*token*` keys).
+- **Outbox** (`src/jobs/outbox.ts`, migration 0006): incident writes insert `notification_outbox`
+  rows in their own transaction. `OutboxRelay` (every process, own DB connection) publishes committed
+  rows to the BullMQ queue `notification-outbox` (job id = outbox id; at-least-once) every
+  `OUTBOX_RELAY_INTERVAL_MS` and right after each committed incident write; `deliver_at` delays a job.
+- **Worker** (`WORKER=1`, same build and image, `src/worker.module.ts`): no HTTP server; BullMQ
+  workers for `notification-outbox` (fan-out) and `notification-deliveries` (one send per job),
+  `JOBS_WORKER_CONCURRENCY` each. Run it next to the API: `WORKER=1 node dist/main.js`.
+- **Deliveries** (migration 0007): one row per recipient x channel x device: `queued`, `sent`,
+  `delivered`, `failed` (with `error_code`) or `skipped` (`channel_disabled`, `no_device`,
+  `no_address`, `not_eligible`). Retries: `NOTIFICATIONS_RETRY_ATTEMPTS` (3) with exponential
+  backoff from `NOTIFICATIONS_RETRY_BASE_DELAY_MS` (2 s: 2, 4, 8 s; all retries must fit in 60 s).
+  `unregistered` clears the push token. No read endpoint (SCRUM-65).
+- **Channels** (`channels/`): `PushSender` / `SmsSender` / `EmailSender`; fakes by default
+  (`CHANNEL_*_ADAPTER=fake`). Real FCM/APNs only with `CHANNEL_PUSH_ADAPTER=real` plus keys; Twilio
+  only with `CHANNEL_SMS_ADAPTER=twilio`, its keys and `CHANNEL_SMS_TWILIO_HOLD_LIFTED=true` (the
+  Twilio hold: refused otherwise); email has no real adapter. A disabled channel (`CHANNEL_*_ENABLED`,
+  all false by default) records `skipped`. Production refuses an enabled channel on a fake adapter.
+  Fake push tokens starting `fake-fail-` fail every attempt and `fake-unregistered-` answer
+  `unregistered` (tests and the manual guide).
+- **Incident notices** (`incident-notifications.ts`): `incident.created` / `incident.renotified` /
+  `incident.resolved`, push only; recipients re-checked with `incident.memberView` at fan-out.
+
 ## Realtime (API-100-39 to 42, `src/realtime`)
 
 - Socket.IO on the API's own HTTP server: path `/socket.io`, namespace `/v1/realtime` only,
@@ -641,4 +684,5 @@ Stop your local `atlas-api` stack first (`docker compose down`) since both use p
 `npm run test:baseline` · `npm run openapi:generate` / `openapi:check` ·
 `npm run client:dart:generate` / `client:dart:build` ·
 `npm run auth:test-token` (local test token, see Authentication) · `npm run parity:report` /
-`load:incidents` (Phase 1 gate, see Tests).
+`load:incidents` / `load:circles` / `load:profiles` / `load:realtime` / `load:notifications` (phase
+gates, see Tests).

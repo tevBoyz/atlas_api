@@ -5,6 +5,7 @@ import type { Logger } from 'pino';
 
 import { isPublicRoute, skipsRateLimit } from '../common/guards/route-access';
 import { DataStoreNotConfiguredError, DatabaseService } from '../db';
+import { JobQueues } from '../jobs/job-queues.service';
 import { ROOT_LOGGER } from '../observability/logger';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { RedisService } from '../redis';
@@ -30,6 +31,7 @@ describe('Health and readiness (API-100-07)', () => {
   const database = { ping: jest.fn(), query: jest.fn() };
   const redis = { ping: jest.fn() };
   const realtime = { ping: jest.fn() };
+  const jobs = { ping: jest.fn(), isConfigured: false };
   const expected = { ids: [] as string[] };
 
   beforeAll(async () => {
@@ -41,6 +43,8 @@ describe('Health and readiness (API-100-07)', () => {
         .useValue(redis)
         .overrideProvider(RealtimeGateway)
         .useValue(realtime)
+        .overrideProvider(JobQueues)
+        .useValue(jobs)
         .overrideProvider(EXPECTED_MIGRATIONS)
         .useValue(expected)
         .overrideProvider(READINESS_TIMEOUT_MS)
@@ -57,6 +61,7 @@ describe('Health and readiness (API-100-07)', () => {
     database.query.mockReset().mockResolvedValue([]);
     redis.ping.mockReset().mockResolvedValue(undefined);
     realtime.ping.mockReset().mockResolvedValue(undefined);
+    jobs.ping.mockReset().mockResolvedValue(undefined);
     expected.ids = [];
     logs.raw.length = 0;
   });
@@ -106,6 +111,7 @@ describe('Health and readiness (API-100-07)', () => {
       ['db', () => database.ping.mockRejectedValue(new Error('ECONNREFUSED'))],
       ['redis', () => redis.ping.mockRejectedValue(new Error('Stream is not writeable'))],
       ['realtime', () => realtime.ping.mockRejectedValue(new Error('subscriber not connected'))],
+      ['jobs', () => jobs.ping.mockRejectedValue(new Error('jobs redis reconnecting'))],
       [
         'migrations',
         () => {
@@ -123,9 +129,10 @@ describe('Health and readiness (API-100-07)', () => {
       },
     );
 
-    it('lists every failing check in the order db, redis, migrations, realtime', async () => {
+    it('lists every failing check in the order db, redis, migrations, realtime, jobs', async () => {
       expected.ids = ['0001_a'];
       database.query.mockRejectedValue(new Error('relation does not exist'));
+      jobs.ping.mockRejectedValue(new Error('down'));
       realtime.ping.mockRejectedValue(new Error('down'));
       redis.ping.mockRejectedValue(new Error('down'));
       database.ping.mockRejectedValue(new Error('down'));
@@ -133,7 +140,7 @@ describe('Health and readiness (API-100-07)', () => {
       expect(res.statusCode).toBe(503);
       expect(res.json()).toEqual({
         status: 'unavailable',
-        failed: ['db', 'redis', 'migrations', 'realtime'],
+        failed: ['db', 'redis', 'migrations', 'realtime', 'jobs'],
       });
     });
 
@@ -141,8 +148,12 @@ describe('Health and readiness (API-100-07)', () => {
       database.ping.mockRejectedValue(new DataStoreNotConfiguredError('DATABASE_URL'));
       redis.ping.mockRejectedValue(new DataStoreNotConfiguredError('REDIS_URL'));
       realtime.ping.mockRejectedValue(new Error('REDIS_URL is not set'));
+      jobs.ping.mockRejectedValue(new DataStoreNotConfiguredError('REDIS_URL'));
       const res = await app.inject({ method: 'GET', url: '/readyz' });
-      expect(res.json()).toEqual({ status: 'unavailable', failed: ['db', 'redis', 'realtime'] });
+      expect(res.json()).toEqual({
+        status: 'unavailable',
+        failed: ['db', 'redis', 'realtime', 'jobs'],
+      });
     });
 
     it('fails the migrations check when the migration list is unavailable', async () => {

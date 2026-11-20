@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../../common/auth';
 import { DomainError } from '../../common/errors';
 import type { DatabaseService } from '../../db/database.service';
 import type { AuditService } from '../audit';
+import type { IncidentNotificationsOutbox } from '../notifications/incident-notifications';
 import type { IncidentEventService, RecordedIncidentEvent } from './incident-events.service';
 import {
   type IncidentPostCommitHook,
@@ -70,6 +71,11 @@ function serviceWith(
     afterEvents: jest.fn().mockResolvedValue(undefined),
   };
   const events = { drain: jest.fn().mockReturnValue(recorded) };
+  const notifications = {
+    created: jest.fn().mockResolvedValue('outbox-created'),
+    renotified: jest.fn().mockResolvedValue('outbox-renotified'),
+    resolved: jest.fn().mockResolvedValue('outbox-resolved'),
+  };
   const database = {
     db: { transaction: (run: (tx: object) => Promise<unknown>) => run({}) },
   };
@@ -79,8 +85,9 @@ function serviceWith(
     audit as unknown as AuditService,
     postCommit as unknown as IncidentPostCommitRunner,
     events as unknown as IncidentEventService,
+    notifications as unknown as IncidentNotificationsOutbox,
   );
-  return { service, repository, audit, postCommit, events };
+  return { service, repository, audit, postCommit, events, notifications };
 }
 
 describe('IncidentsService.submit (API-100-15)', () => {
@@ -487,5 +494,48 @@ describe('incident.event post-commit hook (API-100-22)', () => {
     );
     await expect(service.submit(USER, 'fire')).rejects.toBeInstanceOf(IncidentSubmitFailedError);
     expect(postCommit.afterEvents).not.toHaveBeenCalled();
+  });
+});
+
+describe('notification outbox rows (API-100-48)', () => {
+  const tx = {};
+
+  it('submit created: incident.created in the transaction', async () => {
+    const { service, notifications } = serviceWith();
+    await service.submit(USER, 'fire');
+    expect(notifications.created).toHaveBeenCalledWith(tx, INCIDENT_ID);
+    expect(notifications.renotified).not.toHaveBeenCalled();
+  });
+
+  it('submit on an active alert and explicit re-notify: incident.renotified', async () => {
+    const active = serviceWith({
+      lockOpenIncident: jest.fn().mockResolvedValue({ id: INCIDENT_ID, status: 'active' }),
+    });
+    await active.service.submit(USER, 'fire');
+    expect(active.notifications.renotified).toHaveBeenCalledWith(tx, INCIDENT_ID);
+    expect(active.notifications.created).not.toHaveBeenCalled();
+    const explicit = serviceWith();
+    await explicit.service.renotify(USER, INCIDENT_ID);
+    expect(explicit.notifications.renotified).toHaveBeenCalledWith(tx, INCIDENT_ID);
+  });
+
+  it('mark safe: incident.resolved with the closure recipients; the already-safe no-op writes none', async () => {
+    const closing = serviceWith();
+    await closing.service.markSafe(USER, INCIDENT_ID);
+    expect(closing.notifications.resolved).toHaveBeenCalledWith(tx, INCIDENT_ID, ['a', 'b']);
+    const noOp = serviceWith({
+      lockOwnIncident: jest
+        .fn()
+        .mockResolvedValue({ id: INCIDENT_ID, status: 'resolved', resolved_reason: 'safe' }),
+    });
+    await noOp.service.markSafe(USER, INCIDENT_ID);
+    expect(noOp.notifications.resolved).not.toHaveBeenCalled();
+  });
+
+  it('an outbox write that fails fails the whole write (same transaction)', async () => {
+    const { service, notifications, postCommit } = serviceWith();
+    notifications.created.mockRejectedValue(new Error('outbox down'));
+    await expect(service.submit(USER, 'fire')).rejects.toBeInstanceOf(IncidentSubmitFailedError);
+    expect(postCommit.afterSubmit).not.toHaveBeenCalled();
   });
 });

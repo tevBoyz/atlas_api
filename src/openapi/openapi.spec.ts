@@ -224,7 +224,7 @@ describe('OpenAPI document (API-100-12)', () => {
       expect(doc.components.schemas.ErrorBody.required).toEqual(['code', 'message', 'details']);
     });
 
-    it('lists only real routes: health, openapi, incidents, locations, config, circles, invites and profiles', () => {
+    it('lists only real routes: health, openapi, incidents, locations, config, circles, invites, profiles and devices', () => {
       expect(Object.keys(appDocument().paths).sort()).toEqual([
         '/healthz',
         '/readyz',
@@ -253,6 +253,8 @@ describe('OpenAPI document (API-100-12)', () => {
         '/v1/me/circle/invites/phone/batch',
         '/v1/me/circle/invites/{member_id}/cancel',
         '/v1/me/circle/invites/{member_id}/resend',
+        '/v1/me/devices/current',
+        '/v1/me/devices/current/push-token',
         '/v1/me/incidents',
         '/v1/me/incidents/open',
         '/v1/me/invites',
@@ -412,6 +414,7 @@ describe('OpenAPI document (API-100-12)', () => {
         'attachIncidentLocation',
         'cancelCircleInvite',
         'circleInviteCapacity',
+        'clearCurrentDevicePushToken',
         'completeProfileSetup',
         'createAvatarUploadUrl',
         'createCircleInviteLink',
@@ -437,6 +440,7 @@ describe('OpenAPI document (API-100-12)', () => {
         'lookupCircleInvite',
         'markIncidentSafe',
         'previewCircleInvite',
+        'registerCurrentDevice',
         'removeCircleMember',
         'renotifyEmergencyAlert',
         'resendCircleInvite',

@@ -14,6 +14,13 @@ for (const key of [
 ]) {
   delete process.env[key];
 }
+// Jobs and channels (Phase 5): never inherited from the shell, so every test starts from the
+// defaults (channels off, fake adapters, no worker mode).
+for (const key of Object.keys(process.env)) {
+  if (/^(WORKER$|JOBS_|OUTBOX_|NOTIFICATIONS_|CHANNEL_|FCM_|APNS_|TWILIO_)/.test(key)) {
+    delete process.env[key];
+  }
+}
 // Profile photos: the in-memory fake (unit tests never call Supabase Storage).
 process.env.AVATAR_STORAGE = 'memory';
 useTestJwtEnvironment();

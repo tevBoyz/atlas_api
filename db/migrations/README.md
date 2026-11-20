@@ -9,6 +9,9 @@ Plain SQL migrations owned by the Atlas API, applied **after** the Supabase base
 | `0002_lock_down_api_schema_migrations.sql` | API-100-03 follow-up | revoke `anon`/`authenticated` + RLS on `api_schema_migrations` |
 | `0003_audit_log.sql` | API-100-14 | append-only `audit_log` (triggers refuse UPDATE, DELETE, TRUNCATE) |
 | `0004_client_incidents_backend_switch.sql` | Phase 1 rollback switch | data only: `app_config` row `client_incidents_backend` = `"supabase"` (see below) |
+| `0005_user_devices.sql` | API-100-44 | `user_devices`: app installations and push tokens (token unique across devices) |
+| `0006_notification_outbox.sql` | API-100-45 | `notification_outbox`: transactional outbox published to BullMQ by the relay |
+| `0007_notification_deliveries.sql` | API-100-47 | `notification_deliveries`: one row per recipient x channel x device with its outcome |
 
 - File name: `<number>_<snake_case_description>.sql`, e.g. `0001_audit_log.sql`. Applied in number
   order; the id recorded is the file name without `.sql`.

@@ -21,6 +21,19 @@ const RATE_LIMIT_DEFAULTS = {
   RATE_LIMIT_AVATAR_UPLOAD_WINDOW_SECONDS: 3600,
   RATE_LIMIT_REDIS_TIMEOUT_MS: 100,
   REALTIME_ADAPTER_KEY: 'atlas:realtime',
+  // Jobs and channels (API-100-45 to 47).
+  WORKER: false,
+  JOBS_QUEUE_PREFIX: 'atlas:jobs',
+  JOBS_WORKER_CONCURRENCY: 10,
+  OUTBOX_RELAY_INTERVAL_MS: 1000,
+  OUTBOX_RELAY_BATCH_SIZE: 100,
+  NOTIFICATIONS_RETRY_ATTEMPTS: 3,
+  NOTIFICATIONS_RETRY_BASE_DELAY_MS: 2000,
+  NOTIFICATIONS_SEND_TIMEOUT_MS: 10000,
+  CHANNEL_PUSH_ADAPTER: 'fake',
+  CHANNEL_SMS_ADAPTER: 'fake',
+  CHANNEL_SMS_TWILIO_HOLD_LIFTED: false,
+  APNS_ENVIRONMENT: 'production',
 };
 
 const PRODUCTION_ENV = {
@@ -41,7 +54,8 @@ const PRODUCTION_ENV = {
   LOG_LEVEL: 'warn',
   SENTRY_DSN: 'https://public@sentry.example.com/1',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318',
-  CHANNEL_PUSH_ENABLED: 'true',
+  // An enabled channel on the fake adapter is refused in production (D24): see channel-config.spec.ts.
+  CHANNEL_PUSH_ENABLED: 'false',
   CHANNEL_SMS_ENABLED: 'false',
   CHANNEL_EMAIL_ENABLED: 'FALSE',
 };
@@ -69,7 +83,7 @@ describe('parseConfig (API-100-02)', () => {
         SUPABASE_JWT_CLOCK_SKEW_SECONDS: 30,
         AVATAR_STORAGE: 'supabase',
         TRUST_PROXY: true,
-        CHANNEL_PUSH_ENABLED: true,
+        CHANNEL_PUSH_ENABLED: false,
         CHANNEL_SMS_ENABLED: false,
         CHANNEL_EMAIL_ENABLED: false,
       });

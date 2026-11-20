@@ -37,7 +37,8 @@
     "load:incidents": "tsx test/load/incident-load.ts",
     "load:circles": "tsx test/load/circles-load.ts",
     "load:profiles": "tsx test/load/profiles-load.ts",
-    "load:realtime": "tsx test/load/realtime-load.ts"
+    "load:realtime": "tsx test/load/realtime-load.ts",
+    "load:notifications": "tsx test/load/notifications-load.ts"
   },
   "dependencies": {
     "@fastify/otel": "1.0.1",
@@ -55,6 +56,7 @@
     "@opentelemetry/semantic-conventions": "1.45.0",
     "@sentry/node": "11.14.0",
     "@socket.io/redis-adapter": "8.3.0",
+    "bullmq": "6.7.8",
     "drizzle-orm": "0.45.4",
     "fastify": "5.12.7",
     "ioredis": "6.0.0",

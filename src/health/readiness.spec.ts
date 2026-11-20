@@ -13,7 +13,7 @@ const fail: ReadinessCheck = () => Promise.reject(new Error('connection refused'
 const hang: ReadinessCheck = () => new Promise<void>(() => undefined);
 
 function checks(overrides: Partial<Record<ReadinessCheckName, ReadinessCheck>> = {}) {
-  return { db: ok, redis: ok, migrations: ok, realtime: ok, ...overrides };
+  return { db: ok, redis: ok, migrations: ok, realtime: ok, jobs: ok, ...overrides };
 }
 
 describe('readiness checks (API-100-07)', () => {
@@ -30,7 +30,7 @@ describe('readiness checks (API-100-07)', () => {
     });
   });
 
-  it.each(['db', 'redis', 'migrations', 'realtime'] as const)(
+  it.each(['db', 'redis', 'migrations', 'realtime', 'jobs'] as const)(
     'reports only %s when only it fails',
     async (name) => {
       const report = await runReadinessChecks(checks({ [name]: fail }));
@@ -40,13 +40,13 @@ describe('readiness checks (API-100-07)', () => {
     },
   );
 
-  it('lists failures in the fixed order db, redis, migrations, realtime whatever finishes first', async () => {
+  it('lists failures in the fixed order db, redis, migrations, realtime, jobs whatever finishes first', async () => {
     const late: ReadinessCheck = () =>
       new Promise((_, reject) => setTimeout(() => reject(new Error('late')), 30));
     const report = await runReadinessChecks(
-      checks({ db: late, redis: fail, migrations: fail, realtime: fail }),
+      checks({ db: late, redis: fail, migrations: fail, realtime: fail, jobs: fail }),
     );
-    expect(report.failed).toEqual(['db', 'redis', 'migrations', 'realtime']);
+    expect(report.failed).toEqual(['db', 'redis', 'migrations', 'realtime', 'jobs']);
     const two = await runReadinessChecks(checks({ migrations: fail, db: late }));
     expect(two.failed).toEqual(['db', 'migrations']);
   });
@@ -59,14 +59,14 @@ describe('readiness checks (API-100-07)', () => {
     expect(report.reasons.redis).toBe('timed out after 50 ms');
   });
 
-  it('runs checks in parallel (total time is one timeout, not four)', async () => {
+  it('runs checks in parallel (total time is one timeout, not five)', async () => {
     const started = Date.now();
     const report = await runReadinessChecks(
-      { db: hang, redis: hang, migrations: hang, realtime: hang },
+      { db: hang, redis: hang, migrations: hang, realtime: hang, jobs: hang },
       100,
     );
     expect(Date.now() - started).toBeLessThan(290);
-    expect(report.failed).toEqual(['db', 'redis', 'migrations', 'realtime']);
+    expect(report.failed).toEqual(['db', 'redis', 'migrations', 'realtime', 'jobs']);
   });
 
   it('treats a synchronous throw as a failure', async () => {

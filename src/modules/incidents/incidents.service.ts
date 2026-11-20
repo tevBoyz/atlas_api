@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../../common/auth';
 import { DomainError } from '../../common/errors';
 import { DatabaseService } from '../../db/database.service';
 import { type AuditAction, AuditService, type AuditTransaction } from '../audit';
+import { IncidentNotificationsOutbox } from '../notifications/incident-notifications';
 import { IncidentEventService, type RecordedIncidentEvent } from './incident-events.service';
 import { IncidentPostCommitRunner, type IncidentSubmittedEvent } from './incident-post-commit';
 import {
@@ -42,8 +43,9 @@ export function auditSessionId(user: AuthenticatedUser): string | null {
  * (`submit_emergency_alert`), `PUT /v1/incidents/{id}/notes` (`set_incident_notes`),
  * `POST /v1/incidents/{id}/renotify` (`renotify_emergency_alert`) and
  * `POST /v1/incidents/{id}/mark-safe` (`mark_incident_safe`). Each is one transaction with the SQL
- * function's row locks in the function's order. Audit is written inside the transaction; post-commit
- * hooks run only once it has committed, and the response never waits for them.
+ * function's row locks in the function's order. Audit and the notification outbox row (API-100-48)
+ * are written inside the transaction; post-commit hooks run only once it has committed, and the
+ * response never waits for them (notifications are sent by the worker, never by the request).
  */
 @Injectable()
 export class IncidentsService {
@@ -53,6 +55,7 @@ export class IncidentsService {
     private readonly audit: AuditService,
     private readonly postCommit: IncidentPostCommitRunner,
     private readonly events: IncidentEventService,
+    private readonly notifications: IncidentNotificationsOutbox,
   ) {}
 
   async submit(
@@ -138,6 +141,7 @@ export class IncidentsService {
           throw new DomainError('renotify_emergency_alert:not_open');
         }
         const recipientCount = await this.applyRenotify(tx, user, incident.id);
+        await this.notifications.renotified(tx, incident.id);
         const body = await this.repository.sendResult(tx, incident.id);
         await this.recordAudit(tx, user, 'incident.renotified', incident.id, {
           recipient_count: recipientCount,
@@ -187,6 +191,8 @@ export class IncidentsService {
         if (!closed) throw new Error('mark_incident_safe:not_open');
         const recipientIds = await this.repository.closureRecipientIds(tx, incident.id);
         await this.repository.recordClosureEvents(tx, incident.id, user.id, recipientIds);
+        // The closure notice goes to closure_notified.recipient_ids (API-100-48 AC2).
+        await this.notifications.resolved(tx, incident.id, recipientIds);
         const body = await this.repository.sendResult(tx, incident.id);
         // Counts only: never the emergency type, share payload, location or notes.
         await this.recordAudit(tx, user, 'incident.resolved', incident.id, {
@@ -251,6 +257,7 @@ export class IncidentsService {
     }
     await this.repository.recordAlertSent(tx, incident.id, residentId);
     await this.repository.recordLocationSharingStarted(tx, incident.id, residentId);
+    await this.notifications.created(tx, incident.id);
 
     const body = await this.repository.submitResult(tx, incident.id, outcome);
     return this.finishSubmit(tx, user, {
@@ -283,6 +290,7 @@ export class IncidentsService {
     incidentId: string,
   ): Promise<CommittedSubmit> {
     const refreshed = await this.applyRenotify(tx, user, incidentId);
+    await this.notifications.renotified(tx, incidentId);
     const body = await this.repository.submitResult(tx, incidentId, 'renotified');
     return this.finishSubmit(tx, user, {
       action: 'incident.renotified',

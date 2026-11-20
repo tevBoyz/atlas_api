@@ -554,6 +554,27 @@
         ],
         "type": "object"
       },
+      "DevicePlatform": {
+        "enum": [
+          "android",
+          "ios"
+        ],
+        "type": "string"
+      },
+      "DeviceRegistered": {
+        "additionalProperties": false,
+        "properties": {
+          "device_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id"
+        ],
+        "type": "object"
+      },
       "EmergencyInfoRequest": {
         "properties": {
           "allergies": {
@@ -2411,6 +2432,13 @@
         ],
         "type": "object"
       },
+      "PushProvider": {
+        "enum": [
+          "fcm",
+          "apns"
+        ],
+        "type": "string"
+      },
       "ReadinessUnavailable": {
         "additionalProperties": false,
         "properties": {
@@ -2420,7 +2448,8 @@
                 "db",
                 "redis",
                 "migrations",
-                "realtime"
+                "realtime",
+                "jobs"
               ],
               "type": "string"
             },
@@ -2495,6 +2524,48 @@
           "sent_at",
           "resolved_at",
           "resolved_reason"
+        ],
+        "type": "object"
+      },
+      "RegisterDeviceRequest": {
+        "properties": {
+          "app_version": {
+            "description": "Trimmed; 1-64 characters.",
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/DevicePlatform"
+          },
+          "push_provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PushProvider"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who issued `push_token`: `fcm` or `apns`. Sent together with `push_token`."
+          },
+          "push_token": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The device push token. Left out (with `push_provider`): the stored token is kept. `null`: the stored token is cleared. A token is on one device only: registering it here clears it from any other device."
+          }
+        },
+        "required": [
+          "platform",
+          "app_version"
         ],
         "type": "object"
       },
@@ -7025,6 +7096,268 @@
         "summary": "Resend a pending, expired or declined invitation with a new token",
         "tags": [
           "invites"
+        ]
+      }
+    },
+    "/v1/me/devices/current": {
+      "put": {
+        "operationId": "registerCurrentDevice",
+        "parameters": [
+          {
+            "description": "UUID the app generates once per install and keeps in its own storage (not the push token). Identifies this installation of the app for the signed-in user.",
+            "in": "header",
+            "name": "X-Atlas-Installation-Id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterDeviceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRegistered"
+                }
+              }
+            },
+            "description": "The installation is registered (created or updated; `last_seen_at` is now). Same `device_id` for the same user and installation."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "user_devices:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "user_devices:not_authenticated"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "user_devices:invalid_app_version",
+                    "details": {},
+                    "message": "The app version is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "user_devices:invalid_app_version",
+              "user_devices:invalid_installation_id",
+              "user_devices:invalid_platform",
+              "user_devices:invalid_push_provider",
+              "user_devices:invalid_push_token",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Register this app installation and its push token for the caller's account",
+        "tags": [
+          "devices"
+        ]
+      }
+    },
+    "/v1/me/devices/current/push-token": {
+      "delete": {
+        "operationId": "clearCurrentDevicePushToken",
+        "parameters": [
+          {
+            "description": "UUID the app generates once per install and keeps in its own storage (not the push token). Identifies this installation of the app for the signed-in user.",
+            "in": "header",
+            "name": "X-Atlas-Installation-Id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No push token is stored for this installation any more."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "user_devices:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "user_devices:not_authenticated"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "user_devices:invalid_installation_id",
+                    "details": {},
+                    "message": "The app installation id is missing or not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "user_devices:invalid_installation_id"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Clear this installation's push token (sign-out)",
+        "tags": [
+          "devices"
         ]
       }
     },

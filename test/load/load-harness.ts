@@ -19,7 +19,8 @@ import { startPostgres, startRedis } from '../support/global-setup';
 
 /**
  * The shared load harness of `npm run load:incidents` (API-100-23 AC4), `npm run load:circles`
- * (API-100-33) and `npm run load:profiles` (API-100-38): throwaway Postgres 17.11 + Redis containers (Testcontainers, random ports and
+ * (API-100-33), `npm run load:profiles` (API-100-38), `npm run load:realtime` (API-100-43) and
+ * `npm run load:notifications` (API-100-49, which also starts `WORKER=1` processes): throwaway Postgres 17.11 + Redis containers (Testcontainers, random ports and
  * password; the local compose database is never touched), the BUILT app (`node dist/main.js`) on a
  * spare port with a clean environment and a random throwaway JWT secret, timed requests with
  * p50/p95/p99 per route, the app's error log lines, and cleanup (the app's own PID, both
@@ -247,19 +248,54 @@ export async function stopApp(child: ChildProcess): Promise<void> {
   await Promise.race([exited, sleep(10_000)]);
 }
 
+/** pino levels at or above `error`, numeric or (as this app writes them) by label. */
+function isErrorLevel(level: number | string | undefined): boolean {
+  if (typeof level === 'number') return level >= 50;
+  return level === 'error' || level === 'fatal';
+}
+
 export function errorLogLines(logFile: string): string[] {
   return readFileSync(logFile, 'utf8')
     .split('\n')
     .filter((line) => line.trim().startsWith('{'))
     .map((line) => {
       try {
-        return JSON.parse(line) as { level?: number; msg?: string };
+        return JSON.parse(line) as { level?: number | string; msg?: string };
       } catch {
         return { level: 60, msg: 'unparseable log line' };
       }
     })
-    .filter((entry) => (entry.level ?? 0) >= 50)
+    .filter((entry) => isErrorLevel(entry.level))
     .map((entry) => entry.msg ?? '');
+}
+
+/** Parsed JSON log lines of a log file (unparseable lines are left out). */
+export function logLines(logFile: string): Record<string, unknown>[] {
+  return readFileSync(logFile, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim().startsWith('{'))
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as Record<string, unknown>];
+      } catch {
+        return [];
+      }
+    });
+}
+
+async function waitForLogLine(
+  logFile: string,
+  message: string,
+  child: ChildProcess,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`the worker exited with code ${child.exitCode}`);
+    if (existsSync(logFile) && readFileSync(logFile, 'utf8').includes(message)) return;
+    await sleep(250);
+  }
+  throw new Error(`the worker did not log "${message}" in time`);
 }
 
 export interface StartedApp {
@@ -282,14 +318,23 @@ export interface LoadStack {
    * each gets its own port and log file; requests go to the app started last unless they name one.
    */
   startApp: (env: Record<string, string>) => Promise<StartedApp>;
+  /**
+   * Starts the built app in worker mode (`WORKER=1`, API-100-45) with the run's settings (plus
+   * `env`); resolves when it logged that its job workers started. Its `url` is empty (no HTTP).
+   */
+  startWorker: (env: Record<string, string>) => Promise<StartedApp>;
 }
 
 /**
  * Runs `body` against a fresh stack and always cleans up: the app (its own PID), the containers and
  * the temp directory. Returns the exit code `body` returns (1 on an error).
  */
-export async function withLoadStack(body: (stack: LoadStack) => Promise<number>): Promise<number> {
-  const mainJs = resolve('dist/main.js');
+export async function withLoadStack(
+  body: (stack: LoadStack) => Promise<number>,
+  options: { mainJs?: string } = {},
+): Promise<number> {
+  // `mainJs`: another build of the app (e.g. the previous release, for a before/after comparison).
+  const mainJs = resolve(options.mainJs ?? 'dist/main.js');
   if (!existsSync(mainJs)) throw new Error('dist/main.js not found: run `npm run build` first');
 
   const work = mkdtempSync(join(tmpdir(), 'atlas-load-'));
@@ -320,6 +365,39 @@ export async function withLoadStack(body: (stack: LoadStack) => Promise<number>)
           expiresInSeconds: 3 * 3600,
           claims: { sub, iss: TEST_JWT_ISSUER, aud: TEST_JWT_AUDIENCE },
         }),
+      startWorker: async (env) => {
+        const logFile = join(work, `worker-${children.length + 1}.log`);
+        const log = createWriteStream(logFile);
+        const child = spawn(process.execPath, [mainJs], {
+          cwd: work,
+          env: appEnvironment({
+            NODE_ENV: 'development',
+            WORKER: '1',
+            LOG_LEVEL: 'info',
+            DATABASE_URL: dbUrl,
+            REDIS_URL: redisUrl,
+            SUPABASE_JWT_SECRET: secret,
+            SUPABASE_JWT_ISSUER: TEST_JWT_ISSUER,
+            SUPABASE_JWT_AUDIENCE: TEST_JWT_AUDIENCE,
+            ...env,
+          }),
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        children.push(child);
+        child.stdout?.pipe(log);
+        child.stderr?.pipe(log);
+        process.stderr.write(`Built app in worker mode (pid ${child.pid}); waiting for it...\n`);
+        await waitForLogLine(logFile, 'job workers started', child, 60_000);
+        return {
+          child,
+          url: '',
+          logFile,
+          stop: async () => {
+            await stopApp(child);
+            await new Promise<void>((done) => log.end(done));
+          },
+        };
+      },
       startApp: async (env) => {
         const port = await spareTcpPort();
         const url = `http://127.0.0.1:${port}`;

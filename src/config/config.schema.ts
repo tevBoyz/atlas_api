@@ -18,6 +18,13 @@ import { dataStoreProblems } from './data-store-guard';
 export const NODE_ENVS = ['development', 'test', 'production'] as const;
 export const AVATAR_STORAGE_DRIVERS = ['supabase', 'memory'] as const;
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
+/** Push adapter (API-100-46): the in-process fake, or FCM (Android) + APNs (iOS). */
+export const PUSH_ADAPTERS = ['fake', 'real'] as const;
+/** SMS adapter (API-100-46): the in-process fake, or Twilio (on hold: CHANNEL_SMS_TWILIO_HOLD_LIFTED). */
+export const SMS_ADAPTERS = ['fake', 'twilio'] as const;
+export const APNS_ENVIRONMENTS = ['production', 'sandbox'] as const;
+/** Every notification retry must happen within this time (spec §11.6: 3 retries within 60 s). */
+export const NOTIFICATION_RETRY_WINDOW_MS = 60_000;
 
 export type NodeEnv = (typeof NODE_ENVS)[number];
 export type LogLevel = (typeof LOG_LEVELS)[number];
@@ -38,6 +45,7 @@ const integerInRange = (min: number, max: number) =>
   z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(min).max(max));
 
 const flag = () => z.stringbool({ truthy: ['true'], falsy: ['false'] }).default(false);
+const nonEmpty = () => z.string().min(1).optional();
 
 function isIpOrCidr(entry: string): boolean {
   const [address, prefix, ...rest] = entry.split('/');
@@ -126,9 +134,47 @@ export const configSchema = z.object({
     .regex(/^[0-9a-f]{7,40}$/i)
     .optional(),
 
+  // Jobs (API-100-45): `WORKER=1` runs the BullMQ workers instead of the HTTP server (same image).
+  WORKER: z.stringbool({ truthy: ['1', 'true'], falsy: ['0', 'false'] }).default(false),
+  // Key prefix of the BullMQ queues in Redis. Every API and worker process of one environment uses
+  // the same value.
+  JOBS_QUEUE_PREFIX: z
+    .string()
+    .regex(/^[A-Za-z0-9:._-]{1,64}$/)
+    .default('atlas:jobs'),
+  JOBS_WORKER_CONCURRENCY: integerInRange(1, 100).default(10),
+  // The outbox relay sweeps unpublished rows this often (and right after each committed write).
+  OUTBOX_RELAY_INTERVAL_MS: integerInRange(50, 60_000).default(1000),
+  OUTBOX_RELAY_BATCH_SIZE: integerInRange(1, 1000).default(100),
+
+  // Delivery retries (API-100-47): exponential backoff, base * 2^(n-1) before retry n.
+  NOTIFICATIONS_RETRY_ATTEMPTS: integerInRange(0, 10).default(3),
+  NOTIFICATIONS_RETRY_BASE_DELAY_MS: integerInRange(10, 60_000).default(2000),
+  // Longest wait for one provider call.
+  NOTIFICATIONS_SEND_TIMEOUT_MS: integerInRange(100, 30_000).default(10_000),
+
+  // Channels (API-100-46). Disabled channels record `skipped` deliveries and call no adapter.
   CHANNEL_PUSH_ENABLED: flag(),
   CHANNEL_SMS_ENABLED: flag(),
   CHANNEL_EMAIL_ENABLED: flag(),
+  CHANNEL_PUSH_ADAPTER: z.enum(PUSH_ADAPTERS).default('fake'),
+  CHANNEL_SMS_ADAPTER: z.enum(SMS_ADAPTERS).default('fake'),
+  // Twilio hold: the Twilio adapter is refused unless this is true (Dawit lifts the hold).
+  CHANNEL_SMS_TWILIO_HOLD_LIFTED: flag(),
+  FCM_PROJECT_ID: nonEmpty(),
+  FCM_CLIENT_EMAIL: nonEmpty(),
+  FCM_PRIVATE_KEY: nonEmpty(),
+  APNS_KEY_ID: nonEmpty(),
+  APNS_TEAM_ID: nonEmpty(),
+  APNS_PRIVATE_KEY: nonEmpty(),
+  APNS_BUNDLE_ID: nonEmpty(),
+  APNS_ENVIRONMENT: z.enum(APNS_ENVIRONMENTS).default('production'),
+  TWILIO_ACCOUNT_SID: nonEmpty(),
+  TWILIO_AUTH_TOKEN: nonEmpty(),
+  TWILIO_FROM_NUMBER: z
+    .string()
+    .regex(/^\+[1-9][0-9]{7,14}$/)
+    .optional(),
 });
 
 export type Config = z.output<typeof configSchema>;
@@ -172,10 +218,52 @@ const RULES: Record<ConfigKey, string> = {
   SENTRY_DSN: 'must be an http(s) URL',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'must be an http(s) URL',
   GIT_COMMIT: 'must be a git commit hash (7-40 hex characters)',
+  WORKER: 'must be 1, 0, true or false',
+  JOBS_QUEUE_PREFIX: 'must be 1-64 letters, digits, ":", ".", "_" or "-"',
+  JOBS_WORKER_CONCURRENCY: 'must be an integer from 1 to 100',
+  OUTBOX_RELAY_INTERVAL_MS: 'must be an integer from 50 to 60000',
+  OUTBOX_RELAY_BATCH_SIZE: 'must be an integer from 1 to 1000',
+  NOTIFICATIONS_RETRY_ATTEMPTS: 'must be an integer from 0 to 10',
+  NOTIFICATIONS_RETRY_BASE_DELAY_MS: 'must be an integer from 10 to 60000',
+  NOTIFICATIONS_SEND_TIMEOUT_MS: 'must be an integer from 100 to 30000',
   CHANNEL_PUSH_ENABLED: 'must be true or false',
   CHANNEL_SMS_ENABLED: 'must be true or false',
   CHANNEL_EMAIL_ENABLED: 'must be true or false',
+  CHANNEL_PUSH_ADAPTER: `must be one of ${PUSH_ADAPTERS.join(', ')}`,
+  CHANNEL_SMS_ADAPTER: `must be one of ${SMS_ADAPTERS.join(', ')}`,
+  CHANNEL_SMS_TWILIO_HOLD_LIFTED: 'must be true or false',
+  FCM_PROJECT_ID: 'must be a string',
+  FCM_CLIENT_EMAIL: 'must be a string',
+  FCM_PRIVATE_KEY: 'must be a string',
+  APNS_KEY_ID: 'must be a string',
+  APNS_TEAM_ID: 'must be a string',
+  APNS_PRIVATE_KEY: 'must be a string',
+  APNS_BUNDLE_ID: 'must be a string',
+  APNS_ENVIRONMENT: `must be one of ${APNS_ENVIRONMENTS.join(', ')}`,
+  TWILIO_ACCOUNT_SID: 'must be a string',
+  TWILIO_AUTH_TOKEN: 'must be a string',
+  TWILIO_FROM_NUMBER: 'must be an E.164 phone number (+ and 8-15 digits)',
 };
+
+/** FCM service-account keys (API-100-46). All or none. */
+export const FCM_KEYS = [
+  'FCM_PROJECT_ID',
+  'FCM_CLIENT_EMAIL',
+  'FCM_PRIVATE_KEY',
+] as const satisfies readonly ConfigKey[];
+/** APNs token-auth keys (API-100-46). All or none. */
+export const APNS_KEYS = [
+  'APNS_KEY_ID',
+  'APNS_TEAM_ID',
+  'APNS_PRIVATE_KEY',
+  'APNS_BUNDLE_ID',
+] as const satisfies readonly ConfigKey[];
+/** Twilio keys (API-100-46). All required by the Twilio adapter. */
+export const TWILIO_KEYS = [
+  'TWILIO_ACCOUNT_SID',
+  'TWILIO_AUTH_TOKEN',
+  'TWILIO_FROM_NUMBER',
+] as const satisfies readonly ConfigKey[];
 
 /** Keys that must be set when NODE_ENV=production (optional in development/test for now). */
 export const REQUIRED_IN_PRODUCTION = [
@@ -278,10 +366,82 @@ export function parseConfig(env: Record<string, unknown>): Config {
     for (const problem of dataStoreProblems(result.data)) {
       problems.push({ keys: [problem.key], reason: problem.reason });
     }
+    problems.push(...channelProblems(result.data));
   }
 
   if (problems.length > 0 || !result.success) {
     throw new ConfigValidationError(problems);
   }
   return result.data;
+}
+
+/**
+ * Channel and retry rules across keys (API-100-46/47, D24, D25). Names keys only.
+ * - A key set is all-or-none; the real push adapter needs at least one complete set (FCM or APNs).
+ * - The Twilio adapter needs its keys AND CHANNEL_SMS_TWILIO_HOLD_LIFTED=true (Twilio hold).
+ * - Production never runs an enabled channel on a fake adapter (it would record `sent` for nothing),
+ *   and email has no real adapter yet (no provider chosen), so CHANNEL_EMAIL_ENABLED stays false.
+ * - All retries fit in {@link NOTIFICATION_RETRY_WINDOW_MS}.
+ */
+function channelProblems(config: Config): ConfigProblem[] {
+  const problems: ConfigProblem[] = [];
+  const missing = (keys: readonly ConfigKey[]) => keys.filter((key) => config[key] === undefined);
+  for (const keys of [FCM_KEYS, APNS_KEYS]) {
+    const absent = missing(keys);
+    if (absent.length > 0 && absent.length < keys.length) {
+      problems.push({ keys: absent, reason: `required together with ${keys.join(', ')}` });
+    }
+  }
+  if (
+    config.CHANNEL_PUSH_ADAPTER === 'real' &&
+    missing(FCM_KEYS).length > 0 &&
+    missing(APNS_KEYS).length > 0
+  ) {
+    problems.push({
+      keys: [...FCM_KEYS, ...APNS_KEYS],
+      reason: 'CHANNEL_PUSH_ADAPTER=real needs the FCM keys, the APNs keys, or both',
+    });
+  }
+  if (config.CHANNEL_SMS_ADAPTER === 'twilio') {
+    if (!config.CHANNEL_SMS_TWILIO_HOLD_LIFTED) {
+      problems.push({
+        keys: ['CHANNEL_SMS_ADAPTER'],
+        reason:
+          'twilio is refused while the Twilio hold is on (CHANNEL_SMS_TWILIO_HOLD_LIFTED is not true)',
+      });
+    }
+    const absent = missing(TWILIO_KEYS);
+    if (absent.length > 0) {
+      problems.push({ keys: absent, reason: 'required when CHANNEL_SMS_ADAPTER=twilio' });
+    }
+  }
+  if (config.NODE_ENV === 'production') {
+    if (config.CHANNEL_PUSH_ENABLED && config.CHANNEL_PUSH_ADAPTER === 'fake') {
+      problems.push({
+        keys: ['CHANNEL_PUSH_ENABLED'],
+        reason: 'must be false when NODE_ENV=production and CHANNEL_PUSH_ADAPTER=fake',
+      });
+    }
+    if (config.CHANNEL_SMS_ENABLED && config.CHANNEL_SMS_ADAPTER === 'fake') {
+      problems.push({
+        keys: ['CHANNEL_SMS_ENABLED'],
+        reason: 'must be false when NODE_ENV=production and CHANNEL_SMS_ADAPTER=fake',
+      });
+    }
+    if (config.CHANNEL_EMAIL_ENABLED) {
+      problems.push({
+        keys: ['CHANNEL_EMAIL_ENABLED'],
+        reason: 'must be false when NODE_ENV=production (no email provider yet)',
+      });
+    }
+  }
+  const totalBackoff =
+    config.NOTIFICATIONS_RETRY_BASE_DELAY_MS * (2 ** config.NOTIFICATIONS_RETRY_ATTEMPTS - 1);
+  if (totalBackoff > NOTIFICATION_RETRY_WINDOW_MS) {
+    problems.push({
+      keys: ['NOTIFICATIONS_RETRY_ATTEMPTS', 'NOTIFICATIONS_RETRY_BASE_DELAY_MS'],
+      reason: `all retries must fit in ${NOTIFICATION_RETRY_WINDOW_MS / 1000} s (base * (2^attempts - 1))`,
+    });
+  }
+  return problems;
 }

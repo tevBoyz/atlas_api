@@ -3,6 +3,7 @@ import type { Logger } from 'pino';
 
 import { DatabaseService } from '../db/database.service';
 import { MIGRATIONS_TABLE } from '../db/tooling/migrate';
+import { JobQueues } from '../jobs/job-queues.service';
 import { ROOT_LOGGER } from '../observability/logger';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { RedisService } from '../redis/redis.service';
@@ -14,7 +15,8 @@ export const READINESS_TIMEOUT_MS = Symbol('READINESS_TIMEOUT_MS');
 
 /**
  * Runs the readiness checks (API-100-07 AC2): a DB query, a Redis PING, the migrations check and the
- * realtime adapter's Redis connections (API-100-39 AC5).
+ * realtime adapter's Redis connections (API-100-39 AC5) and the job queues' Redis connection
+ * (API-100-45 AC5).
  *
  * Logging (AC3): `/readyz` is polled often, so results are not logged per call. Only changes are
  * logged: the first result after startup and every switch between ready and unavailable
@@ -28,6 +30,7 @@ export class ReadinessService {
     private readonly database: DatabaseService,
     private readonly redis: RedisService,
     private readonly realtime: RealtimeGateway,
+    private readonly jobs: JobQueues,
     @Inject(EXPECTED_MIGRATIONS) private readonly expected: ExpectedMigrations,
     @Inject(READINESS_TIMEOUT_MS) private readonly timeoutMs: number,
     @Inject(ROOT_LOGGER) private readonly logger: Logger,
@@ -40,6 +43,7 @@ export class ReadinessService {
         redis: () => this.redis.ping(),
         migrations: () => this.checkMigrations(),
         realtime: () => this.realtime.ping(),
+        jobs: () => this.jobs.ping(),
       },
       this.timeoutMs,
     );

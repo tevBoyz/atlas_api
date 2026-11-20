@@ -29,7 +29,7 @@ export class IncidentSubmitFailedError extends IncidentOperationFailedError {
   }
 }
 
-function sqlStateOf(error: unknown): string | undefined {
+export function sqlStateOf(error: unknown): string | undefined {
   let current = error;
   for (let depth = 0; depth < 4 && current instanceof Error; depth += 1) {
     const code = (current as { code?: unknown }).code;

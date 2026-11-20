@@ -15,6 +15,15 @@ export interface ApiResponseContract {
   schema?: z.ZodType;
 }
 
+/** A request header a route reads (e.g. `X-Atlas-Installation-Id`, API-100-44). */
+export interface ApiHeaderContract {
+  name: string;
+  required: boolean;
+  description: string;
+  /** `uuid` publishes `{type: string, format: uuid}`. */
+  format: 'uuid';
+}
+
 /** What a route publishes in the OpenAPI document (API-100-12). */
 export interface ApiContractOptions {
   /** Stable, camelCase: it names the generated Dart method. Never change it once released. */
@@ -25,6 +34,8 @@ export interface ApiContractOptions {
   params?: z.ZodObject;
   /** Query-string parameters. */
   query?: z.ZodObject;
+  /** Request headers the route reads itself (not Authorization / Idempotency-Key). */
+  headers?: readonly ApiHeaderContract[];
   /** JSON request body, with the schema name it is published under. */
   body?: { name: string; schema: z.ZodType };
   /** Success (and other non-envelope) responses by HTTP status. */

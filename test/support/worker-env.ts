@@ -6,10 +6,11 @@ import { workerDatabaseUrl, workerId, workerRedisUrl } from './stack';
  * test code: points the API at THIS worker's database and Redis index and removes anything the
  * shell could have set. `.env` is never read and the compose stack is never used. Access tokens are
  * verified with the local test secret (`src/testing/test-auth-config.ts`). Avatar Storage is the
- * in-memory fake (no Storage key, no network).
+ * in-memory fake (no Storage key, no network). Notification channels keep their defaults (all off,
+ * fake adapters): no test can reach a real push, SMS or email provider.
  */
 const INHERITED_SETTINGS =
-  /^(RATE_LIMIT_|REALTIME_|OPENAPI_|TRUST_PROXY$|ALLOW_REMOTE_DATA_STORES$|SUPABASE_STORAGE_SERVICE_KEY$|AVATAR_STORAGE$)/;
+  /^(RATE_LIMIT_|REALTIME_|OPENAPI_|TRUST_PROXY$|ALLOW_REMOTE_DATA_STORES$|SUPABASE_STORAGE_SERVICE_KEY$|AVATAR_STORAGE$|WORKER$|JOBS_|OUTBOX_|NOTIFICATIONS_|CHANNEL_|FCM_|APNS_|TWILIO_)/;
 
 for (const key of Object.keys(process.env)) {
   if (INHERITED_SETTINGS.test(key)) delete process.env[key];

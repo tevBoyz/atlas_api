@@ -169,6 +169,15 @@ function parameters(route: DiscoveredRoute, contract: ApiContractOptions): JsonO
   };
   add('path', contract.params);
   add('query', contract.query);
+  for (const header of contract.headers ?? []) {
+    list.push({
+      name: header.name,
+      in: 'header',
+      required: header.required,
+      description: header.description,
+      schema: { type: 'string', format: header.format },
+    });
+  }
   if (route.idempotency) {
     list.push({
       name: 'Idempotency-Key',
