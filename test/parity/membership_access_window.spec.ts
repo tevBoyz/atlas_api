@@ -24,6 +24,7 @@ import {
   removeMember,
 } from '../support/circle-api';
 import { openTestClient } from '../support/database';
+import { completeSetup } from '../support/profile-api';
 import { addActiveMember, createCircle, createUser, type UserFixture } from '../support/fixtures';
 import {
   acknowledgeIncident,
@@ -70,8 +71,12 @@ import {
  * checked too: the trigger keeps the value. test/int/membership-activation-routes.int-spec.ts does
  * the same for every route of the API.
  *
- * Still `it.todo`, with the story that completes it: L84 (owner row) with API-100-36. Nothing of
- * the membership parts still goes through the SQL functions.
+ * L84 (owner row, API-100-36): the only API path that writes an owner row is profile setup
+ * (`POST /v1/me/profile/complete`). The script inserts the resident's owner row by hand (kept as a
+ * raw fixture write here, so the scenario's capacity is unchanged); the assertion is reproduced on
+ * the owner row the API's setup creates for a user of its own: active, with the trigger's
+ * `activated_at` (= the row's `invited_at`, the same transaction's `now()`). No `it.todo` left;
+ * nothing of the membership parts still goes through the SQL functions.
  *
  * The window case for closure recipients (rule 54 in `_incident_active_recipient_ids`, used by
  * `mark_incident_safe`; the script closes incident A at L131 but has no assertion of its own) is
@@ -147,6 +152,13 @@ describe('membership_access_window.sql', () => {
   let removedEvents: Seen;
   let leftEvents: Seen;
   let pendingActivatedAt: string | null;
+  let setupOwnerRow: {
+    status: number;
+    role?: string;
+    row_status?: string;
+    activated_at?: string | null;
+    trigger_time?: boolean;
+  };
   let acceptStatus: number;
   let activation: { stamped_now: boolean; activated: boolean };
   let declineStatus: number;
@@ -341,6 +353,31 @@ describe('membership_access_window.sql', () => {
     pendingUser = await createUser(client, { fullName: 'Pending Window' });
     outsider = await createUser(client, { fullName: 'Outsider Window' });
 
+    // L84 through the API: profile setup creates the owner row (API-100-36).
+    const setupOwner = await createUser(client, { fullName: 'Setup Window' });
+    await client.query(
+      'update public.profiles set profile_setup_completed_at = null where id = $1',
+      [setupOwner.id],
+    );
+    const setupReply = await completeSetup(app, setupOwner.id);
+    setupOwnerRow = {
+      status: setupReply.statusCode,
+      ...(
+        await client.query<{
+          role: string;
+          row_status: string;
+          activated_at: string | null;
+          trigger_time: boolean;
+        }>(
+          `select m.role, m.status as row_status, m.activated_at::text as activated_at,
+                  m.activated_at = m.invited_at as trigger_time
+             from public.safety_circle_members m
+            where m.circle_id = $1 and m.role = 'owner'`,
+          [setupReply.json<{ circle_id: string }>().circle_id],
+        )
+      ).rows[0],
+    };
+
     const circle = await createCircle(client, resident);
     // Trusted maintenance path may set a past activation (backfill-style), as the script does.
     await client.query(
@@ -511,7 +548,15 @@ describe('membership_access_window.sql', () => {
     expect(await policyQual()).not.toMatch(/safety_circle_members/i);
   });
 
-  it.todo('L84: owner row has no activated_at');
+  it('L84: owner row has no activated_at', () => {
+    expect(setupOwnerRow.status).toBe(200);
+    expect(setupOwnerRow).toMatchObject({
+      role: 'owner',
+      row_status: 'active',
+      trigger_time: true,
+    });
+    expect(setupOwnerRow.activated_at).not.toBeNull();
+  });
   it('L121: pending row has activated_at', () => {
     expect(pendingActivatedAt).toBeNull();
   });

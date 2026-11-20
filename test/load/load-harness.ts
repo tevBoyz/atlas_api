@@ -18,8 +18,8 @@ import { signTestToken } from '../../src/testing/test-tokens';
 import { startPostgres, startRedis } from '../support/global-setup';
 
 /**
- * The shared load harness of `npm run load:incidents` (API-100-23 AC4) and `npm run load:circles`
- * (API-100-33): throwaway Postgres 17.11 + Redis containers (Testcontainers, random ports and
+ * The shared load harness of `npm run load:incidents` (API-100-23 AC4), `npm run load:circles`
+ * (API-100-33) and `npm run load:profiles` (API-100-38): throwaway Postgres 17.11 + Redis containers (Testcontainers, random ports and
  * password; the local compose database is never touched), the BUILT app (`node dist/main.js`) on a
  * spare port with a clean environment and a random throwaway JWT secret, timed requests with
  * p50/p95/p99 per route, the app's error log lines, and cleanup (the app's own PID, both
@@ -54,7 +54,7 @@ export interface RequestOptions {
  */
 export async function request(
   route: string,
-  method: 'GET' | 'POST' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   token: string | null,
   expected: number | number[],
@@ -86,6 +86,32 @@ export async function request(
     samples.push({ route, ms: performance.now() - started, ok: false });
     failures.push({ route, status: (error as Error).name });
     return null;
+  }
+}
+
+/**
+ * One timed upload of raw bytes to an absolute URL (a signed Storage upload URL; for the load check
+ * the API's in-memory Storage fake). Recorded like {@link request}.
+ */
+export async function upload(
+  route: string,
+  url: string,
+  headers: Record<string, string>,
+  bytes: Buffer,
+  expected: number,
+): Promise<boolean> {
+  const started = performance.now();
+  try {
+    const res = await fetch(url, { method: 'PUT', headers, body: new Uint8Array(bytes) });
+    await res.text();
+    const ok = res.status === expected;
+    samples.push({ route, ms: performance.now() - started, ok });
+    if (!ok) failures.push({ route, status: res.status });
+    return ok;
+  } catch (error) {
+    samples.push({ route, ms: performance.now() - started, ok: false });
+    failures.push({ route, status: (error as Error).name });
+    return false;
   }
 }
 

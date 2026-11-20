@@ -93,6 +93,69 @@
         ],
         "type": "object"
       },
+      "AvatarUploadUrl": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "description": "ISO-8601 UTC time after which the upload URL is refused.",
+            "type": "string"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Headers to send with the upload (`content-type`).",
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "method": {
+            "const": "PUT",
+            "type": "string"
+          },
+          "object_path": {
+            "description": "`{uid}/avatar-{uuid}.{jpg|png|webp}`: pass it to `PUT /v1/me/profile/avatar`.",
+            "type": "string"
+          },
+          "upload_url": {
+            "description": "Send the photo bytes here once, before `expires_at`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_url",
+          "method",
+          "headers",
+          "object_path",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "AvatarUploadUrlRequest": {
+        "properties": {
+          "content_length": {
+            "description": "Bytes; at most 5,242,880 (`profiles:file_too_large`).",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "content_type": {
+            "description": "`profiles:invalid_content_type` otherwise.",
+            "enum": [
+              "image/jpeg",
+              "image/png",
+              "image/webp"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "content_type",
+          "content_length"
+        ],
+        "type": "object"
+      },
       "BatchInviteItem": {
         "properties": {
           "display_name": {
@@ -223,6 +286,20 @@
           "display_name"
         ],
         "type": "object"
+      },
+      "BloodType": {
+        "enum": [
+          "A+",
+          "A-",
+          "B+",
+          "B-",
+          "AB+",
+          "AB-",
+          "O+",
+          "O-",
+          "Unknown"
+        ],
+        "type": "string"
       },
       "CanceledInvite": {
         "additionalProperties": false,
@@ -477,6 +554,113 @@
         ],
         "type": "object"
       },
+      "EmergencyInfoRequest": {
+        "properties": {
+          "allergies": {
+            "description": "Free text. Trimmed; blank or left out is stored as null.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "blood_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BloodType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Blank or left out: null (`profiles:invalid_blood_type`)."
+          },
+          "emergency_contact_email": {
+            "description": "An email address (`profiles:invalid_email`). Trimmed; blank or left out is stored as null.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emergency_contact_full_name": {
+            "description": "Trimmed; must not be empty (`profiles:invalid_emergency_contact_full_name`).",
+            "type": "string"
+          },
+          "emergency_contact_phone": {
+            "description": "Strict E.164 after trimming: `^\\+[1-9][0-9]{7,14}$` (`profiles:invalid_phone`). The server adds no country code.",
+            "type": "string"
+          },
+          "emergency_contact_relationship": {
+            "$ref": "#/components/schemas/Relationship"
+          },
+          "emergency_notes": {
+            "description": "At most 500 characters (`profiles:emergency_notes_too_long`). Trimmed; blank or left out is stored as null.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emergency_notes_shareable": {
+            "type": "boolean"
+          },
+          "emergency_preferred_language": {
+            "description": "Free text. Trimmed; blank or left out is stored as null.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_sharing_enabled": {
+            "type": "boolean"
+          },
+          "medical_conditions": {
+            "description": "Free text. Trimmed; blank or left out is stored as null.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "share_allergies": {
+            "type": "boolean"
+          },
+          "share_blood_type": {
+            "type": "boolean"
+          },
+          "share_emergency_contact_email": {
+            "type": "boolean"
+          },
+          "share_emergency_contact_full_name": {
+            "type": "boolean"
+          },
+          "share_emergency_contact_phone": {
+            "type": "boolean"
+          },
+          "share_emergency_contact_relationship": {
+            "type": "boolean"
+          },
+          "share_emergency_preferred_language": {
+            "type": "boolean"
+          },
+          "share_medical_conditions": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "emergency_contact_full_name",
+          "emergency_contact_relationship",
+          "emergency_contact_phone",
+          "location_sharing_enabled",
+          "emergency_notes_shareable",
+          "share_emergency_contact_full_name",
+          "share_emergency_contact_relationship",
+          "share_emergency_contact_phone",
+          "share_emergency_contact_email",
+          "share_blood_type",
+          "share_allergies",
+          "share_medical_conditions",
+          "share_emergency_preferred_language"
+        ],
+        "type": "object"
+      },
       "EmergencyType": {
         "enum": [
           "medical",
@@ -523,6 +707,14 @@
           "error"
         ],
         "type": "object"
+      },
+      "Gender": {
+        "enum": [
+          "female",
+          "male",
+          "prefer_not_to_say"
+        ],
+        "type": "string"
       },
       "HealthOk": {
         "additionalProperties": false,
@@ -1639,6 +1831,17 @@
         ],
         "type": "object"
       },
+      "LocationSharingRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
       "LocationSource": {
         "enum": [
           "current",
@@ -1790,6 +1993,41 @@
         ],
         "type": "object"
       },
+      "PersonalInfoRequest": {
+        "properties": {
+          "avatar_path": {
+            "description": "Null clears it; left out keeps the stored value. Else an object path in the caller's own folder: `{uid}/<name>` (`profiles:invalid_avatar_path`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "date_of_birth": {
+            "description": "`YYYY-MM-DD`, a real date not after today (Africa/Banjul = UTC) (`profiles:invalid_date_of_birth`).",
+            "type": "string"
+          },
+          "full_name": {
+            "description": "Trimmed; must not be empty (`profiles:invalid_full_name`).",
+            "type": "string"
+          },
+          "gender": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Gender"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null clears it; left out keeps the stored value (null on a new profile)."
+          }
+        },
+        "required": [
+          "full_name",
+          "date_of_birth"
+        ],
+        "type": "object"
+      },
       "PhoneInviteRequest": {
         "properties": {
           "display_name": {
@@ -1825,6 +2063,351 @@
         "required": [
           "display_name",
           "phone"
+        ],
+        "type": "object"
+      },
+      "PreferencesRequest": {
+        "properties": {
+          "alert_email_enabled": {
+            "type": "boolean"
+          },
+          "alert_push_enabled": {
+            "type": "boolean"
+          },
+          "alert_sms_enabled": {
+            "type": "boolean"
+          },
+          "app_language": {
+            "const": "en",
+            "description": "`profiles:invalid_app_language`.",
+            "type": "string"
+          },
+          "hide_profile_from_non_members": {
+            "type": "boolean"
+          },
+          "location_sharing_enabled": {
+            "type": "boolean"
+          },
+          "preferred_language": {
+            "$ref": "#/components/schemas/PreferredLanguage"
+          },
+          "timezone": {
+            "const": "Africa/Banjul",
+            "description": "`profiles:invalid_timezone`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alert_push_enabled",
+          "alert_email_enabled",
+          "alert_sms_enabled",
+          "location_sharing_enabled",
+          "hide_profile_from_non_members",
+          "app_language",
+          "timezone",
+          "preferred_language"
+        ],
+        "type": "object"
+      },
+      "PreferredLanguage": {
+        "enum": [
+          "en",
+          "wo",
+          "mnk",
+          "ff"
+        ],
+        "type": "string"
+      },
+      "Profile": {
+        "additionalProperties": false,
+        "properties": {
+          "alert_email_enabled": {
+            "type": "boolean"
+          },
+          "alert_push_enabled": {
+            "type": "boolean"
+          },
+          "alert_sms_enabled": {
+            "type": "boolean"
+          },
+          "allergies": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "app_language": {
+            "const": "en",
+            "type": "string"
+          },
+          "avatar_path": {
+            "description": "Object path in the `avatars` bucket, e.g. `{uid}/avatar-{uuid}.jpg`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "avatar_url": {
+            "description": "Public URL of `avatar_path`: `{SUPABASE_URL}/storage/v1/object/public/avatars/{avatar_path}`; null without a photo.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "blood_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BloodType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "date_of_birth": {
+            "description": "`YYYY-MM-DD`.",
+            "type": "string"
+          },
+          "emergency_contact_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emergency_contact_full_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emergency_contact_phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emergency_contact_relationship": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Relationship"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "emergency_info_completed_at": {
+            "description": "Set by the server the first time Emergency Info is saved; never reset.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emergency_notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emergency_notes_shareable": {
+            "type": "boolean"
+          },
+          "emergency_preferred_language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "full_name": {
+            "type": "string"
+          },
+          "gender": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Gender"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hide_profile_from_non_members": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "location_sharing_enabled": {
+            "type": "boolean"
+          },
+          "medical_conditions": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "personal_info_completed_at": {
+            "description": "Set by the server the first time Personal Info is saved; never reset.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "preferences_completed_at": {
+            "description": "Set by the server the first time Preferences are saved; never reset.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "preferred_language": {
+            "$ref": "#/components/schemas/PreferredLanguage"
+          },
+          "profile_setup_completed_at": {
+            "description": "Set by `POST /v1/me/profile/complete` (first success wins).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "share_allergies": {
+            "type": "boolean"
+          },
+          "share_blood_type": {
+            "type": "boolean"
+          },
+          "share_emergency_contact_email": {
+            "type": "boolean"
+          },
+          "share_emergency_contact_full_name": {
+            "type": "boolean"
+          },
+          "share_emergency_contact_phone": {
+            "type": "boolean"
+          },
+          "share_emergency_contact_relationship": {
+            "type": "boolean"
+          },
+          "share_emergency_preferred_language": {
+            "type": "boolean"
+          },
+          "share_medical_conditions": {
+            "type": "boolean"
+          },
+          "timezone": {
+            "const": "Africa/Banjul",
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "full_name",
+          "date_of_birth",
+          "gender",
+          "avatar_path",
+          "personal_info_completed_at",
+          "created_at",
+          "updated_at",
+          "alert_push_enabled",
+          "alert_email_enabled",
+          "alert_sms_enabled",
+          "location_sharing_enabled",
+          "hide_profile_from_non_members",
+          "app_language",
+          "timezone",
+          "preferences_completed_at",
+          "preferred_language",
+          "emergency_contact_full_name",
+          "emergency_contact_relationship",
+          "emergency_contact_phone",
+          "emergency_contact_email",
+          "blood_type",
+          "allergies",
+          "medical_conditions",
+          "emergency_preferred_language",
+          "emergency_info_completed_at",
+          "emergency_notes",
+          "emergency_notes_shareable",
+          "profile_setup_completed_at",
+          "share_emergency_contact_full_name",
+          "share_emergency_contact_relationship",
+          "share_emergency_contact_phone",
+          "share_emergency_contact_email",
+          "share_blood_type",
+          "share_allergies",
+          "share_medical_conditions",
+          "share_emergency_preferred_language",
+          "avatar_url"
+        ],
+        "type": "object"
+      },
+      "ProfileSetupResult": {
+        "additionalProperties": false,
+        "properties": {
+          "circle_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null while location sharing is off (no circle yet)."
+          },
+          "location_sharing_enabled": {
+            "type": "boolean"
+          },
+          "member_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The emergency contact's member row."
+          },
+          "member_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "active",
+                  "declined"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The contact row's stored status: `declined` when it was left unchanged because the circle is full."
+          },
+          "profile_setup_completed_at": {
+            "description": "First completion time; never moves.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "circle_id",
+          "member_id",
+          "member_status",
+          "location_sharing_enabled",
+          "profile_setup_completed_at"
         ],
         "type": "object"
       },
@@ -1913,6 +2496,18 @@
           "resolved_reason"
         ],
         "type": "object"
+      },
+      "Relationship": {
+        "enum": [
+          "spouse",
+          "partner",
+          "parent",
+          "child",
+          "sibling",
+          "friend",
+          "other"
+        ],
+        "type": "string"
       },
       "RemovedMember": {
         "additionalProperties": false,
@@ -2048,6 +2643,21 @@
         ],
         "type": "object"
       },
+      "SetAvatarRequest": {
+        "properties": {
+          "object_path": {
+            "description": "An uploaded object in the caller's own folder (`{uid}/...`), or null to remove the photo.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "object_path"
+        ],
+        "type": "object"
+      },
       "SetIncidentNotesRequest": {
         "properties": {
           "incident_notes": {
@@ -2056,6 +2666,38 @@
               "string",
               "null"
             ]
+          }
+        },
+        "type": "object"
+      },
+      "SharingFlagsRequest": {
+        "properties": {
+          "emergency_notes_shareable": {
+            "type": "boolean"
+          },
+          "share_allergies": {
+            "type": "boolean"
+          },
+          "share_blood_type": {
+            "type": "boolean"
+          },
+          "share_emergency_contact_email": {
+            "type": "boolean"
+          },
+          "share_emergency_contact_full_name": {
+            "type": "boolean"
+          },
+          "share_emergency_contact_phone": {
+            "type": "boolean"
+          },
+          "share_emergency_contact_relationship": {
+            "type": "boolean"
+          },
+          "share_emergency_preferred_language": {
+            "type": "boolean"
+          },
+          "share_medical_conditions": {
+            "type": "boolean"
           }
         },
         "type": "object"
@@ -5078,6 +5720,153 @@
         ]
       }
     },
+    "/v1/me/avatar/upload-url": {
+      "post": {
+        "operationId": "createAvatarUploadUrl",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AvatarUploadUrlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvatarUploadUrl"
+                }
+              }
+            },
+            "description": "`PUT` the photo bytes to `upload_url` with `headers` before `expires_at` (once; the bucket also enforces 5 MiB and JPEG/PNG/WebP), then send `object_path` to `PUT /v1/me/profile/avatar`. The object is new for every call (`{uid}/avatar-{uuid}.{ext}`) and in the caller's own folder."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "profiles:not_authenticated"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:file_too_large",
+                    "details": {},
+                    "message": "The photo must be 5 MB or smaller."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "profiles:file_too_large",
+              "profiles:invalid_content_type",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:avatar_storage_unavailable",
+                    "details": {},
+                    "message": "Photos cannot be saved right now. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error",
+            "x-error-codes": [
+              "profiles:avatar_storage_unavailable"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "A single-use signed URL to upload a new profile photo",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
     "/v1/me/circle": {
       "get": {
         "operationId": "fetchOwnCircle",
@@ -6657,6 +7446,1143 @@
         "summary": "The circles the caller is an active member of (the own circle included)",
         "tags": [
           "circles"
+        ]
+      }
+    },
+    "/v1/me/profile": {
+      "get": {
+        "operationId": "fetchOwnProfile",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            },
+            "description": "Every `profiles` column plus `avatar_url`. Setup progress = which `*_completed_at` are set."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "profiles:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:profile_not_found",
+                    "details": {},
+                    "message": "Profile not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "profiles:profile_not_found"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The caller's own profile and setup progress",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/v1/me/profile/avatar": {
+      "put": {
+        "operationId": "setAvatar",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetAvatarRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            },
+            "description": "The full Profile after the write (as `GET /v1/me/profile`). The previous photo object of the caller's folder is deleted afterwards (best effort)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "profiles:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:avatar_not_found",
+                    "details": {},
+                    "message": "The photo upload was not found. Upload it again."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "profiles:avatar_not_found",
+              "profiles:profile_not_found"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:invalid_avatar_path",
+                    "details": {},
+                    "message": "The photo is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "profiles:invalid_avatar_path",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:avatar_storage_unavailable",
+                    "details": {},
+                    "message": "Photos cannot be saved right now. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error",
+            "x-error-codes": [
+              "profiles:avatar_storage_unavailable"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Use an uploaded photo as the profile photo, or remove the photo",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/v1/me/profile/complete": {
+      "post": {
+        "operationId": "completeProfileSetup",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileSetupResult"
+                }
+              }
+            },
+            "description": "Idempotent (`profile_setup_completed_at` keeps its first value). With Location Sharing off: no circle (`circle_id`, `member_id`, `member_status` null); call again after turning it on. With it on: the circle `My Safety Circle`, the owner row and a pending 7-day invite for the emergency contact; a contact row that would need a slot at 5/5 is left as it is (its stored status is returned)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "complete_profile_setup:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "complete_profile_setup:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "complete_profile_setup:profile_not_found",
+                    "details": {},
+                    "message": "Profile not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "complete_profile_setup:profile_not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "complete_profile_setup:emergency_info_incomplete",
+                    "details": {},
+                    "message": "Finish your emergency information first."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "complete_profile_setup:emergency_info_incomplete",
+              "complete_profile_setup:personal_info_incomplete",
+              "complete_profile_setup:preferences_incomplete"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Complete profile setup: create the circle, owner row and emergency-contact invite",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/v1/me/profile/emergency-info": {
+      "put": {
+        "operationId": "updateEmergencyInfo",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmergencyInfoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            },
+            "description": "The full Profile after the write (as `GET /v1/me/profile`). `emergency_info_completed_at` is set on the first save. Completion timestamps are set by the server the first time and never reset; a request cannot write them."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "profiles:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:profile_not_found",
+                    "details": {},
+                    "message": "Profile not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "profiles:profile_not_found"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:emergency_notes_too_long",
+                    "details": {},
+                    "message": "Emergency notes must be 500 characters or fewer."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "profiles:emergency_notes_too_long",
+              "profiles:invalid_blood_type",
+              "profiles:invalid_email",
+              "profiles:invalid_emergency_contact_full_name",
+              "profiles:invalid_phone",
+              "profiles:invalid_relationship",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Save Emergency Info, its share flags and Location Sharing",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/v1/me/profile/location-sharing": {
+      "patch": {
+        "operationId": "updateLocationSharingEnabled",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocationSharingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            },
+            "description": "The full Profile after the write (as `GET /v1/me/profile`). Turning it on does not create the circle: then call `POST /v1/me/profile/complete` (spec rule 6a)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "profiles:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:profile_not_found",
+                    "details": {},
+                    "message": "Profile not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "profiles:profile_not_found"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Turn Location Sharing on or off",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/v1/me/profile/personal-info": {
+      "put": {
+        "operationId": "upsertPersonalInfo",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonalInfoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            },
+            "description": "The full Profile after the write (as `GET /v1/me/profile`). `personal_info_completed_at` is set on the first save. Completion timestamps are set by the server the first time and never reset; a request cannot write them."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "profiles:not_authenticated"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:invalid_avatar_path",
+                    "details": {},
+                    "message": "The photo is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "profiles:invalid_avatar_path",
+              "profiles:invalid_date_of_birth",
+              "profiles:invalid_full_name",
+              "profiles:invalid_gender",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Save Personal Info (creates the profile on first use)",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/v1/me/profile/preferences": {
+      "put": {
+        "operationId": "updatePreferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferencesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            },
+            "description": "The full Profile after the write (as `GET /v1/me/profile`). `preferences_completed_at` is set on the first save. Turning Location Sharing on does not create the circle: call `POST /v1/me/profile/complete`. Completion timestamps are set by the server the first time and never reset; a request cannot write them."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "profiles:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:profile_not_found",
+                    "details": {},
+                    "message": "Profile not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "profiles:profile_not_found"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:invalid_app_language",
+                    "details": {},
+                    "message": "The app language is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "profiles:invalid_app_language",
+              "profiles:invalid_preferred_language",
+              "profiles:invalid_timezone",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Save Preferences (alerts, Location Sharing, languages)",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/v1/me/profile/sharing-flags": {
+      "patch": {
+        "operationId": "updateIncidentSharingFlags",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharingFlagsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            },
+            "description": "The full Profile after the write (as `GET /v1/me/profile`). Only the flags sent change; nothing else is written."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "profiles:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "profiles:profile_not_found",
+                    "details": {},
+                    "message": "Profile not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "profiles:profile_not_found"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Change any of the 9 incident share flags",
+        "tags": [
+          "profiles"
         ]
       }
     },

@@ -16,6 +16,7 @@ import { dataStoreProblems } from './data-store-guard';
  */
 
 export const NODE_ENVS = ['development', 'test', 'production'] as const;
+export const AVATAR_STORAGE_DRIVERS = ['supabase', 'memory'] as const;
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 
 export type NodeEnv = (typeof NODE_ENVS)[number];
@@ -82,6 +83,9 @@ export const configSchema = z.object({
   // Allowed clock difference when checking `exp` / `nbf` of Supabase JWTs (API-100-08 AC2: <= 30 s).
   SUPABASE_JWT_CLOCK_SKEW_SECONDS: integerInRange(0, 30).default(30),
   SUPABASE_STORAGE_SERVICE_KEY: z.string().optional(),
+  // Where profile photos go (API-100-37): Supabase Storage, or the in-memory fake (tests, local
+  // manual testing; refused when NODE_ENV=production).
+  AVATAR_STORAGE: z.enum(AVATAR_STORAGE_DRIVERS).default('supabase'),
   AVATARS_BUCKET: z
     .string()
     .regex(/^[a-z0-9][a-z0-9._-]*$/)
@@ -103,6 +107,8 @@ export const configSchema = z.object({
   RATE_LIMIT_EMERGENCY_WRITE_WINDOW_SECONDS: integerInRange(1, 86_400).default(60),
   RATE_LIMIT_AUTH_FAILURE_MAX: integerInRange(1, 1_000_000).default(120),
   RATE_LIMIT_AUTH_FAILURE_WINDOW_SECONDS: integerInRange(1, 86_400).default(60),
+  RATE_LIMIT_AVATAR_UPLOAD_MAX: integerInRange(1, 1_000_000).default(20),
+  RATE_LIMIT_AVATAR_UPLOAD_WINDOW_SECONDS: integerInRange(1, 86_400).default(3600),
   // Longest wait for Redis before the limiter lets the request through (fail open).
   RATE_LIMIT_REDIS_TIMEOUT_MS: integerInRange(1, 5_000).default(100),
 
@@ -137,6 +143,7 @@ const RULES: Record<ConfigKey, string> = {
   SUPABASE_JWT_AUDIENCE: 'must be a string',
   SUPABASE_JWT_CLOCK_SKEW_SECONDS: 'must be an integer from 0 to 30',
   SUPABASE_STORAGE_SERVICE_KEY: 'must be a string',
+  AVATAR_STORAGE: `must be one of ${AVATAR_STORAGE_DRIVERS.join(', ')}`,
   AVATARS_BUCKET: 'must be a bucket name (lowercase letters, digits, ".", "_", "-")',
   INVITE_URL_BASE: 'must be a URL (any scheme)',
   TRUST_PROXY: 'must be true, false, a hop count, or a comma-separated list of IPs/CIDRs',
@@ -151,6 +158,8 @@ const RULES: Record<ConfigKey, string> = {
   RATE_LIMIT_EMERGENCY_WRITE_WINDOW_SECONDS: 'must be an integer from 1 to 86400',
   RATE_LIMIT_AUTH_FAILURE_MAX: 'must be an integer from 1 to 1000000',
   RATE_LIMIT_AUTH_FAILURE_WINDOW_SECONDS: 'must be an integer from 1 to 86400',
+  RATE_LIMIT_AVATAR_UPLOAD_MAX: 'must be an integer from 1 to 1000000',
+  RATE_LIMIT_AVATAR_UPLOAD_WINDOW_SECONDS: 'must be an integer from 1 to 86400',
   RATE_LIMIT_REDIS_TIMEOUT_MS: 'must be an integer from 1 to 5000',
   LOG_LEVEL: `must be one of ${LOG_LEVELS.join(', ')}`,
   SENTRY_DSN: 'must be an http(s) URL',
@@ -167,6 +176,8 @@ export const REQUIRED_IN_PRODUCTION = [
   'REDIS_URL',
   'SUPABASE_URL',
   'SUPABASE_JWT_ISSUER',
+  // Signed avatar upload URLs (API-100-37); optional in development / tests.
+  'SUPABASE_STORAGE_SERVICE_KEY',
 ] as const satisfies readonly ConfigKey[];
 
 /** At least one of these verifies Supabase JWTs; one is required when NODE_ENV=production. */
@@ -240,6 +251,12 @@ export function parseConfig(env: Record<string, unknown>): Config {
       if (input[key] === undefined) {
         problems.push({ keys: [key], reason: 'is required when NODE_ENV=production' });
       }
+    }
+    if (input.AVATAR_STORAGE === 'memory') {
+      problems.push({
+        keys: ['AVATAR_STORAGE'],
+        reason: 'must be supabase when NODE_ENV=production (memory is for tests only)',
+      });
     }
     if (SUPABASE_JWT_VERIFIERS.every((key) => input[key] === undefined)) {
       problems.push({

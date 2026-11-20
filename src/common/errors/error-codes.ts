@@ -21,6 +21,30 @@ export const PARITY_ERROR_CODES = {
     // raw trigger `circle_full` maps to it if the API ever lets it surface.
     'circle_full',
   ],
+  // §11.3 P1-P6, P8, P9 (API-100-34/35/37): the routes that replace the app's direct `profiles` table
+  // and Storage calls. New codes (no SQL function behind them), prefix = the table they replace, like
+  // `safety_circles` and `incident_events`. Field codes follow the request body's field order.
+  profiles: [
+    'not_authenticated',
+    'profile_not_found',
+    'invalid_full_name',
+    'invalid_date_of_birth',
+    'invalid_gender',
+    'invalid_avatar_path',
+    'invalid_emergency_contact_full_name',
+    'invalid_relationship',
+    'invalid_phone',
+    'invalid_email',
+    'invalid_blood_type',
+    'emergency_notes_too_long',
+    'invalid_app_language',
+    'invalid_timezone',
+    'invalid_preferred_language',
+    'invalid_content_type',
+    'file_too_large',
+    'avatar_not_found',
+    'avatar_storage_unavailable',
+  ],
 
   // §7.2 Circles and invites (owner side)
   circle_invite_capacity: ['not_authenticated', 'not_owner'],

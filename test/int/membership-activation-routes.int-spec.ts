@@ -15,10 +15,11 @@ import { addActiveMember, createCircle, createIncident, createUser } from '../su
 import { insertExpiredMember, insertMember, memberRow } from '../support/invite-rows';
 
 /**
- * API-100-30 AC5 (spec §4.4 "known bypass", §11.3 "no endpoint inserts or activates a member row
- * directly", policy `membership.activate`): the ONLY route of the API that makes a
- * `safety_circle_members` row `active` is `POST /v1/invites/{token}/accept` (the owner row of
- * profile setup arrives with API-100-36).
+ * API-100-30 AC5 / API-100-36 (spec §4.4 "known bypass", §11.3 "no endpoint inserts or activates a
+ * member row directly", policy `membership.activate`): the ONLY routes of the API that make a
+ * `safety_circle_members` row `active` are `POST /v1/invites/{token}/accept` (a member row, with the
+ * invitee's consent) and `POST /v1/me/profile/complete` (the caller's own OWNER row of the circle
+ * the caller owns, `profile_setup_owner_row`).
  *
  * - Dynamic: every route the app registers (discovered from the controllers, so a new route is
  *   covered automatically: since API-100-31/32 also `GET /v1/me/invites` with its claim,
@@ -33,6 +34,7 @@ import { insertExpiredMember, insertMember, memberRow } from '../support/invite-
 type Body = Record<string, unknown>;
 
 const ACCEPT_ROUTE = 'POST /v1/invites/{token}/accept';
+const SETUP_ROUTE = 'POST /v1/me/profile/complete';
 const SRC = resolve(__dirname, '../../src');
 
 function sourceFiles(dir: string): string[] {
@@ -43,7 +45,7 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-describe('only accept activates a member row (API-100-30 AC5)', () => {
+describe('only accept (and setup, for the owner row) activates a member row (API-100-30 AC5, API-100-36)', () => {
   let app: NestFastifyApplication;
   let client: Client;
 
@@ -75,10 +77,11 @@ describe('only accept activates a member row (API-100-30 AC5)', () => {
       )
     ).rows;
 
-  it('every registered route except accept, with hostile bodies, activates nothing', async () => {
+  it('every registered route except accept and setup, with hostile bodies, activates nothing', async () => {
     const routes = discoverRoutes(collectControllers(AppModule));
     const names = routes.map((r) => `${r.method.toUpperCase()} ${r.path}`);
     expect(names).toContain(ACCEPT_ROUTE);
+    expect(names).toContain(SETUP_ROUTE);
     const fastify = app.getHttpAdapter().getInstance();
     for (const route of routes) {
       const url = route.path.replace(/\{(\w+)\}/g, ':$1');
@@ -134,7 +137,8 @@ describe('only accept activates a member row (API-100-30 AC5)', () => {
     const callers = [owner, ben, invitee, phoneInvitee];
     const statuses: string[] = [];
     for (const route of routes) {
-      if (`${route.method.toUpperCase()} ${route.path}` === ACCEPT_ROUTE) continue;
+      const name = `${route.method.toUpperCase()} ${route.path}`;
+      if (name === ACCEPT_ROUTE || name === SETUP_ROUTE) continue;
       for (const target of ['link', 'phone', 'expired', 'declined'] as const) {
         const url = route.path.replace(/\{(\w+)\}/g, (_m, p: string) => paramValues(p, target));
         for (const caller of callers) {
@@ -206,7 +210,61 @@ describe('only accept activates a member row (API-100-30 AC5)', () => {
     expect(after.activated_at).toEqual(after.invite_consumed_at);
   });
 
-  it('in the source, only the accept write sets status active, and nothing writes activated_at', () => {
+  it('setup activates only the caller’s own owner row, never a member row, whatever the body says', async () => {
+    const owner = await createUser(client, { fullName: 'Setup Owner' });
+    const circle = await createCircle(client, owner);
+    const invitee = await createUser(client, { fullName: 'Pending Invitee', phone: true });
+    // The owner's emergency contact is the invitee's pending phone invite, claimed by the invitee.
+    const contactRow = await insertMember(client, circle.id, {
+      phone: invitee.phone,
+      userId: invitee.id,
+    });
+    await client.query(
+      `update public.profiles set emergency_contact_phone = $2, profile_setup_completed_at = null
+        where id = $1`,
+      [owner.id, invitee.phone],
+    );
+    const before = await activeState();
+    const reply = await app.inject({
+      method: 'POST',
+      url: '/v1/me/profile/complete',
+      headers: { ...(await authHeader(owner.id)), 'content-type': 'application/json' },
+      payload: JSON.stringify({
+        status: 'active',
+        member_id: contactRow.id,
+        activated_at: '2000-01-01',
+      }),
+    });
+    expect(reply.statusCode).toBe(200);
+    expect(await activeState()).toEqual(before);
+    expect((await memberRow(client, contactRow.id)).status).toBe('pending');
+
+    // Positive control: a user without a circle gets an active owner row, trigger-stamped.
+    const fresh = await createUser(client, { fullName: 'Fresh Owner' });
+    await client.query(
+      'update public.profiles set profile_setup_completed_at = null where id = $1',
+      [fresh.id],
+    );
+    const created = await app.inject({
+      method: 'POST',
+      url: '/v1/me/profile/complete',
+      headers: await authHeader(fresh.id),
+    });
+    expect(created.statusCode).toBe(200);
+    const ownerRow = (
+      await client.query<Record<string, unknown>>(
+        `select role, status, user_id::text, activated_at = invited_at as trigger_time
+           from public.safety_circle_members
+          where circle_id = $1 and status = 'active'`,
+        [created.json<{ circle_id: string }>().circle_id],
+      )
+    ).rows;
+    expect(ownerRow).toEqual([
+      { role: 'owner', status: 'active', user_id: fresh.id, trigger_time: true },
+    ]);
+  });
+
+  it('in the source, only the accept write and the setup owner row set status active, and nothing writes activated_at', () => {
     const activating: string[] = [];
     const activatedAtWrites: string[] = [];
     // `db/tooling` is the local CLI (baseline, migrations, the fake seed of README), never a route.
@@ -221,10 +279,20 @@ describe('only accept activates a member row (API-100-30 AC5)', () => {
         if (/'active'/.test(statement[0])) activating.push(name);
         if (/activated_at/.test(statement[0])) activatedAtWrites.push(name);
       }
-      // The record-style SET of `invitee-invites.repository.ts`.
-      if (/status:\s*sql`'active'`/.test(text)) activating.push(`${name} (set record)`);
+      // The record-style SET / values of `invitee-invites.repository.ts` and
+      // `profile-setup.repository.ts`.
+      if (/status:\s*sql`'active'(::text)?`/.test(text)) activating.push(`${name} (set record)`);
     }
-    expect(activating).toEqual(['modules/invites/invitee-invites.repository.ts (set record)']);
+    expect(activating.sort()).toEqual([
+      'modules/invites/invitee-invites.repository.ts (set record)',
+      'modules/profiles/profile-setup.repository.ts (set record)',
+    ]);
+    // The setup owner row's insert names role 'owner' and is guarded by membership.activate.
+    const setupSource = readFileSync(
+      join(SRC, 'modules/profiles/profile-setup.repository.ts'),
+      'utf8',
+    );
+    expect(setupSource).toMatch(/path: 'profile_setup_owner_row'/);
     expect(activatedAtWrites).toEqual([]);
   });
 });

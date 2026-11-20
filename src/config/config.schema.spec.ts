@@ -17,6 +17,8 @@ const RATE_LIMIT_DEFAULTS = {
   RATE_LIMIT_EMERGENCY_WRITE_WINDOW_SECONDS: 60,
   RATE_LIMIT_AUTH_FAILURE_MAX: 120,
   RATE_LIMIT_AUTH_FAILURE_WINDOW_SECONDS: 60,
+  RATE_LIMIT_AVATAR_UPLOAD_MAX: 20,
+  RATE_LIMIT_AVATAR_UPLOAD_WINDOW_SECONDS: 3600,
   RATE_LIMIT_REDIS_TIMEOUT_MS: 100,
 };
 
@@ -64,6 +66,7 @@ describe('parseConfig (API-100-02)', () => {
         DATABASE_POOL_MAX: 20,
         ALLOW_REMOTE_DATA_STORES: false,
         SUPABASE_JWT_CLOCK_SKEW_SECONDS: 30,
+        AVATAR_STORAGE: 'supabase',
         TRUST_PROXY: true,
         CHANNEL_PUSH_ENABLED: true,
         CHANNEL_SMS_ENABLED: false,
@@ -107,6 +110,7 @@ describe('parseConfig (API-100-02)', () => {
         SUPABASE_JWT_AUDIENCE: 'authenticated',
         SUPABASE_JWT_CLOCK_SKEW_SECONDS: 30,
         AVATARS_BUCKET: 'avatars',
+        AVATAR_STORAGE: 'supabase',
         INVITE_URL_BASE: 'io.supabase.atlasmobile://invite/',
         TRUST_PROXY: false,
         LOG_LEVEL: 'info',
@@ -180,9 +184,18 @@ describe('parseConfig (API-100-02)', () => {
         'REDIS_URL',
         'SUPABASE_URL',
         'SUPABASE_JWT_ISSUER',
+        'SUPABASE_STORAGE_SERVICE_KEY',
         'SUPABASE_JWT_JWKS_URL',
         'SUPABASE_JWT_SECRET',
       ]);
+    });
+
+    it('refuses the in-memory avatar storage in production (API-100-37)', () => {
+      const error = validationError({ ...PRODUCTION_ENV, AVATAR_STORAGE: 'memory' });
+      expect(error.keys).toEqual(['AVATAR_STORAGE']);
+      expect(error.message).not.toContain('fake-storage-key');
+      expect(parseConfig({ AVATAR_STORAGE: 'memory' }).AVATAR_STORAGE).toBe('memory');
+      expect(validationError({ AVATAR_STORAGE: 's3' }).keys).toEqual(['AVATAR_STORAGE']);
     });
   });
 

@@ -6,6 +6,7 @@ import type { Client } from 'pg';
 import { InviteeInvitesRepository } from '../../src/modules/invites/invitee-invites.repository';
 import { InviteeInvitesService } from '../../src/modules/invites/invitee-invites.service';
 import { createTestApp } from '../../src/testing/test-app';
+import { completeSetup } from '../support/profile-api';
 import {
   acceptInvite,
   cancelInvite,
@@ -17,7 +18,6 @@ import {
   lookupInvite,
   previewInvite,
   resendInvite,
-  sqlAs,
 } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import { createUser, fakeInviteToken, fakePhone, type UserFixture } from '../support/fixtures';
@@ -32,8 +32,9 @@ import { createUser, fakeInviteToken, fakePhone, type UserFixture } from '../sup
  * through the API too: every link invite (`POST /v1/me/circle/invites/link`, API-100-27), every
  * resend and cancel (`POST /v1/me/circle/invites/{id}/resend|cancel`, API-100-28), every preview,
  * accept and decline (`POST /v1/invites/{token}/preview|accept|decline`, API-100-29/30), as the
- * script's callers. Only `complete_profile_setup` is still the SQL function (API-100-36), and the
- * script's raw inserts/updates stay raw writes as the migration role.
+ * script's callers. Every `complete_profile_setup()` of the script is the API's
+ * `POST /v1/me/profile/complete` (API-100-36), and the script's raw inserts/updates stay raw writes
+ * as the migration role.
  *
  * L54 (static): the SQL `accept_circle_invite` stores the accepter's name through
  * `_member_profile_name(uid)`, the API's accept (service method and its write) through
@@ -43,8 +44,7 @@ import { createUser, fakeInviteToken, fakePhone, type UserFixture } from '../sup
  * The script has no phone invite: the expired-phone refresh of API-100-26 is covered by
  * test/int/circles-invites.int-spec.ts (incl. its interchangeability tests against the SQL).
  *
- * Still `it.todo`, with the story that completes them:
- * - API-100-36 (complete setup): L137, L404, L418, L458.
+ * No `it.todo` left (L137, L404, L418 and L458 completed by API-100-36).
  */
 type Member = Record<string, unknown>;
 type Body = Record<string, unknown>;
@@ -64,6 +64,19 @@ describe('member_names_expired_invites.sql', () => {
   let link2Id: string;
   let noprofRow: string;
   let oldId: string;
+  let contactId: string;
+  let tContact: string;
+  let setup1: { status: number; body: Body };
+  let setup2: { status: number; body: Body };
+  let rowAfterSetup2: {
+    status: string;
+    invite_token: string | null;
+    invite_canceled_at: string | null;
+    invite_consumed_at: string | null;
+    user_id: string | null;
+    expires_ok: boolean;
+  };
+  let setup3: { status: number; body: Body };
 
   let sqlAcceptSrc: string;
   let apiAcceptSrc: string;
@@ -97,8 +110,11 @@ describe('member_names_expired_invites.sql', () => {
   let ownerList3: Member[];
   let cap6: Body;
 
-  const asUser = <T>(user: UserFixture, call: string, params: unknown[] = []) =>
-    sqlAs<T>(client, user.id, call, params);
+  /** `complete_profile_setup()` as the owner, through the API (API-100-36). */
+  const setupViaApi = async (user: UserFixture) => {
+    const reply = await completeSetup(app, user.id);
+    return { status: reply.statusCode, body: reply.json<Body>() };
+  };
 
   const capacityOf = async (user: UserFixture): Promise<Body> => {
     const reply = await getCapacity(app, user.id);
@@ -183,10 +199,10 @@ describe('member_names_expired_invites.sql', () => {
       [owner.id, phoneContact],
     );
 
-    // Owner completes setup: circle + owner row + contact pending invite (SQL, API-100-36).
-    const setup = await asUser<Body>(owner, 'public.complete_profile_setup()');
-    cid = setup.circle_id as string;
-    const contactId = setup.member_id as string;
+    // Owner completes setup: circle + owner row + contact pending invite (API-100-36).
+    setup1 = await setupViaApi(owner);
+    cid = setup1.body.circle_id as string;
+    contactId = setup1.body.member_id as string;
     // Link invite (API-100-27), accepted by the linker (API-100-30): stored under the profile name.
     link1 = await linkViaApi();
     linkerRow = link1.member_id as string;
@@ -295,7 +311,7 @@ describe('member_names_expired_invites.sql', () => {
 
     // The contact declines (API); complete_profile_setup re-run (SQL, API-100-36) gives a usable
     // invite; lookups and preview (API), decline again (API), refill (API link invite).
-    const tContact = (
+    tContact = (
       await client.query<{ t: string }>(
         'select invite_token as t from public.safety_circle_members where id = $1',
         [contactId],
@@ -303,19 +319,24 @@ describe('member_names_expired_invites.sql', () => {
     ).rows[0].t;
     const declineReply = await declineInvite(app, contact.id, tContact);
     contactDecline = { status: declineReply.statusCode, body: declineReply.json<Body>() };
-    await asUser(owner, 'public.complete_profile_setup()');
-    const tContactNew = (
-      await client.query<{ t: string }>(
-        'select invite_token as t from public.safety_circle_members where id = $1',
+    setup2 = await setupViaApi(owner);
+    rowAfterSetup2 = (
+      await client.query<typeof rowAfterSetup2>(
+        `select m.status, m.invite_token, m.invite_canceled_at::text, m.invite_consumed_at::text,
+                m.user_id::text, m.invite_expires_at >= now() + interval '6 days' as expires_ok
+           from public.safety_circle_members m where m.id = $1`,
         [contactId],
       )
-    ).rows[0].t;
+    ).rows[0];
+    const tContactNew = rowAfterSetup2.invite_token as string;
     newContactLookup = (await lookupInvite(app, tContactNew)).json<Body>();
     oldContactLookup = (await lookupInvite(app, tContact)).json<Body>();
     contactPreview = (await previewInvite(app, contact.id, tContactNew)).json<Body>();
     expect((await declineInvite(app, contact.id, tContactNew)).statusCode).toBe(200);
     await linkViaApi();
     cap6 = await capacityOf(owner);
+    // Re-run at 5/5: Complete still succeeds and the contact row is left declined (no slot).
+    setup3 = await setupViaApi(owner);
   });
 
   afterAll(async () => {
@@ -360,7 +381,11 @@ describe('member_names_expired_invites.sql', () => {
     expect(phonesInUse).toBe(0);
   });
 
-  it.todo('L137: setup failed: %');
+  it('L137: setup failed: %', () => {
+    expect(setup1.status).toBe(200);
+    expect(cid).toEqual(expect.any(String));
+    expect(setup1.body.member_status).toBe('pending');
+  });
   it('L144: link placeholder changed: %', () => {
     expect(link1.display_name).toBe('Invited member');
   });
@@ -496,8 +521,21 @@ describe('member_names_expired_invites.sql', () => {
     expect(contactDecline.status).toBe(200);
     expect(contactDecline.body.status).toBe('declined');
   });
-  it.todo('L404: setup re-run after decline failed: %');
-  it.todo('L418: setup re-run left an unusable invite');
+  it('L404: setup re-run after decline failed: %', () => {
+    expect(setup2.status).toBe(200);
+    expect(setup2.body.member_id).toBe(contactId);
+    expect(setup2.body.member_status).toBe('pending');
+  });
+
+  it('L418: setup re-run left an unusable invite', () => {
+    expect(rowAfterSetup2.status).toBe('pending');
+    expect(rowAfterSetup2.invite_canceled_at).toBeNull();
+    expect(rowAfterSetup2.invite_consumed_at).toBeNull();
+    expect(rowAfterSetup2.user_id).toBeNull();
+    expect(rowAfterSetup2.invite_token).not.toBeNull();
+    expect(rowAfterSetup2.invite_token).not.toBe(tContact);
+    expect(rowAfterSetup2.expires_ok).toBe(true);
+  });
   it('L421: setup re-run token does not look up as pending: %', () => {
     expect(newContactLookup.status).toBe('pending');
   });
@@ -514,5 +552,10 @@ describe('member_names_expired_invites.sql', () => {
     expect(cap6.available).toBe(0);
   });
 
-  it.todo('L458: setup re-run at 5/5 failed: %');
+  it('L458: setup re-run at 5/5 failed: %', () => {
+    expect(setup3.status).toBe(200);
+    expect(setup3.body.member_id).toBe(contactId);
+    expect(setup3.body.member_status).toBe('declined');
+    expect(setup3.body.profile_setup_completed_at).not.toBeNull();
+  });
 });

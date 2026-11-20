@@ -422,6 +422,47 @@ capacity: null}` when the caller owns no circle. Never `invite_token`. 401 code
   delivery history while the member still loses every read (policies require `active`); remove and
   leave become idempotent. This changes what the app sees, so it belongs to those stories.
 
+## Profile and settings (API-100-34 to 37, `src/modules/profiles`)
+
+- `GET /v1/me/profile` (`fetchOwnProfile`): every `profiles` column in table order (as the app's
+  `select *`) plus `avatar_url`; 404 `profiles:profile_not_found` without a row; 401
+  `profiles:not_authenticated`. Only the caller's row: no route takes a profile id (`profile.self`;
+  `test/int/profile-exposure.int-spec.ts` calls every route as other users and finds no profile field
+  beyond the name and photo URL Phases 1-2 already show).
+- Writes (`profile-input.ts`, checked in field order, `details.field` on every 422):
+  `PUT /v1/me/profile/personal-info` (creates the row), `PUT .../emergency-info`,
+  `PUT .../preferences`, `PATCH .../sharing-flags` (any subset of the 9 flags),
+  `PATCH .../location-sharing` (`{enabled}`). Each returns the full Profile; 404 for P3-P6 without a
+  row. The server sets `personal_info_completed_at`, `emergency_info_completed_at` and
+  `preferences_completed_at` the first time and never resets them; no request can write them or
+  `profile_setup_completed_at` (D16). Values that pass the checks always pass the table's check
+  constraints; a constraint error is still mapped to its `profiles:*` code (never a 500).
+- `POST /v1/me/profile/complete` (`complete_profile_setup`): checks and answer as the function;
+  lock order profile → circle (lock or create) → owner row → contact row (D18); the contact row
+  upsert is the function's statement, in a savepoint that swallows the trigger's `circle_full`. The
+  owner row is the second (and last) activating write of the API (`membership.activate` path
+  `profile_setup_owner_row`). Audit `profile.setup_completed` once. Deferred creation: Location
+  Sharing off → no circle; `PATCH .../location-sharing {enabled: true}` then Complete again.
+- Photos (D17): `POST /v1/me/avatar/upload-url` → a single-use signed URL for a new object
+  `{uid}/avatar-{uuid}.{ext}` (2 h; per-user limit `avatar_upload`, default 20 / hour;
+  `cache-control: no-store`); the app `PUT`s the bytes there; `PUT /v1/me/profile/avatar
+{object_path}` checks the object exists, sets `avatar_path` and deletes the previous object of the
+  caller's folder after the commit (best effort, logged without the path); `{object_path: null}`
+  removes the photo.
+- Storage is behind `AvatarStorage` (`avatar-storage.ts`): `AVATAR_STORAGE=supabase` (default; the
+  REST API with `SUPABASE_URL` + `SUPABASE_STORAGE_SERVICE_KEY`, required in production, never
+  logged; without it the avatar routes answer 503 `profiles:avatar_storage_unavailable`) or
+  `AVATAR_STORAGE=memory`, an in-process fake that serves its own upload URLs
+  (`PUT /__fake-storage/upload/sign/{bucket}/{path}?token=`, not under `/v1`, not in OpenAPI) with
+  the bucket's rules (5 MiB, JPEG/PNG/WebP, single use, no overwrite). Tests and the manual guide
+  use the fake; nothing calls the real Storage automatically.
+- **Optional manual check against the real Storage (not automated, needs the real key; run only on
+  Dawit's instruction against `atlas_staging`)**: start the built API with `AVATAR_STORAGE=supabase`,
+  the project's `SUPABASE_URL` and `SUPABASE_STORAGE_SERVICE_KEY` (session-only exports), call
+  `POST /v1/me/avatar/upload-url` for a test user, `curl -X PUT --data-binary @photo.jpg -H
+'content-type: image/jpeg' "<upload_url>"`, then `PUT /v1/me/profile/avatar`, open the returned
+  `avatar_url` in a browser, and remove the photo again (`{object_path: null}`).
+
 ## OpenAPI and the Dart client (API-100-12, `src/openapi`, `clients/dart`)
 
 - Every route declares `@ApiContract({ operationId, summary, tag, responses, ... })` with zod schemas.
@@ -441,12 +482,12 @@ capacity: null}` when the caller owns no circle. Never `invite_token`. 401 code
 
 Needs Docker running. No suite uses the compose stack or reads `.env`.
 
-| Script                  | What it runs                                                                           |
-| ----------------------- | -------------------------------------------------------------------------------------- |
-| `npm test`              | Unit tests. No containers.                                                             |
-| `npm run test:int`      | `test/int`: integration tests against real Postgres and Redis containers.              |
-| `npm run test:baseline` | Each SQL file in `db/baseline/tests` must end with its `<name>_ok` exception.          |
-| `npm run test:parity`   | `test/parity`: one named test per SQL assertion (`it.todo` until the endpoint exists). |
+| Script                  | What it runs                                                                       |
+| ----------------------- | ---------------------------------------------------------------------------------- |
+| `npm test`              | Unit tests. No containers.                                                         |
+| `npm run test:int`      | `test/int`: integration tests against real Postgres and Redis containers.          |
+| `npm run test:baseline` | Each SQL file in `db/baseline/tests` must end with its `<name>_ok` exception.      |
+| `npm run test:parity`   | `test/parity`: one named test per SQL assertion (none is `it.todo` since Phase 3). |
 
 - One Postgres and one Redis container per run (`test/support/global-setup.ts`), on random ports, with
   the baseline and API migrations applied once into a template database.
@@ -457,10 +498,10 @@ Needs Docker running. No suite uses the compose stack or reads `.env`.
 
 ### Phase 1 gate (API-100-23)
 
-| Script                   | What it does                                                                                                                                                                                                                                                                                                                                                        |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run parity:report`  | Runs `test:parity` and prints the Phase 1 checklist (default; `-- --phase 2` for Phase 2): one line per assertion of the four incident SQL files with its parity test and result. Fails on any incident assertion that is missing, `it.todo` or not passing. `-- --results <jest.json>` reuses a Jest JSON report; `-- --out <file>` also writes the Markdown file. |
-| `npm run load:incidents` | Load check against the **built** app (`npm run build` first): own throwaway containers, 50 residents x 3 members, 180 s of pings and counts polling, then mark safe. Prints p50/p95/p99 per route; fails on any error or p99 submit ≥ 2 s. Options: `--residents`, `--members`, `--duration`, `--out`, `--rate-limit-env`.                                          |
+| Script                   | What it does                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run parity:report`  | Runs `test:parity` and prints the Phase 1 checklist (default; `-- --phase 2` / `-- --phase 3` for Phases 2 and 3): one line per assertion of the four incident SQL files with its parity test and result. Fails on any incident assertion that is missing, `it.todo` or not passing. `-- --results <jest.json>` reuses a Jest JSON report; `-- --out <file>` also writes the Markdown file. |
+| `npm run load:incidents` | Load check against the **built** app (`npm run build` first): own throwaway containers, 50 residents x 3 members, 180 s of pings and counts polling, then mark safe. Prints p50/p95/p99 per route; fails on any error or p99 submit ≥ 2 s. Options: `--residents`, `--members`, `--duration`, `--out`, `--rate-limit-env`.                                                                  |
 
 - `test/int/phase1-error-codes.int-spec.ts` reads every incident error code from `docs/api_doc.md`
   (§7.4 and §11.3 E11) and produces each one with a real request.
@@ -470,10 +511,10 @@ Needs Docker running. No suite uses the compose stack or reads `.env`.
 
 ### Phase 2 gate (API-100-33)
 
-| Script                               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run parity:report -- --phase 2` | Runs `test:parity` and prints the Phase 2 checklist: every assertion of `scrum28_accept_amendment.sql`, `scrum29_cancel_invite.sql`, `member_names_expired_invites.sql` and the membership parts of `membership_access_window.sql`. Fails on any of them missing, `it.todo` or not passing; the `complete_profile_setup` assertions (API-100-36) are listed separately and only have to exist. `-- --out docs/phase2_parity_checklist.md` writes the file. |
-| `npm run load:circles`               | Load check of the circles and invites routes against the **built** app on the shared harness (`test/load/load-harness.ts`): 40 owners x 4 invitees, invites, lookups, previews, accepts, declines, resend/cancel, leave, remove, 60 s of screen reloads. Prints p50/p95/p99 per route; fails on any error or a p99 at or above the client's 15 s cap. Options: `--owners`, `--duration`, `--out`, `--rate-limit-env`.                                      |
+| Script                               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run parity:report -- --phase 2` | Runs `test:parity` and prints the Phase 2 checklist: every assertion of `scrum28_accept_amendment.sql`, `scrum29_cancel_invite.sql`, `member_names_expired_invites.sql` and the membership parts of `membership_access_window.sql`. Fails on any of them missing, `it.todo` or not passing; the `complete_profile_setup` assertions (API-100-36, completed in Phase 3) are listed separately with their result. `-- --out docs/phase2_parity_checklist.md` writes the file. |
+| `npm run load:circles`               | Load check of the circles and invites routes against the **built** app on the shared harness (`test/load/load-harness.ts`): 40 owners x 4 invitees, invites, lookups, previews, accepts, declines, resend/cancel, leave, remove, 60 s of screen reloads. Prints p50/p95/p99 per route; fails on any error or a p99 at or above the client's 15 s cap. Options: `--owners`, `--duration`, `--out`, `--rate-limit-env`.                                                       |
 
 - `test/int/phase2-error-codes.int-spec.ts` reads every circle/invite code from `docs/api_doc.md`
   (§7.2, §7.3, §11.3 C/I rows), checks it equals the catalogue and produces each one with a real
@@ -484,6 +525,24 @@ Needs Docker running. No suite uses the compose stack or reads `.env`.
 - `test/int/phase2-capacity-sweep.int-spec.ts`: capacity never above 5 under mixed concurrent writes.
 - `test/int/incidents-submit-membership-race.int-spec.ts`: D14 (an SOS always goes through).
 - App hand-off: `docs/phase2_handoff.md`; generated checklist: `docs/phase2_parity_checklist.md`.
+
+### Phase 3 gate (API-100-38)
+
+| Script                               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run parity:report -- --phase 3` | Runs `test:parity` and prints the Phase 3 checklist: the `complete_profile_setup` assertions of `member_names_expired_invites.sql` (L137, L404, L418, L458) and the setup owner row of `membership_access_window.sql` (L84), plus a table of EVERY parity file: fails on any assertion anywhere that is missing, `it.todo`, `skip`, `only` or not passing. `-- --out docs/phase3_parity_checklist.md` writes the file.                                       |
+| `npm run load:profiles`              | Load check of the profile routes against the **built** app on the shared harness, with the in-memory Storage fake: 60 new users onboarding at once (photo, Personal Info, Emergency Info, Preferences, Complete, deferred creation for half of them), 60 s of reloads and share-flag changes, then a Settings edit and a new photo. Fails on any error, wrong rows or a p99 at or above 15 s. Options: `--users`, `--duration`, `--out`, `--rate-limit-env`. |
+
+- `test/int/phase3-error-codes.int-spec.ts` reads every `profiles:*` and `complete_profile_setup:*`
+  code from `docs/api_doc.md` (§7.1, §11.3 P1-P9), checks it equals the catalogue and produces each
+  one with a real request (`complete_profile_setup:circle_full` is proved unreachable).
+- `test/int/phase3-flows.int-spec.ts`: onboarding with exact rows, deferred creation, Settings edits
+  keep the completion timestamps, the photo round trip with the fake.
+- `test/int/phase3-mixed-writers.int-spec.ts`: onboarding + setup four ways (app/SQL only, API only,
+  mixed both ways) give the same end state; app-written profiles read and updated by the API and back.
+- `test/int/profile-setup-races.int-spec.ts`: D18 (setup racing resend, invites and accepts; the SQL
+  deadlock for contrast).
+- App hand-off: `docs/phase3_handoff.md`; generated checklist: `docs/phase3_parity_checklist.md`.
 
 ## Observability (API-100-06, `src/observability`)
 

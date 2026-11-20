@@ -28,6 +28,7 @@ export const RATE_LIMIT_POLICY_NAMES = [
   'location_ping',
   'emergency_write',
   'auth_failure',
+  'avatar_upload',
 ] as const;
 
 /** The configurable policies (API-100-11 AC2). */
@@ -39,6 +40,7 @@ const NAMED_SCOPES: Record<RateLimitPolicyName, RateLimitScope> = {
   location_ping: 'user_incident',
   emergency_write: 'user',
   auth_failure: 'ip',
+  avatar_upload: 'user',
 };
 
 /** A route's `@RateLimit()` argument: a configured policy or one spelled out in full. */
@@ -87,6 +89,13 @@ export function namedPolicy(name: RateLimitPolicyName, config: ApiConfigService)
         scope,
         max: config.get('RATE_LIMIT_AUTH_FAILURE_MAX'),
         windowSeconds: config.get('RATE_LIMIT_AUTH_FAILURE_WINDOW_SECONDS'),
+      };
+    case 'avatar_upload':
+      return {
+        name,
+        scope,
+        max: config.get('RATE_LIMIT_AVATAR_UPLOAD_MAX'),
+        windowSeconds: config.get('RATE_LIMIT_AVATAR_UPLOAD_WINDOW_SECONDS'),
       };
   }
 }

@@ -53,6 +53,13 @@ export const SUFFIX_STATUS: Readonly<Record<string, number>> = {
   too_long: 422,
   email_required: 422,
   phone_required: 422,
+  // `profiles:*` (API-100-35/37): request values without an `invalid_*` name.
+  emergency_notes_too_long: 422,
+  file_too_large: 422,
+  // `profiles:avatar_not_found` (API-100-37): the object to set as the photo is not in Storage.
+  avatar_not_found: 404,
+  // `profiles:avatar_storage_unavailable` (API-100-37): Storage is not configured or not answering.
+  avatar_storage_unavailable: 503,
 
   already_active: 409,
   already_member: 409,

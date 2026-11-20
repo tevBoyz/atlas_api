@@ -154,3 +154,54 @@ export function specCircleErrorCodes(file: string = SPEC_FILE): string[] {
     ]),
   ];
 }
+
+/**
+ * `fn:code` strings of spec §7.1 (`complete_profile_setup`): the backticked codes after `Errors:`
+ * under its `####` heading.
+ */
+export function specProfileRpcCodes(markdown: string): string[] {
+  const lines = sectionLines(markdown, '### 7.1 Profile');
+  const codes: string[] = [];
+  let fn: string | undefined;
+  for (const line of lines) {
+    const heading = /^#### `(\w+)\(/.exec(line);
+    if (heading) {
+      fn = heading[1];
+      continue;
+    }
+    const at = line.indexOf('Errors:');
+    if (at < 0 || !fn) continue;
+    // The sentence after the list (`circle_full` is caught) is a remark, not a code of the function.
+    const list = line.slice(at + 'Errors:'.length).split('.')[0];
+    codes.push(...codesIn(list, fn));
+  }
+  return codes;
+}
+
+/** Full codes named in the errors cell of the spec §11.3 rows P1-P9 (API-100-38). */
+export function specProfileEndpointCodes(markdown: string): string[] {
+  const codes: string[] = [];
+  for (const line of markdown.split(/\r?\n/)) {
+    if (!/^\| P\d+ \| `(GET|PUT|PATCH|POST|DELETE) /.test(line)) continue;
+    const cells = cellsOf(line);
+    // Columns: # | Method + path | Replaces | Request | Response | Errors | Rule | Tag
+    if (cells.length !== 8) throw new Error(`unexpected §11.3 row: ${line.slice(0, 60)}`);
+    codes.push(...codesIn(cells[5], undefined));
+  }
+  return codes;
+}
+
+/**
+ * Every profile error code the spec names (§7.1 and §11.3 P1-P9), limited to the Phase 3 prefixes
+ * (`profiles`, `complete_profile_setup`), deduplicated.
+ */
+export function specProfileErrorCodes(file: string = SPEC_FILE): string[] {
+  const markdown = readFileSync(file, 'utf8');
+  return [
+    ...new Set(
+      [...specProfileRpcCodes(markdown), ...specProfileEndpointCodes(markdown)].filter((code) =>
+        /^(profiles|complete_profile_setup):/.test(code),
+      ),
+    ),
+  ];
+}

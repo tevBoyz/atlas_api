@@ -224,7 +224,7 @@ describe('OpenAPI document (API-100-12)', () => {
       expect(doc.components.schemas.ErrorBody.required).toEqual(['code', 'message', 'details']);
     });
 
-    it('lists only real routes: health, openapi, incidents, locations, config, circles and invites', () => {
+    it('lists only real routes: health, openapi, incidents, locations, config, circles, invites and profiles', () => {
       expect(Object.keys(appDocument().paths).sort()).toEqual([
         '/healthz',
         '/readyz',
@@ -245,6 +245,7 @@ describe('OpenAPI document (API-100-12)', () => {
         '/v1/invites/{token}/decline',
         '/v1/invites/{token}/preview',
         '/v1/invites/{token}/status',
+        '/v1/me/avatar/upload-url',
         '/v1/me/circle',
         '/v1/me/circle/capacity',
         '/v1/me/circle/invites/link',
@@ -256,6 +257,14 @@ describe('OpenAPI document (API-100-12)', () => {
         '/v1/me/incidents/open',
         '/v1/me/invites',
         '/v1/me/joined-circles',
+        '/v1/me/profile',
+        '/v1/me/profile/avatar',
+        '/v1/me/profile/complete',
+        '/v1/me/profile/emergency-info',
+        '/v1/me/profile/location-sharing',
+        '/v1/me/profile/personal-info',
+        '/v1/me/profile/preferences',
+        '/v1/me/profile/sharing-flags',
         '/v1/openapi.json',
         '/v1/responder/incidents',
       ]);
@@ -403,9 +412,12 @@ describe('OpenAPI document (API-100-12)', () => {
         'attachIncidentLocation',
         'cancelCircleInvite',
         'circleInviteCapacity',
+        'completeProfileSetup',
+        'createAvatarUploadUrl',
         'createCircleInviteLink',
         'declineCircleInvite',
         'fetchOwnCircle',
+        'fetchOwnProfile',
         'getHealth',
         'getIncidentDetails',
         'getLiveLocationConfig',
@@ -428,8 +440,14 @@ describe('OpenAPI document (API-100-12)', () => {
         'removeCircleMember',
         'renotifyEmergencyAlert',
         'resendCircleInvite',
+        'setAvatar',
         'setIncidentNotes',
         'submitEmergencyAlert',
+        'updateEmergencyInfo',
+        'updateIncidentSharingFlags',
+        'updateLocationSharingEnabled',
+        'updatePreferences',
+        'upsertPersonalInfo',
       ]);
     });
   });
@@ -498,6 +516,8 @@ describe('GET /v1/openapi.json (API-100-12 AC4)', () => {
         DATABASE_URL: 'postgresql://user:pass@127.0.0.1:1/db',
         REDIS_URL: 'redis://127.0.0.1:1',
         SUPABASE_URL: 'http://127.0.0.1:1',
+        AVATAR_STORAGE: 'supabase',
+        SUPABASE_STORAGE_SERVICE_KEY: 'fake-storage-key',
       }),
     );
     const res = await app.inject({ method: 'GET', url: '/v1/openapi.json' });

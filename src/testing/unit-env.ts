@@ -6,7 +6,14 @@ import { useTestJwtEnvironment } from './test-auth-config';
  * when the shell (or CI) sets them. Tests that need a data store provide a fake.
  * Access tokens are verified with the local test secret only (API-100-08): never a real JWKS.
  */
-for (const key of ['DATABASE_URL', 'REDIS_URL', 'ALLOW_REMOTE_DATA_STORES']) {
+for (const key of [
+  'DATABASE_URL',
+  'REDIS_URL',
+  'ALLOW_REMOTE_DATA_STORES',
+  'SUPABASE_STORAGE_SERVICE_KEY',
+]) {
   delete process.env[key];
 }
+// Profile photos: the in-memory fake (unit tests never call Supabase Storage).
+process.env.AVATAR_STORAGE = 'memory';
 useTestJwtEnvironment();

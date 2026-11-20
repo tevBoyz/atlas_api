@@ -4,11 +4,16 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
 import { parityTestsIn, type ParityTestKind } from '../support/parity-tests';
-import { parityTestName, paritySpecFile, sqlAssertionsOf } from '../support/sql-assertions';
+import {
+  parityTestName,
+  paritySpecFile,
+  sqlAssertionsOf,
+  sqlTestFiles,
+} from '../support/sql-assertions';
 
 /**
- * `npm run parity:report [-- --phase 1|2] [--results <jest.json>] [--out <file.md>]`
- * (API-100-23 AC1, API-100-33 AC1).
+ * `npm run parity:report [-- --phase 1|2|3] [--results <jest.json>] [--out <file.md>]`
+ * (API-100-23 AC1, API-100-33 AC1, API-100-38).
  *
  * Generates a phase's parity checklist: one line per SQL assertion of the phase's test files, each
  * mapped to the parity test that reproduces it and that test's result. Without `--results` it runs
@@ -24,7 +29,11 @@ import { parityTestName, paritySpecFile, sqlAssertionsOf } from '../support/sql-
  * - Phase 2: scrum28_accept_amendment.sql, scrum29_cancel_invite.sql,
  *   member_names_expired_invites.sql and the membership parts of membership_access_window.sql (its
  *   activation-trigger assertions and the remove / leave block). The `complete_profile_setup`
- *   assertions (and the setup owner row, L84) are deferred to API-100-36.
+ *   assertions (and the setup owner row, L84) are deferred to API-100-36 (completed in Phase 3).
+ * - Phase 3: the `complete_profile_setup` assertions (member_names_expired_invites.sql L137, L404,
+ *   L418, L458) and the setup owner row (membership_access_window.sql L84). It also checks EVERY
+ *   parity file of EVERY SQL test: no assertion may be missing, `it.todo`, `skip`, `only` or not
+ *   passing anywhere (the "zero todos" table).
  */
 
 type Result = 'passed' | 'failed' | 'pending' | 'todo' | 'skipped' | 'not run' | 'missing';
@@ -49,8 +58,10 @@ interface JestReport {
 /** How a phase treats one assertion: part of its gate, deferred to a story, or not its business. */
 type Scope = { gate: true } | { deferredTo: string } | null;
 
+type PhaseNumber = 1 | 2 | 3;
+
 interface Phase {
-  number: 1 | 2;
+  number: PhaseNumber;
   title: string;
   /** What the gate assertions are called in the summary ("incident", "circle and invite"). */
   noun: string;
@@ -85,7 +96,18 @@ const PHASE2_DEFERRED: Record<string, Record<number, string>> = {
   [MEMBERSHIP_FILE]: { 84: 'API-100-36 (owner row from complete setup)' },
 };
 
-const PHASES: Record<1 | 2, Phase> = {
+/** Phase 3 gate assertions: `complete_profile_setup` and the setup owner row (API-100-36). */
+const PHASE3_LINES: Record<string, Record<number, string>> = {
+  'member_names_expired_invites.sql': {
+    137: 'first setup: circle, owner row, contact invite',
+    404: 'setup re-run after decline',
+    418: 'setup re-run gives a usable invite',
+    458: 'setup re-run at 5/5 leaves the row',
+  },
+  [MEMBERSHIP_FILE]: { 84: 'owner row from setup has activated_at' },
+};
+
+const PHASES: Record<PhaseNumber, Phase> = {
   1: {
     number: 1,
     title: 'Phase 1 parity checklist (API-100-23 AC1)',
@@ -103,7 +125,8 @@ const PHASES: Record<1 | 2, Phase> = {
     deferredHeading: 'Not incident behaviour: membership-trigger assertions (Phase 2)',
     deferredText:
       'These `membership_access_window.sql` assertions check the `activated_at` trigger on ' +
-      'membership writes, which the API gets in Phase 2. They stay `it.todo` until the story named here.',
+      'membership writes, which the API got in Phase 2 (and the setup owner row, L84, in Phase 3). ' +
+      'They are proved by the story named here.',
   },
   2: {
     number: 2,
@@ -127,7 +150,16 @@ const PHASES: Record<1 | 2, Phase> = {
     deferredHeading: 'Deferred to API-100-36 (complete_profile_setup, Phase 3)',
     deferredText:
       'These assertions exercise `complete_profile_setup` (or the owner row it creates). They are ' +
-      'not circle and invite routes; they stay `it.todo` until API-100-36.',
+      'not circle and invite routes: API-100-36 completes them (Phase 3 checklist).',
+  },
+  3: {
+    number: 3,
+    title: 'Phase 3 parity checklist (API-100-38)',
+    noun: 'profile setup',
+    files: ['member_names_expired_invites.sql', MEMBERSHIP_FILE],
+    scope: (file, line) => (PHASE3_LINES[file]?.[line] ? { gate: true } : null),
+    deferredHeading: 'Deferred',
+    deferredText: 'Nothing is deferred: Phase 3 completes the last open parity assertions.',
   },
 };
 
@@ -204,7 +236,7 @@ const isGate = (line: Line) => line.deferredTo === undefined;
 const gateOk = (line: Line) => line.kind === 'it' && line.result === 'passed';
 const cell = (text: string) => text.replace(/\|/g, '\\|');
 
-function render(phase: Phase, lines: Line[], source: string): string {
+function render(phase: Phase, lines: Line[], source: string, all?: Line[]): string {
   const out: string[] = [];
   const noun = phase.noun[0].toUpperCase() + phase.noun.slice(1);
   out.push(`# ${phase.title}`);
@@ -215,6 +247,15 @@ function render(phase: Phase, lines: Line[], source: string): string {
       `from the SQL test files in \`db/baseline/tests/\` and the parity specs in \`test/parity/\` ` +
       `(results: ${source}). Do not edit by hand.`,
   );
+  if (phase.number === 3) {
+    out.push('');
+    out.push(
+      'Scope: the `complete_profile_setup` assertions of `member_names_expired_invites.sql` (L137, ' +
+        'L404, L418, L458), now through `POST /v1/me/profile/complete`, and the setup owner row of ' +
+        '`membership_access_window.sql` (L84). The other assertions of these files are in the Phase 1 ' +
+        'and Phase 2 checklists. The last section checks every parity file of every SQL test.',
+    );
+  }
   if (phase.number === 2) {
     out.push('');
     out.push(
@@ -229,17 +270,21 @@ function render(phase: Phase, lines: Line[], source: string): string {
   out.push('## Summary');
   out.push('');
   out.push(
-    `| SQL file | ${noun} assertions | Passing | Not passing | Deferred (${
-      phase.number === 1 ? 'Phase 2' : 'API-100-36'
-    }) |`,
+    `| SQL file | ${noun} assertions | Passing | Not passing | ${
+      phase.number === 3
+        ? 'Other phases'
+        : `Deferred (${phase.number === 1 ? 'Phase 2' : 'API-100-36'})`
+    } |`,
   );
   out.push('| --- | --- | --- | --- | --- |');
   for (const file of phase.files) {
     const own = lines.filter((line) => line.file === file);
     const gate = own.filter(isGate);
+    const others =
+      phase.number === 3 ? sqlAssertionsOf(file).length - gate.length : own.length - gate.length;
     out.push(
       `| \`${file}\` | ${gate.length} | ${gate.filter(gateOk).length} | ` +
-        `${gate.filter((l) => !gateOk(l)).length} | ${own.length - gate.length} |`,
+        `${gate.filter((l) => !gateOk(l)).length} | ${others} |`,
     );
   }
   out.push('');
@@ -254,24 +299,66 @@ function render(phase: Phase, lines: Line[], source: string): string {
     }
     out.push('');
   }
-  out.push(`## ${phase.deferredHeading}`);
-  out.push('');
-  out.push(phase.deferredText);
-  out.push('');
-  out.push('| File | Line | SQL assertion | Parity test | Declared as | Completed by |');
-  out.push('| --- | --- | --- | --- | --- | --- |');
-  for (const line of lines.filter((l) => !isGate(l))) {
-    out.push(
-      `| \`${line.file}\` | L${line.line} | ${cell(line.message)} | ${cell(line.test)} | ` +
-        `${line.kind} | ${line.deferredTo} |`,
-    );
+  if (phase.number !== 3) {
+    out.push(`## ${phase.deferredHeading}`);
+    out.push('');
+    out.push(phase.deferredText);
+    out.push('');
+    out.push('| File | Line | SQL assertion | Parity test | Declared as | Result | Completed by |');
+    out.push('| --- | --- | --- | --- | --- | --- | --- |');
+    for (const line of lines.filter((l) => !isGate(l))) {
+      out.push(
+        `| \`${line.file}\` | L${line.line} | ${cell(line.message)} | ${cell(line.test)} | ` +
+          `${line.kind} | ${line.result} | ${line.deferredTo} |`,
+      );
+    }
+    out.push('');
   }
-  out.push('');
+  if (all) {
+    out.push('## Every parity file (zero `it.todo` overall)');
+    out.push('');
+    out.push(
+      'Every assertion of every SQL test in `db/baseline/tests/`, whatever its phase: its parity test ' +
+        'must exist, be a plain `it` (no `it.todo`, `skip` or `only`) and pass.',
+    );
+    out.push('');
+    out.push(
+      '| SQL file | Assertions | Plain `it` | `it.todo` | `skip` / `only` | Missing | Passing |',
+    );
+    out.push('| --- | --- | --- | --- | --- | --- | --- |');
+    for (const file of sqlTestFiles()) {
+      const own = all.filter((l) => l.file === file);
+      const count = (kind: string) => own.filter((l) => l.kind === kind).length;
+      out.push(
+        `| \`${file}\` | ${own.length} | ${count('it')} | ${count('todo')} | ` +
+          `${count('skip') + count('only')} | ${count('missing')} | ${own.filter(gateOk).length} |`,
+      );
+    }
+    const total = (pred: (l: Line) => boolean) => all.filter(pred).length;
+    out.push(
+      `| **All** | ${all.length} | ${total((l) => l.kind === 'it')} | ` +
+        `${total((l) => l.kind === 'todo')} | ` +
+        `${total((l) => l.kind === 'skip' || l.kind === 'only')} | ` +
+        `${total((l) => l.kind === 'missing')} | ${total(gateOk)} |`,
+    );
+    out.push('');
+  }
   return out.join('\n');
+}
+
+/** Every assertion of every SQL test file, as a gate line (Phase 3's zero-todo check). */
+function everyAssertion(results: Map<string, string>): Line[] {
+  const everything: Phase = {
+    ...PHASES[3],
+    files: sqlTestFiles(),
+    scope: () => ({ gate: true }),
+  };
+  return checklist(everything, results);
 }
 
 /** The deferred lines a phase expects to see (so a renumbered SQL file is noticed). */
 function expectedDeferred(phase: Phase): { file: string; line: number }[] {
+  if (phase.number === 3) return [];
   if (phase.number === 1) {
     return Object.keys(MEMBERSHIP_TRIGGER_LINES).map((line) => ({
       file: MEMBERSHIP_FILE,
@@ -285,22 +372,29 @@ function expectedDeferred(phase: Phase): { file: string; line: number }[] {
 
 function main(): void {
   const phaseArg = argValue('--phase') ?? '1';
-  if (phaseArg !== '1' && phaseArg !== '2') {
-    process.stderr.write(`Unknown --phase ${phaseArg} (1 or 2)\n`);
+  if (phaseArg !== '1' && phaseArg !== '2' && phaseArg !== '3') {
+    process.stderr.write(`Unknown --phase ${phaseArg} (1, 2 or 3)\n`);
     process.exit(2);
   }
-  const phase = PHASES[Number(phaseArg) as 1 | 2];
+  const phase = PHASES[Number(phaseArg) as PhaseNumber];
   const resultsFile = argValue('--results');
   const outFile = argValue('--out');
   const report = resultsFile
     ? (JSON.parse(readFileSync(resultsFile, 'utf8')) as JestReport)
     : runParitySuite();
-  const lines = checklist(phase, resultsByTest(report));
-  const markdown = render(phase, lines, resultsFile ? `\`${basename(resultsFile)}\`` : 'this run');
+  const results = resultsByTest(report);
+  const lines = checklist(phase, results);
+  const all = phase.number === 3 ? everyAssertion(results) : undefined;
+  const markdown = render(
+    phase,
+    lines,
+    resultsFile ? `\`${basename(resultsFile)}\`` : 'this run',
+    all,
+  );
   process.stdout.write(`${markdown}\n`);
   if (outFile) writeFileSync(outFile, `${markdown}\n`);
 
-  const failing = lines.filter((line) => isGate(line) && !gateOk(line));
+  const failing = [...lines, ...(all ?? [])].filter((line) => isGate(line) && !gateOk(line));
   const missingDeferred = lines.filter((line) => !isGate(line) && line.kind === 'missing');
   const deferredSeen = new Set(lines.filter((l) => !isGate(l)).map((l) => `${l.file}:${l.line}`));
   const deferredGone = expectedDeferred(phase).filter(
@@ -325,6 +419,12 @@ function main(): void {
     `Phase ${phase.number} parity checklist: ${gateCount} ${phase.noun} assertions, all passing, ` +
       `no it.todo; ${deferredSeen.size} assertions deferred (listed separately).\n`,
   );
+  if (all) {
+    process.stderr.write(
+      `Every parity file: ${all.length} assertions in ${sqlTestFiles().length} SQL tests, all ` +
+        `plain it and passing; zero it.todo.\n`,
+    );
+  }
 }
 
 main();
