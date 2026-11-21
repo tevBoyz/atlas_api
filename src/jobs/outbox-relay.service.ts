@@ -11,6 +11,7 @@ import type { Logger } from 'pino';
 
 import { ApiConfigService } from '../config';
 import { DATABASE_CONNECT_TIMEOUT_MS, DATABASE_IDLE_TIMEOUT_MS } from '../db/database.service';
+import { guardPoolErrors } from '../db/pool-errors';
 import { ROOT_LOGGER } from '../observability/logger';
 import { JobQueues } from './job-queues.service';
 import { OUTBOX_JOB_OPTIONS, OUTBOX_QUEUE, type OutboxJobData } from './jobs.constants';
@@ -89,8 +90,9 @@ export class OutboxRelay implements OnApplicationBootstrap, OnModuleDestroy {
       idleTimeoutMillis: DATABASE_IDLE_TIMEOUT_MS,
       application_name: 'atlas-outbox-relay',
     });
-    // An idle connection lost (database restart) must not crash the process; the sweep logs it.
-    this.pool.on('error', () => undefined);
+    // A connection lost (database restart, pooler reset), idle or mid-sweep, must not crash the
+    // process: the client is logged and discarded; a failed sweep is retried on the next one.
+    guardPoolErrors(this.pool, logger, 'outbox-relay');
     this.db = drizzle(this.pool);
   }
 

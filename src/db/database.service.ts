@@ -6,6 +6,7 @@ import type { Logger } from 'pino';
 import { ApiConfigService } from '../config';
 import { ROOT_LOGGER } from '../observability/logger';
 import { DataStoreNotConfiguredError } from './data-store-errors';
+import { guardPoolErrors } from './pool-errors';
 import * as schema from './schema';
 
 export type Database = NodePgDatabase<typeof schema>;
@@ -39,8 +40,9 @@ export class DatabaseService implements OnModuleDestroy {
       idleTimeoutMillis: DATABASE_IDLE_TIMEOUT_MS,
       application_name: 'atlas-api',
     });
-    // An idle client losing its connection (database restart, network) must not crash the process.
-    this.pool.on('error', (err) => logger.warn({ err }, 'postgres idle connection error'));
+    // A connection lost (database restart, network, pooler reset), idle or checked out, must not
+    // crash the process: the client is logged and discarded, its query fails normally.
+    guardPoolErrors(this.pool, logger, 'api');
     this.database = drizzle(this.pool, { schema });
   }
 

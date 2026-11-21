@@ -8,10 +8,18 @@ lockout parity with the SQL functions `auth-login`, Google / Apple `auth-oauth`,
 `auth-sessions`, reset `auth-password-reset`, the user migration `auth-user-migration`, the exchange and
 token metrics `auth-exchange`, the §8 checklist `test/int/phase6-flows.int-spec.ts`, and the load check
 `npm run load:auth`). In the structure of `docs/phase1_handoff.md` to `docs/phase5_handoff.md`.
-Decisions D27-D36 (epic §18, spec §16) are proposed with this phase.
+Decisions D27-D36 (epic §18, spec §16) were approved by Dawit on 2026-11-21. Stage 7.1 (decisions
+D37-D40, approved) amends this note: new sign-ups work end to end (D37), password change A16 (D38),
+phone change A18 (D39) and Supabase tokens off by default (D40).
 
-Nothing here changes the app today: the app keeps Supabase Auth until the single switch. During the
-dual-token window the API accepts both Supabase access tokens and its own (`SUPABASE_JWT_ACCEPT`).
+Nothing here changes the app today: the app keeps Supabase Auth until the single switch. Since D40 the
+API accepts only its own access tokens by default (`SUPABASE_JWT_ACCEPT` is false); Supabase tokens
+work only with an explicit `SUPABASE_JWT_ACCEPT=true`.
+
+**New sign-ups work end to end (D37).** Since migration 0010 the foreign keys of `profiles.id`,
+`safety_circle_members.user_id` and `user_devices.user_id` point at `public.users`, so an account made
+by API sign-up or by a first Google / Apple sign-in can complete its profile, join circles and register
+its devices. The app must NOT work around the old D36 limitation.
 
 ## 1. `AtlasAuth` / `SessionStore` method to API call
 
@@ -40,7 +48,13 @@ token. Public routes need no `Authorization`; the others take `Authorization: Be
 | `signOut(scope: local)` (§8.7 fallback) | `POST /v1/auth/logout` (`signOut`) | - | 204 | `auth:not_authenticated` (401) |
 | `auth.getUser()` / refresh user | `GET /v1/me` (`getCurrentUser`) | - | 200 User | `auth:not_authenticated` (401) |
 | (new) device list in Settings | `GET /v1/me/sessions` (`listMySessions`), `DELETE /v1/me/sessions/{session_id}` (`endMySession`) | - | 200 `[{id, platform, device_name, created_at, last_seen_at, current}]` / 204 | `auth:session_not_found` (404) |
-| (switch only) | `POST /v1/auth/exchange` (`exchangeSupabaseSession`), bearer = the **Supabase** access token | `{device}` | 200 Session | `auth:exchange_not_allowed` (403), `auth:session_already_exchanged` (409), `auth:not_authenticated` (401) |
+| `updateUser(password)` while signed in (A16, D38) | `PUT /v1/auth/password` (`changePassword`) | `{current_password, new_password}` | 204; the user's OTHER devices are signed out (reason `password_change`), this session keeps working | `auth:invalid_credentials` (401, `details.field: current_password`: a wrong current password, NOT a dead session, do not sign out), `validation:invalid_request` / `auth:weak_password` / `auth:same_password` (422), `rate_limit:exceeded` (429, 10 per user per 15 minutes) |
+| `updateUser(phone)` (A18, D39) | `PUT /v1/me/phone` (`changePhone`) | `{phone}` | 202 `{verification: {channel: "phone", expires_in_seconds: 600, resends_remaining}}`; calling it again is the resend; a number another account holds gets the same 202 but no code | `auth:invalid_phone` (422), `auth:otp_resend_limit` (429, 4 codes per number per 15 minutes), `auth:sms_unavailable` (503), `rate_limit:exceeded` (429, per IP as the OTP routes) |
+| `verifyOTP(phone_change)` (A18, D39) | `POST /v1/me/phone/verify` (`verifyPhoneChange`) | `{phone, code}` | 200 `{user}`; only now the phone changes, confirmed | `auth:invalid_phone` (422), `auth:otp_invalid` (400, `details.attempts_remaining`), `auth:otp_invalidated` (423, the 5th wrong code, until a resend), `auth:otp_expired` (410), `auth:sms_unavailable` (503), `rate_limit:exceeded` (429, per IP) |
+| (not used, D40) | `POST /v1/auth/exchange` (`exchangeSupabaseSession`), bearer = the **Supabase** access token | `{device}` | 200 Session | `auth:exchange_not_allowed` (403), `auth:session_already_exchanged` (409), `auth:not_authenticated` (401) |
+
+**Twilio hold (A18 and OTP).** Until the hold is lifted, codes come from the fake verifier (read them in
+the API log or the test mailbox); real SMS needs the Twilio adapter (section 6).
 
 **`AtlasAuth` / `SessionStore` replacement.** Store the Session in secure storage (the refresh token is
 a credential). Send `access_token` on every call; refresh shortly before `access_token_expires_at` (15
@@ -50,10 +64,9 @@ the session: `auth:refresh_token_reused`). Serialize refreshes (one at a time pe
 not refreshed for 7 days ends (D7): `auth:session_expired` → the session-expired path of §8.8.
 Sign-in flows map to the table above; after every sign-in call U1 (`PUT /v1/me/devices/current`).
 
-**The switch (D8).** On the first start of the API build, a user who still has a Supabase session calls
-`POST /v1/auth/exchange` once with the Supabase access token (refresh it first if needed), stores the
-returned Session and drops the Supabase one. 409 `auth:session_already_exchanged` (a lost answer) or
-401 → show Sign In. The exchange works only while `SUPABASE_JWT_ACCEPT` is on.
+**The switch (D8, amended by D40).** There are no Supabase sessions to exchange: on the first start of
+the API build the app drops any stored Supabase session and shows Sign In. The app must not rely on
+`POST /v1/auth/exchange`; it works only with an explicit `SUPABASE_JWT_ACCEPT=true`.
 
 **Deep links (§8.9).** The scheme is kept: `io.supabase.atlasmobile://login-callback/?type=<t>&token=<x>`
 with `type` = `signup` (verify the email: `POST /v1/auth/email/verify`), `magiclink` (the same call),
@@ -83,7 +96,7 @@ with your password"), `auth:session_expired` / `auth:refresh_token_reused` (the 
 | Failures carry the status | 401 `details` = LockoutStatus; the 5th failure answers 423 | Show "N attempts left" / the lock time from `details`. |
 | OTP limits on the server | counters per number in Redis | Remove the SharedPreferences limit logic; show the server's numbers. |
 | Phone OTP for any account number | `sign_in` sends only to a number of an account; no account is created by OTP | Phone sign-up still goes through `POST /v1/auth/signup`. |
-| A taken phone at sign-up | kept in `metadata.signup_phone`, not on the account | Offer "verify phone" later (A18 `PUT /v1/me/phone` is not built in Epic 100). |
+| A taken phone at sign-up | kept in `metadata.signup_phone`, not on the account | Offer "verify phone": A18 is built (stage 7.1c, D39), `PUT /v1/me/phone` then `POST /v1/me/phone/verify`. |
 | Refresh rotation is strict | no 10 s reuse grace (Supabase had one) | Never retry a refresh with the same token after a timeout; sign out on `auth:refresh_token_reused` (D32). |
 | Password reset | every other session is revoked (D33) | Tell the user other devices are signed out. |
 
@@ -126,8 +139,8 @@ The lockout bursts (240 argon2 checks in one instant) are timed for correctness,
 - Refresh tokens are opaque (43 characters), stored only as SHA-256; 30-day lifetime, single use.
 - The guard reads the session row of every own token: a revoked session (logout, reuse, reset,
   delete) is refused at once, on REST and on the realtime handshake.
-- Dual-token window: Supabase tokens are accepted while `SUPABASE_JWT_ACCEPT=true` and before
-  `SUPABASE_JWT_ACCEPT_UNTIL`. `npm run -s auth:token-usage` shows the share of Supabase tokens per
+- Supabase tokens are off by default (D40); they are accepted only with an explicit
+  `SUPABASE_JWT_ACCEPT=true` and before `SUPABASE_JWT_ACCEPT_UNTIL`. `npm run -s auth:token-usage` shows the share of Supabase tokens per
   day (requests and distinct users); each instance also logs `token usage` every 15 minutes.
 
 ## 6. Checks before the switch
@@ -137,10 +150,9 @@ The lockout bursts (240 argon2 checks in one instant) are timed for correctness,
 - [ ] **Dry run on atlas_staging reviewed by Dawit**: `npm run auth:migrate-users -- --dry-run
       --allow-remote` (counts and conflicts only); then the real run, and again right after Supabase
       sign-ups are closed (accounts created later move just in time at sign-in anyway).
-- [ ] **API-100-62 repoints the foreign keys before the app switches** (D36): an account created by
-      API sign-up or by a first Google/Apple sign-in has no `auth.users` row, so device registration,
-      profile and circle writes refuse it until `profiles.id`, `safety_circle_members.user_id` and
-      `user_devices.user_id` point at `users`.
+- [x] **Foreign keys repointed** (D36, done by D37: migration 0010, stage 7.1a): `profiles.id`,
+      `safety_circle_members.user_id` and `user_devices.user_id` point at `users`, so new sign-ups and
+      first Google/Apple sign-ins write their profile, circle and device rows.
 - [ ] Signing keys in the host's secret store (`AUTH_JWT_KEYS`, `AUTH_JWT_ACTIVE_KID`; production
       refuses to start without them); `AUTH_TEST_MAILBOX_ENABLED` unset (production refuses it).
 - [ ] Google client ids (`GOOGLE_CLIENT_IDS`: Web, Android, iOS); Apple stays off
@@ -148,8 +160,9 @@ The lockout bursts (240 argon2 checks in one instant) are timed for correctness,
 - [ ] Twilio hold: OTP codes need `CHANNEL_SMS_ENABLED=true`, the Twilio adapter (hold lifted) and
       `TWILIO_VERIFY_SERVICE_SID`; until then OTP answers 503 `auth:sms_unavailable`.
 - [ ] Migrations 0008 and 0009 applied (`npm run db:migrate`).
-- [ ] After the switch: watch `auth:token-usage`; set `SUPABASE_JWT_ACCEPT=false` (or the date) when
-      the Supabase share reaches zero; then API-100-62 disables Supabase Auth.
+- [ ] After the switch: nothing to set for Supabase tokens (false by default since D40; leave
+      `SUPABASE_JWT_ACCEPT` unset); `auth:token-usage` should show no Supabase share; then API-100-62
+      disables Supabase Auth.
 - [ ] App: strict refresh handling (section 1), the D5a lowercase check, the D5b neutral sign-up copy.
 
 ## 7. Known differences from today (each decided)
@@ -162,5 +175,5 @@ The lockout bursts (240 argon2 checks in one instant) are timed for correctness,
 | OTP limits enforced on the server; OTP never creates an account. | **D29** |
 | Google with no client ids / Apple off answer 503 `auth:provider_disabled`; key server down 503 `auth:provider_unavailable`. | **D31** |
 | No refresh reuse grace; idle 7 days ends a session; reset revokes the other sessions. | D7, **D32**, **D33** |
-| New sign-ups and first social sign-ins have no `auth.users` row until Phase 7. | **D36** |
+| New sign-ups and first social sign-ins had no `auth.users` row (resolved: the foreign keys point at `users`, migration 0010). | D36, resolved by **D37** |
 | `login_lockouts` stays the counter store (shared with the SQL functions and the Supabase hook during the window). | **D30** |
