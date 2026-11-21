@@ -18,6 +18,7 @@ import {
   type InvitePreviewJson,
   type LockedInviteRow,
   type PreviewParts,
+  type RowLockMode,
 } from './invitee-invites.repository';
 import type { InviteTransaction } from './owner-invites.repository';
 import {
@@ -33,6 +34,10 @@ type InviteeOperation =
   | 'list_my_circle_invites';
 
 const UNIQUE_VIOLATION = '23505';
+/** SQLSTATE of `FOR UPDATE NOWAIT` meeting a row another transaction holds. */
+const LOCK_NOT_AVAILABLE = '55P03';
+/** How long {@link InviteeInvitesService.lockRowsWithoutWaiting} retries before it waits normally. */
+const ROW_LOCK_PATIENCE_MS = 5_000;
 
 /** A unique-index clash (SQLSTATE 23505) anywhere in the error's cause chain. */
 function isUniqueViolation(error: unknown): boolean {
@@ -50,9 +55,23 @@ function sqlAnd(a: boolean, b: boolean | null): boolean | null {
  * preview with its claim (AC2-5), accept and decline (API-100-30). Each request is one transaction
  * (read committed, like the RPC) with the SQL functions' checks in their order and their locks in
  * their order:
- * - accept: read the token's circle, lock the `safety_circles` row, then the member row (the order
- *   of the owner invite writes, so they cannot deadlock with each other);
- * - preview and decline: the member row only (no circle lock, as the SQL).
+ * - first, in every invitee write (preview, accept, decline, the incoming-list claim), the caller's
+ *   invitee advisory lock (D41, `InviteeInvitesRepository.lockCaller`): one caller's invitee
+ *   transactions run one after the other;
+ * - accept and preview: read the token's circle, lock the `safety_circles` row, then, in one
+ *   `ctid`-ordered statement, the token's member row, the caller's other non-active rows of that
+ *   circle and the circle's unclaimed pending rows (`lockInviteForClaim`; D18 order: circle before
+ *   member rows, as the owner invite writes, so they cannot deadlock with each other). The SQL
+ *   preview locks the member row only; the API's also takes the circle because its claim may
+ *   release rows (D41). The multi-row member locks (this one and the incoming-list claim's) never
+ *   wait while holding rows (`lockRowsWithoutWaiting`, `FOR UPDATE NOWAIT` with retry);
+ * - decline: the member row only (no circle lock, as the SQL).
+ * D41 (approved by Dawit 2026-11-21, a deliberate divergence from the SQL functions, which answer
+ * 409 `duplicate_membership` here): before the preview claim and the accept write, the caller's
+ * FINISHED rows of the circle (declined, canceled, or expired) are released (`user_id = null`, the
+ * rest kept as history) in the same transaction, so an old decline or cancel no longer blocks a new
+ * invite. A live row is never released: `active` → `already_member`, a still-valid pending row
+ * claimed by the caller → `duplicate_membership`, as before. The owner row is never touched.
  * Every check after a lock runs in a new statement, so a writer that committed while this one
  * waited is seen, as in the plpgsql functions. Accept is the only write in the API that makes a
  * member row `active` (`membership.activate`, spec §4.4 "known bypass"); `activated_at` is left to
@@ -98,7 +117,8 @@ export class InviteeInvitesService {
    * `consumed` (nothing shown); `canceled` → row ids only if recipient; `expired` → owner and row
    * only if recipient; caller active in the circle via another row → `already_member`; pending and
    * recipient → `circle_full` when other slot holders + 1 > 5 (claims when the caller has no other
-   * row there) else `pending` (claims; a unique clash is 409 `duplicate_membership`); else the
+   * row there) else `pending` (claims after releasing the caller's finished rows of the circle,
+   * D41; a unique clash with a live row is 409 `duplicate_membership`); else the
    * lookup status with nothing shown. `claimed` follows the SQL's three-valued booleans: it is
    * `null` where the function's expression is null (e.g. the owner previewing an unclaimed invite).
    */
@@ -106,10 +126,21 @@ export class InviteeInvitesService {
     const operation = 'preview_circle_invite';
     return this.run(operation, async (tx) => {
       await this.repository.useUtcTimestamps(tx);
+      await this.repository.lockCaller(tx, user.id);
       const authPhone = await this.repository.authPhone(tx, user.id);
       const raw = pgTrim(token);
       if (raw.length === 0) return this.repository.previewNotFound(tx);
-      const row = await this.repository.lockByToken(tx, raw, user.id);
+      // D18 / D41: the circle first, then (one ctid-ordered statement) the token's row, the
+      // caller's other non-active rows of that circle (the claim may release them) and the
+      // circle's unclaimed pending rows.
+      const circleId = await this.repository.circleOfToken(tx, raw);
+      if (!circleId) return this.repository.previewNotFound(tx);
+      if (!(await this.repository.lockCircle(tx, circleId))) {
+        return this.repository.previewNotFound(tx);
+      }
+      const row = await this.lockRowsWithoutWaiting(tx, (sp, mode) =>
+        this.repository.lockInviteForClaim(sp, circleId, raw, user.id, mode),
+      );
       if (!row) return this.repository.previewNotFound(tx);
 
       const checks = await this.repository.checks(tx, row.id, user.id, authPhone);
@@ -121,17 +152,20 @@ export class InviteeInvitesService {
   /**
    * `accept_circle_invite(token)` (final: baseline 20261117120000), in its order: blank → 404
    * `not_found`; the token's circle (unlocked read) → `not_found`; lock the circle row →
-   * `not_found`; lock the member row by token → `not_found` (a token rotated meanwhile); already
+   * `not_found`; lock the member row by token (with the caller's other non-active rows of the
+   * circle and its unclaimed pending rows, D41) → `not_found` (a token rotated meanwhile); already
    * active for the caller → the same 200 body, no write; lookup status not `pending` → `expired`
    * (410) / `consumed` / `canceled` / `not_found`; not the recipient → 403 `not_recipient`; caller
    * owns the circle → 409 `own_circle`; caller active there via another row → 409 `already_member`;
-   * other slot holders + 1 > 5 → 409 `circle_full` (no write); then the write (unique clash → 409
-   * `duplicate_membership`).
+   * other slot holders + 1 > 5 → 409 `circle_full` (no write); release the caller's finished rows of
+   * the circle (D41); then the write (unique clash with a live row → 409 `duplicate_membership`).
+   * The audit detail gets `released_finished_rows` when D41 released any.
    */
   accept(user: AuthenticatedUser, token: string): Promise<InviteDecisionJson> {
     const operation = 'accept_circle_invite';
     return this.run(operation, async (tx) => {
       await this.repository.useUtcTimestamps(tx);
+      await this.repository.lockCaller(tx, user.id);
       const authPhone = await this.repository.authPhone(tx, user.id);
       const raw = pgTrim(token);
       if (raw.length === 0) throw new DomainError(`${operation}:not_found`);
@@ -141,7 +175,9 @@ export class InviteeInvitesService {
       if (!(await this.repository.lockCircle(tx, circleId))) {
         throw new DomainError(`${operation}:not_found`);
       }
-      const row = await this.repository.lockByToken(tx, raw, user.id);
+      const row = await this.lockRowsWithoutWaiting(tx, (sp, mode) =>
+        this.repository.lockInviteForClaim(sp, circleId, raw, user.id, mode),
+      );
       if (!row) throw new DomainError(`${operation}:not_found`);
 
       if (row.active_for_caller) return this.repository.activeBody(tx, row.id);
@@ -155,6 +191,13 @@ export class InviteeInvitesService {
         throw new DomainError(`${operation}:circle_full`);
       }
 
+      // D41: the caller's finished rows of this circle (declined, canceled, expired) no longer
+      // block the write; a live row still does (`duplicate_membership` below).
+      const released =
+        checks.mine === true
+          ? 0
+          : await this.repository.releaseFinishedRows(tx, row.circle_id, user.id, row.id);
+
       let body: InviteDecisionJson | undefined;
       try {
         body = await tx.transaction((sp) => this.repository.acceptWrite(sp, row.id, user.id));
@@ -164,7 +207,14 @@ export class InviteeInvitesService {
       }
       // `membership.activate` matched no row: unreachable (only member rows can be pending).
       if (!body) throw new Error(`${operation}: membership.activate refused the write`);
-      await this.recordAudit(tx, user, 'circle.invite.accepted', row, checks.lookup_status);
+      await this.recordAudit(
+        tx,
+        user,
+        'circle.invite.accepted',
+        row,
+        checks.lookup_status,
+        released > 0 ? { released_finished_rows: released } : {},
+      );
       return body;
     });
   }
@@ -181,6 +231,7 @@ export class InviteeInvitesService {
     const operation = 'decline_circle_invite';
     return this.run(operation, async (tx) => {
       await this.repository.useUtcTimestamps(tx);
+      await this.repository.lockCaller(tx, user.id);
       const authPhone = await this.repository.authPhone(tx, user.id);
       const raw = pgTrim(token);
       if (raw.length === 0) throw new DomainError(`${operation}:not_found`);
@@ -227,8 +278,11 @@ export class InviteeInvitesService {
   listIncoming(user: AuthenticatedUser): Promise<IncomingInviteJson[]> {
     return this.run('list_my_circle_invites', async (tx) => {
       await this.repository.useUtcTimestamps(tx);
+      await this.repository.lockCaller(tx, user.id);
       const authPhone = await this.repository.authPhone(tx, user.id);
-      const candidates = await this.repository.lockClaimCandidates(tx, user.id, authPhone);
+      const candidates = await this.lockRowsWithoutWaiting(tx, (sp, mode) =>
+        this.repository.lockClaimCandidates(sp, user.id, authPhone, mode),
+      );
       for (const memberId of candidates) {
         const checks = await this.repository.checks(tx, memberId, user.id, authPhone);
         if (checks.lookup_status !== 'pending') continue;
@@ -317,6 +371,9 @@ export class InviteeInvitesService {
         return { status: 'circle_full', showOwner: true, includeRow: true, claimed, recipientOk };
       }
       if (row.unclaimed) {
+        // D41: release the caller's finished rows of this circle first (same transaction, the
+        // circle and those rows already locked); a live row still clashes below.
+        await this.repository.releaseFinishedRows(tx, row.circle_id, user.id, row.id);
         if (!(await this.claimInSavepoint(tx, row.id, user.id))) {
           throw new DomainError('preview_circle_invite:duplicate_membership');
         }
@@ -324,6 +381,35 @@ export class InviteeInvitesService {
       return { status: 'pending', showOwner: true, includeRow: true, claimed: true, recipientOk };
     }
     return { status: st, showOwner: false, includeRow: false, claimed: false, recipientOk };
+  }
+
+  /**
+   * D41: takes a multi-row member lock (`lock`, one statement) without ever waiting for one member
+   * row while holding another. Each attempt runs `FOR UPDATE NOWAIT` in a savepoint; a row held by
+   * another transaction (55P03) rolls the savepoint back, which releases every row the attempt had
+   * locked, and the attempt is repeated after a short, growing, jittered pause (the circle and the
+   * caller's advisory lock stay held). So this transaction is never part of a member-row wait cycle
+   * with the SQL claim loop (`list_my_circle_invites`: sequential scan, locks as it goes), whose
+   * order a concurrent UPDATE can make differ from the `ctid` order. After
+   * {@link ROW_LOCK_PATIENCE_MS} of retries (only a transaction holding a member row that long),
+   * the last attempt waits normally.
+   */
+  private async lockRowsWithoutWaiting<T>(
+    tx: InviteTransaction,
+    lock: (sp: InviteTransaction, mode: RowLockMode) => Promise<T>,
+  ): Promise<T> {
+    const deadline = Date.now() + ROW_LOCK_PATIENCE_MS;
+    let pause = 1;
+    for (;;) {
+      try {
+        return await tx.transaction((sp) => lock(sp, 'nowait'));
+      } catch (error) {
+        if (sqlStateOf(error) !== LOCK_NOT_AVAILABLE) throw error;
+      }
+      if (Date.now() >= deadline) return lock(tx, 'wait');
+      await new Promise((resolve) => setTimeout(resolve, pause + Math.random() * pause));
+      pause = Math.min(pause * 2, 25);
+    }
   }
 
   /** The claim in a savepoint: true when written, false on a unique clash (rolled back). */

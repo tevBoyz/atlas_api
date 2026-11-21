@@ -69,6 +69,21 @@ interface Phase {
   scope(file: string, line: number): Scope;
   deferredHeading: string;
   deferredText: string;
+  /** Deliberate, decided divergences from the SQL functions in this phase's area (listed, never hidden). */
+  divergences?: readonly Divergence[];
+}
+
+/**
+ * A decided case where the API answers differently from the SQL function on purpose. No SQL test
+ * assertion covers it (the parity suite stays green with the SQL answer unchanged); the SQL answer
+ * is kept on record by the named integration test, next to the API's.
+ */
+interface Divergence {
+  decision: string;
+  case: string;
+  sql: string;
+  api: string;
+  provedBy: string;
 }
 
 const MEMBERSHIP_FILE = 'membership_access_window.sql';
@@ -151,6 +166,26 @@ const PHASES: Record<PhaseNumber, Phase> = {
     deferredText:
       'These assertions exercise `complete_profile_setup` (or the owner row it creates). They are ' +
       'not circle and invite routes: API-100-36 completes them (Phase 3 checklist).',
+    divergences: [
+      {
+        decision: 'D41 (approved by Dawit 2026-11-21)',
+        case:
+          'Preview or accept of a new invite by a user who holds a FINISHED row of the same circle ' +
+          '(declined; canceled after their claim; or an expired pending row they claimed).',
+        sql:
+          '409 `preview_circle_invite:duplicate_membership` / ' +
+          '`accept_circle_invite:duplicate_membership` (the old row keeps `user_id`).',
+        api:
+          'Releases the finished row (`user_id = null`, the rest kept as history) and claims / ' +
+          'accepts the new invite, in one transaction (caller lock, circle, then member rows with ' +
+          '`FOR UPDATE NOWAIT` and retry). ' +
+          'Live rows unchanged: `active` → `already_member`; a still-valid claimed pending row → ' +
+          '`duplicate_membership`.',
+        provedBy:
+          '`test/int/invites-lookup-preview.int-spec.ts` ("D41 divergence", SQL answer asserted), ' +
+          '`test/int/invites-reinvite-d41.int-spec.ts` (SQL answer asserted; flows and races)',
+      },
+    ],
   },
   3: {
     number: 3,
@@ -310,6 +345,23 @@ function render(phase: Phase, lines: Line[], source: string, all?: Line[]): stri
       out.push(
         `| \`${line.file}\` | L${line.line} | ${cell(line.message)} | ${cell(line.test)} | ` +
           `${line.kind} | ${line.result} | ${line.deferredTo} |`,
+      );
+    }
+    out.push('');
+  }
+  if (phase.divergences && phase.divergences.length > 0) {
+    out.push('## Deliberate divergences from the SQL (decided)');
+    out.push('');
+    out.push(
+      'No SQL test assertion covers these cases, so no assertion above changed: each is listed ' +
+        'here, and the SQL answer is kept on record next to the API answer by the named test.',
+    );
+    out.push('');
+    out.push('| Decision | Case | SQL function | API | Proved by |');
+    out.push('| --- | --- | --- | --- | --- |');
+    for (const d of phase.divergences) {
+      out.push(
+        `| ${cell(d.decision)} | ${cell(d.case)} | ${cell(d.sql)} | ${cell(d.api)} | ${cell(d.provedBy)} |`,
       );
     }
     out.push('');

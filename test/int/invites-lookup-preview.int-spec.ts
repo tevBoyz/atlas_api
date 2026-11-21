@@ -17,6 +17,7 @@ import {
   lookupInvite,
   previewInvite,
   sqlAs,
+  sqlRolledBack,
 } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
@@ -562,20 +563,47 @@ describe('invite lookup and preview (API-100-29)', () => {
       });
     });
 
-    it('duplicate_membership: a claim that clashes with the caller’s other row is 409, nothing written', async () => {
+    it('duplicate_membership: a claim that clashes with the caller’s other LIVE row is 409, nothing written', async () => {
       const { circle } = await ownerWithCircle();
       const dan = await createUser(client);
-      // Dan already holds a (declined) row of this circle; a new link invite cannot be claimed.
-      await insertMember(client, circle.id, {
-        status: 'declined',
-        canceled: true,
-        userId: dan.id,
-      });
+      // Dan already holds a still-valid pending row of this circle (two live invites): the new
+      // link invite cannot be claimed, by the SQL nor by the API (D41 releases finished rows only).
+      const live = await insertMember(client, circle.id, { userId: dan.id, name: 'Claimed' });
+      const liveBefore = await memberRow(client, live.id);
       const link = await insertMember(client, circle.id);
       const { reply } = await compare(dan, link.token, [circle.id]);
       expect(reply.statusCode).toBe(409);
       expect(errorOf(reply).code).toBe('preview_circle_invite:duplicate_membership');
       expect((await memberRow(client, link.id)).user_id).toBeNull();
+      expect(await memberRow(client, live.id)).toEqual(liveBefore);
+    });
+
+    it('D41 divergence: the caller’s DECLINED row no longer blocks the claim (SQL still 409, API 200)', async () => {
+      const { circle } = await ownerWithCircle();
+      const dan = await createUser(client);
+      // Dan already holds a (declined) row of this circle.
+      const declined = await insertMember(client, circle.id, {
+        status: 'declined',
+        canceled: true,
+        userId: dan.id,
+      });
+      const link = await insertMember(client, circle.id);
+      // The SQL function is unchanged and still refuses this case (parity assertion kept) ...
+      const sqlSide = await sqlRolledBack(client, dan.id, 'public.preview_circle_invite($1)', [
+        link.token,
+      ]);
+      expect(sqlSide.error).toBe('preview_circle_invite:duplicate_membership');
+      expect((await memberRow(client, link.id)).user_id).toBeNull();
+      // ... the API deliberately diverges (D41, approved by Dawit 2026-11-21): it releases the
+      // finished row and claims the new one.
+      const reply = await previewInvite(app, dan.id, link.token);
+      expect(reply.statusCode).toBe(200);
+      expect(reply.json<Body>()).toMatchObject({ status: 'pending', claimed: true });
+      expect((await memberRow(client, link.id)).user_id).toBe(dan.id);
+      expect(await memberRow(client, declined.id)).toMatchObject({
+        status: 'declined',
+        user_id: null,
+      });
     });
 
     it('owner_avatar_url: the owner’s public avatar URL; null without a photo; http(s) kept', async () => {

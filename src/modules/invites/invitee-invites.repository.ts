@@ -140,6 +140,13 @@ function incomingInviteMatchSql(callerId: string, authPhone: string | null): SQL
      ))`;
 }
 
+/**
+ * Advisory-lock namespace of the invitee writes of one user (`pg_advisory_xact_lock(ns,
+ * hashtext(user_id))`, D41): the API's preview, accept, decline and incoming-list claim of one
+ * caller run one after the other. A hash collision only serializes two users' calls.
+ */
+const INVITEE_CALLER_LOCK_NAMESPACE = 4402;
+
 const NOT_FOUND_LOOKUP = sql`jsonb_build_object('status', 'not_found', 'invite_expires_at', null)`;
 
 const NOT_FOUND_PREVIEW = sql`jsonb_build_object(
@@ -156,8 +163,11 @@ const NOT_FOUND_PREVIEW = sql`jsonb_build_object(
 
 /**
  * The SQL of the invitee's side of an invitation (API-100-29/30, spec §7.3): lookup, preview (with
- * its claim), accept and decline. Lock order is the SQL functions': accept locks the token's
- * `safety_circles` row first, then the member row; preview and decline lock only the member row.
+ * its claim), accept and decline. Lock order (D18, D41): accept and preview lock the token's
+ * `safety_circles` row first, then, in one `ctid`-ordered statement, the token's member row and the
+ * caller's other non-active rows of that circle ({@link InviteeInvitesRepository.lockInviteForClaim});
+ * decline locks only the member row (as the SQL). The SQL preview takes no circle lock; the API's
+ * does, because since D41 its claim may also release the caller's finished rows of the circle.
  * JSON is built by Postgres with the functions' `jsonb_build_object` (same keys, key order, nulls
  * and timestamp text; the caller's transaction runs in UTC). The only write that makes a row
  * `active` is {@link acceptWrite}, guarded by `membership.activate` (path `invite_accept`); none of
@@ -187,6 +197,22 @@ export class InviteeInvitesRepository {
                ${NOT_FOUND_LOOKUP}
              ) as body`);
     return result.rows[0].body;
+  }
+
+  /**
+   * D41: the caller's invitee lock ({@link INVITEE_CALLER_LOCK_NAMESPACE}), taken FIRST in the
+   * transaction (before the circle and any member row; the reads before it take no lock). Why: the
+   * API's preview / accept and its incoming-list claim each lock several member rows of the caller
+   * in `ctid` order, and a row moved by a concurrent UPDATE (a cancel, a release) can make two of
+   * them see different orders; serializing one caller's invitee transactions removes that cycle.
+   * Owner writes, remove, leave and submit do not take it, and a holder of it only ever waits for
+   * locks those take in their own D18 order (circle, then member rows), so it adds no new cycle.
+   * Not in the SQL functions (they take no such lock).
+   */
+  async lockCaller(tx: InviteExecutor, callerId: string): Promise<void> {
+    await tx.execute(sql`
+      select pg_advisory_xact_lock(${INVITEE_CALLER_LOCK_NAMESPACE}::int,
+                                   hashtext(${callerId}::text))`);
   }
 
   /** `_auth_user_phone(uid)` before normalization: `auth.users.phone` of the caller (null if none). */
@@ -229,6 +255,103 @@ export class InviteeInvitesRepository {
        where m.invite_token = ${token}
          for update`);
     return result.rows[0];
+  }
+
+  /**
+   * The member row holding `token` in circle `circleId` (the circle already locked by the caller,
+   * D18: circle before member rows), locked `FOR UPDATE` in ONE statement in `ctid` order together
+   * with (D41):
+   * - the caller's own non-`active` member rows of that circle: the rows
+   *   {@link releaseFinishedRows} may release;
+   * - the circle's unclaimed stored-`pending` member rows: every row a writer that takes no circle
+   *   lock (the SQL `preview_circle_invite`, the claim loops of `list_my_circle_invites` in SQL and
+   *   in the API, `decline_circle_invite`) could turn into a row of the caller while this
+   *   transaction runs.
+   * Why the second set: a release makes the caller's old `(circle_id, user_id)` index entry dead but
+   * uncommitted, so a concurrent claim of the caller in this circle waits for this transaction; if
+   * this transaction's own claim then waited for that writer's uncommitted entry, the two would
+   * deadlock (40P01) on the unique index. Holding those rows first means such a writer either
+   * finished before (its row is then committed and seen) or waits for this transaction at its row
+   * lock, before writing anything. The order is the physical order the claim loops also use
+   * ({@link lockClaimCandidates}; the SQL loop's sequential scan), so two of these lockers never
+   * take two rows in opposite orders. Never locked here: the owner row and `active` rows (SOS
+   * submit takes active rows `FOR KEY SHARE`, D14; the caller's active row is only read by
+   * {@link checks}). Undefined when no row holds `token` in that circle (a token rotated meanwhile).
+   *
+   * `mode` `'nowait'` (`FOR UPDATE NOWAIT`) raises 55P03 instead of waiting for a row another
+   * transaction holds: the service calls it in a savepoint and retries
+   * (`InviteeInvitesService.lockRowsWithoutWaiting`), so it never waits for one member row while
+   * holding another. A `ctid` order cannot be relied on alone: a concurrent UPDATE moves a tuple,
+   * so the SQL claim loop (sequential scan, locking as it goes) can meet the same two rows in the
+   * opposite order (a 40P01 seen under load, D41).
+   */
+  async lockInviteForClaim(
+    tx: InviteExecutor,
+    circleId: string,
+    token: string,
+    callerId: string,
+    mode: RowLockMode = 'wait',
+  ): Promise<LockedInviteRow | undefined> {
+    const result = await tx.execute<LockedInviteRow & { is_token: boolean }>(sql`
+      select m.id::text as id,
+             m.circle_id::text as circle_id,
+             (m.phone is not null) as phone_invite,
+             (m.user_id is null) as unclaimed,
+             coalesce(m.status = 'active' and m.user_id = ${callerId}::uuid, false)
+               as active_for_caller,
+             coalesce(m.invite_token = ${token}, false) as is_token
+        from public.safety_circle_members m
+       where m.circle_id = ${circleId}::uuid
+         and (
+           m.invite_token = ${token}
+           or (
+             m.role = 'member'
+             and m.status <> 'active'
+             and (m.user_id = ${callerId}::uuid or (m.user_id is null and m.status = 'pending'))
+           )
+         )
+       order by m.ctid
+         ${forUpdate(mode)}`);
+    const row = result.rows.find((r) => r.is_token);
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      circle_id: row.circle_id,
+      phone_invite: row.phone_invite,
+      unclaimed: row.unclaimed,
+      active_for_caller: row.active_for_caller,
+    };
+  }
+
+  /**
+   * D41 (approved by Dawit 2026-11-21): frees the caller's FINISHED rows of the circle before a new
+   * claim, so an old decline or cancel no longer blocks a new invite with the `(circle_id, user_id)`
+   * unique index. Finished = lookup status `canceled` (declined, or `invite_canceled_at` set) or
+   * `expired`. The row keeps everything else (status, names, phone, token, times) as history; only
+   * `user_id = null, updated_at = now()` is written. Never the owner row, never an `active` or a
+   * still-valid pending row, never `keepMemberId` (the row being claimed). Call it only with the
+   * circle locked and {@link lockInviteForClaim} done, in the claim's transaction. Returns the number
+   * of rows released. The capacity trigger does not fire a circle lock for these rows (none of them
+   * becomes a newly occupying row).
+   */
+  async releaseFinishedRows(
+    tx: InviteExecutor,
+    circleId: string,
+    callerId: string,
+    keepMemberId: string,
+  ): Promise<number> {
+    const x = memberAlias('x');
+    const result = await tx.execute(sql`
+      update public.safety_circle_members as x
+         set user_id = null,
+             updated_at = now()
+       where x.circle_id = ${circleId}::uuid
+         and x.user_id = ${callerId}::uuid
+         and x.role = 'member'
+         and x.status <> 'active'
+         and x.id <> ${keepMemberId}::uuid
+         and ${inviteLookupStatusSql(x)} in ('canceled', 'expired')`);
+    return result.rowCount ?? 0;
   }
 
   /** {@link InviteChecks} of the locked row `memberId` for the caller. */
@@ -390,11 +513,14 @@ export class InviteeInvitesRepository {
    * them in that same order, so an API and an SQL call of the same caller cannot lock two rows in
    * opposite orders. A row changed while this waited is re-checked against the predicate (a row
    * accepted or declined meanwhile is no longer `pending` and drops out), as in the function.
+   * `mode` `'nowait'`: as {@link lockInviteForClaim} (D41; the `ctid` order alone does not hold
+   * when a concurrent UPDATE moves a tuple).
    */
   async lockClaimCandidates(
     tx: InviteExecutor,
     callerId: string,
     authPhone: string | null,
+    mode: RowLockMode = 'wait',
   ): Promise<string[]> {
     const result = await tx.execute<{ id: string }>(sql`
       select scm.id::text as id
@@ -402,7 +528,7 @@ export class InviteeInvitesRepository {
        where ${incomingInviteMatchSql(callerId, authPhone)}
          and scm.status = 'pending'
        order by scm.ctid
-         for update`);
+         ${forUpdate(mode)}`);
     return result.rows.map((row) => row.id);
   }
 
@@ -472,6 +598,13 @@ export class InviteeInvitesRepository {
       returning ${decisionJsonSql(sql`scm.status`)} as body`);
     return result.rows[0].body;
   }
+}
+
+/** `'wait'`: `FOR UPDATE` (wait for the holder); `'nowait'`: `FOR UPDATE NOWAIT` (55P03 instead). */
+export type RowLockMode = 'wait' | 'nowait';
+
+function forUpdate(mode: RowLockMode): SQL {
+  return mode === 'nowait' ? sql`for update nowait` : sql`for update`;
 }
 
 /** `col = value, ...` of an UPDATE (column names are constants of this file). */

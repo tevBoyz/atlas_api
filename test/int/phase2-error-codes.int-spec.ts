@@ -286,11 +286,10 @@ describe('Phase 2 gate: every circle and invite error code of the spec is produc
     'preview_circle_invite:duplicate_membership': async () => {
       const o = await owner();
       const dan = await createUser(client);
-      await insertMember(client, o.circle.id, {
-        status: 'declined',
-        canceled: true,
-        userId: dan.id,
-      });
+      // D41 (approved by Dawit 2026-11-21): a declined/canceled/expired row of Dan no longer
+      // clashes (the API releases it); a still-valid pending row claimed by Dan (two live invites)
+      // still does.
+      await insertMember(client, o.circle.id, { userId: dan.id, name: 'Claimed' });
       const link = await insertMember(client, o.circle.id);
       return previewInvite(app, dan.id, link.token);
     },
