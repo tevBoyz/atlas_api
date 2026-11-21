@@ -2456,6 +2456,24 @@
         ],
         "type": "object"
       },
+      "PasswordChangeRequest": {
+        "properties": {
+          "current_password": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "new_password": {
+            "maxLength": 128,
+            "minLength": 8,
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "type": "object"
+      },
       "PasswordForgotRequest": {
         "properties": {
           "email": {
@@ -2522,6 +2540,85 @@
         "required": [
           "full_name",
           "date_of_birth"
+        ],
+        "type": "object"
+      },
+      "PhoneChangeAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "verification": {
+            "$ref": "#/components/schemas/PhoneChangeVerification"
+          }
+        },
+        "required": [
+          "verification"
+        ],
+        "type": "object"
+      },
+      "PhoneChangeRequest": {
+        "properties": {
+          "phone": {
+            "description": "The new number, strict `+E.164`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phone"
+        ],
+        "type": "object"
+      },
+      "PhoneChangeVerification": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "const": "phone",
+            "type": "string"
+          },
+          "expires_in_seconds": {
+            "description": "Lifetime of the texted code (600 s).",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "resends_remaining": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "channel",
+          "expires_in_seconds",
+          "resends_remaining"
+        ],
+        "type": "object"
+      },
+      "PhoneChangeVerifyRequest": {
+        "properties": {
+          "code": {
+            "description": "6 digits.",
+            "type": "string"
+          },
+          "phone": {
+            "description": "The new number of the pending change.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phone",
+          "code"
+        ],
+        "type": "object"
+      },
+      "PhoneChanged": {
+        "additionalProperties": false,
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/User"
+          }
+        },
+        "required": [
+          "user"
         ],
         "type": "object"
       },
@@ -5433,6 +5530,147 @@
         },
         "security": [],
         "summary": "Check a texted code: sign in (Session) or confirm my number ({user})",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/password": {
+      "put": {
+        "operationId": "changePassword",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Password changed. Every other session of the account is signed out; this one stays. At most 10 attempts per user per 15 minutes."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:invalid_credentials",
+                    "details": {},
+                    "message": "The sign-in details are not correct."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "auth:invalid_credentials",
+              "auth:not_authenticated"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:user_disabled",
+                    "details": {},
+                    "message": "This account cannot sign in."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not allowed",
+            "x-error-codes": [
+              "auth:user_disabled"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:same_password",
+                    "details": {},
+                    "message": "Choose a password different from your current one."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "auth:same_password",
+              "auth:weak_password",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Change my password (current password required); my other devices are signed out",
         "tags": [
           "auth"
         ]
@@ -10924,6 +11162,399 @@
         "summary": "The circles the caller is an active member of (the own circle included)",
         "tags": [
           "circles"
+        ]
+      }
+    },
+    "/v1/me/phone": {
+      "put": {
+        "operationId": "changePhone",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhoneChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhoneChangeAccepted"
+                }
+              }
+            },
+            "description": "Accepted: a code valid 600 s is texted to the new number. The answer is the same when another account holds that number (no code is sent then). Calling it again sends a new code; at most 4 codes per number per 15 minutes."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "auth:not_authenticated"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:user_disabled",
+                    "details": {},
+                    "message": "This account cannot sign in."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not allowed",
+            "x-error-codes": [
+              "auth:user_disabled"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:invalid_phone",
+                    "details": {},
+                    "message": "Enter a valid phone number."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "auth:invalid_phone",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:otp_resend_limit",
+                    "details": {},
+                    "message": "Too many codes were requested. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "auth:otp_resend_limit",
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:sms_unavailable",
+                    "details": {},
+                    "message": "Text messages cannot be sent right now. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error",
+            "x-error-codes": [
+              "auth:sms_unavailable"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Text a code to my new phone number (the number changes only once it is verified)",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/me/phone/verify": {
+      "post": {
+        "operationId": "verifyPhoneChange",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhoneChangeVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhoneChanged"
+                }
+              }
+            },
+            "description": "The new number is the account phone, confirmed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:otp_invalid",
+                    "details": {},
+                    "message": "The code is not correct."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad request",
+            "x-error-codes": [
+              "auth:otp_invalid"
+            ]
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "auth:not_authenticated"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:user_disabled",
+                    "details": {},
+                    "message": "This account cannot sign in."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not allowed",
+            "x-error-codes": [
+              "auth:user_disabled"
+            ]
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:otp_expired",
+                    "details": {},
+                    "message": "The code has expired. Request a new one."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Gone",
+            "x-error-codes": [
+              "auth:otp_expired"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:invalid_phone",
+                    "details": {},
+                    "message": "Enter a valid phone number."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "auth:invalid_phone",
+              "validation:invalid_request"
+            ]
+          },
+          "423": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:otp_invalidated",
+                    "details": {},
+                    "message": "Too many wrong codes. Request a new code."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Locked",
+            "x-error-codes": [
+              "auth:otp_invalidated"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:sms_unavailable",
+                    "details": {},
+                    "message": "Text messages cannot be sent right now. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error",
+            "x-error-codes": [
+              "auth:sms_unavailable"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Verify the code texted to my new phone number; the number becomes my confirmed phone",
+        "tags": [
+          "auth"
         ]
       }
     },

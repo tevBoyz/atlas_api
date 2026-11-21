@@ -10,7 +10,13 @@ export type AuthMethod =
 
 /** `device_sessions.revoke_reason`. */
 export type RevokeReason =
-  'logout' | 'logout_all' | 'deleted' | 'refresh_token_reused' | 'idle' | 'password_reset';
+  | 'logout'
+  | 'logout_all'
+  | 'deleted'
+  | 'refresh_token_reused'
+  | 'idle'
+  | 'password_reset'
+  | 'password_change';
 
 /** Where a session was opened or refreshed from (logs never carry these). */
 export interface ClientContext {

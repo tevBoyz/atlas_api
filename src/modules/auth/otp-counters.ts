@@ -145,6 +145,34 @@ export class OtpCounters {
     return this.guarded(() => this.client().atlasOtpAttempt(k.attempts, k.pending));
   }
 
+  /**
+   * A18 (D39): the number a signed-in user asked to change to, as a SHA-256 (never in clear), for
+   * the code's lifetime. A newer request replaces it.
+   */
+  setPhoneChange(userId: string, phone: string): Promise<void> {
+    return this.guarded(async () => {
+      await this.client().set(
+        `${PREFIX}:change:${userId}`,
+        identifierKey(phone),
+        'PX',
+        OTP_TTL_SECONDS * 1000,
+      );
+    });
+  }
+
+  /** True when `phone` is the user's pending change (a code for it may still be checked). */
+  isPhoneChange(userId: string, phone: string): Promise<boolean> {
+    return this.guarded(
+      async () => (await this.client().get(`${PREFIX}:change:${userId}`)) === identifierKey(phone),
+    );
+  }
+
+  clearPhoneChange(userId: string): Promise<void> {
+    return this.guarded(async () => {
+      await this.client().del(`${PREFIX}:change:${userId}`);
+    });
+  }
+
   /** The code was used or is gone: no further attempts until the next send. */
   clear(phone: string): Promise<void> {
     const k = this.keys(phone);

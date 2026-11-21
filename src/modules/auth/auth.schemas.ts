@@ -194,6 +194,38 @@ export const passwordResetRequestSchema = z.object({
 
 export const exchangeRequestSchema = z.object({ device: deviceInfoSchema });
 
+/** A16 (stage 7.1b, D38). */
+export const passwordChangeRequestSchema = z.object({
+  current_password: z.string().max(1024),
+  new_password: z.string().min(8).max(128),
+});
+
+/** A18 (stage 7.1c, D39). */
+export const phoneChangeRequestSchema = z.object({
+  phone: z.string().describe('The new number, strict `+E.164`.'),
+});
+
+export const phoneChangeVerificationSchema = componentSchema(
+  'PhoneChangeVerification',
+  z.object({
+    channel: z.literal('phone'),
+    expires_in_seconds: z.number().int().describe('Lifetime of the texted code (600 s).'),
+    resends_remaining: z.number().int(),
+  }),
+);
+
+export const phoneChangeAcceptedSchema = componentSchema(
+  'PhoneChangeAccepted',
+  z.object({ verification: phoneChangeVerificationSchema }),
+);
+
+export const phoneChangeVerifyRequestSchema = z.object({
+  phone: z.string().describe('The new number of the pending change.'),
+  code: z.string().describe('6 digits.'),
+});
+
+export const phoneChangedSchema = componentSchema('PhoneChanged', z.object({ user: userSchema }));
+
 export const sessionInfoSchema = componentSchema(
   'DeviceSession',
   z.object({

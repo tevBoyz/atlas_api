@@ -34,9 +34,15 @@ export interface UserOptions {
   phone?: string | true;
   /** `false` leaves the `auth.users` row without a profile. */
   profile?: boolean;
+  /** `auth.users.encrypted_password` (a bcrypt hash, as Supabase Auth stores it). Default none. */
+  encryptedPassword?: string;
 }
 
-/** An `auth.users` row plus a complete profile (GoTrue stores the phone without its `+`). */
+/**
+ * An `auth.users` row plus a complete profile (GoTrue stores the phone without its `+`). Since
+ * migration 0010 the profile write moves the user into `public.users` first (D37 trigger), as the
+ * SQL behaviour tests rely on; `profile: false` leaves the user in `auth.users` only.
+ */
 export async function createUser(q: Queryable, options: UserOptions = {}): Promise<UserFixture> {
   const id = options.id ?? randomUUID();
   const fullName = options.fullName ?? `Test User ${id.slice(0, 8)}`;
@@ -45,12 +51,12 @@ export async function createUser(q: Queryable, options: UserOptions = {}): Promi
   await q.query(
     `insert into auth.users (instance_id, id, aud, role, email, phone, email_confirmed_at,
                              phone_confirmed_at, raw_app_meta_data, raw_user_meta_data,
-                             created_at, updated_at)
+                             encrypted_password, created_at, updated_at)
      values ('00000000-0000-0000-0000-000000000000', $1, 'authenticated', 'authenticated', $2,
              $3::text, now(), case when $3::text is null then null else now() end,
              '{"provider":"email","providers":["email"]}'::jsonb,
-             jsonb_build_object('full_name', $4::text), now(), now())`,
-    [id, email, phone?.replace(/^\+/, '') ?? null, fullName],
+             jsonb_build_object('full_name', $4::text), $5::text, now(), now())`,
+    [id, email, phone?.replace(/^\+/, '') ?? null, fullName, options.encryptedPassword ?? null],
   );
   if (options.profile !== false) {
     await q.query(

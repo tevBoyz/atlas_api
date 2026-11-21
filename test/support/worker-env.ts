@@ -28,3 +28,8 @@ useTestJwtEnvironment();
 // Own access tokens (API-100-51): fresh throwaway keys per worker; never Google or Apple (their
 // settings are removed, so both providers are disabled unless a suite configures a fake JWKS).
 useTestAuthEnvironment();
+// Supabase access tokens are off by default since stage 7.1d (D40). The suites still sign their
+// callers with Supabase-style test tokens (the parity tests call the SQL functions as today's app
+// did), so they turn them on explicitly; `test/int/supabase-tokens-default.int-spec.ts` checks the
+// default.
+process.env.SUPABASE_JWT_ACCEPT = 'true';

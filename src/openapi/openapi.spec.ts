@@ -241,6 +241,7 @@ describe('OpenAPI document (API-100-12)', () => {
         '/v1/auth/otp/resend',
         '/v1/auth/otp/send',
         '/v1/auth/otp/verify',
+        '/v1/auth/password',
         '/v1/auth/password/forgot',
         '/v1/auth/password/reset',
         '/v1/auth/refresh',
@@ -277,6 +278,8 @@ describe('OpenAPI document (API-100-12)', () => {
         '/v1/me/incidents/open',
         '/v1/me/invites',
         '/v1/me/joined-circles',
+        '/v1/me/phone',
+        '/v1/me/phone/verify',
         '/v1/me/profile',
         '/v1/me/profile/avatar',
         '/v1/me/profile/complete',
@@ -433,6 +436,8 @@ describe('OpenAPI document (API-100-12)', () => {
         'acknowledgeIncident',
         'attachIncidentLocation',
         'cancelCircleInvite',
+        'changePassword',
+        'changePhone',
         'circleInviteCapacity',
         'clearCurrentDevicePushToken',
         'completeProfileSetup',
@@ -492,6 +497,7 @@ describe('OpenAPI document (API-100-12)', () => {
         'upsertPersonalInfo',
         'verifyEmail',
         'verifyOtp',
+        'verifyPhoneChange',
       ]);
     });
   });

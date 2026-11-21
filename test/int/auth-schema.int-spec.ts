@@ -7,8 +7,8 @@ import { createUser } from '../support/fixtures';
 
 /**
  * API-100-50: the own-auth tables of migration 0008 (spec §11.7). Same ids as Supabase Auth, email
- * citext lower-case and unique, phone `+E.164` and unique, the existing foreign keys untouched
- * (repointed in Phase 7), cascades from `users`, and the check constraints.
+ * citext lower-case and unique, phone `+E.164` and unique, the foreign keys of profiles, members and
+ * devices (repointed at `users` by 0010, D36), cascades from `users`, and the check constraints.
  */
 describe('auth schema (API-100-50, migration 0008)', () => {
   let client: Client;
@@ -98,12 +98,14 @@ describe('auth schema (API-100-50, migration 0008)', () => {
     }
   });
 
-  it('users.id can take an auth.users id; profiles and members still reference auth.users', async () => {
+  it('users.id is the auth.users id; profiles, members and devices reference users (0010, D36)', async () => {
+    // The profile write moves the auth.users-only fixture user into users first (D37 trigger).
     const authUser = await createUser(client, { profile: true });
-    await client.query('insert into public.users (id, email) values ($1, $2)', [
-      authUser.id,
-      authUser.email,
-    ]);
+    const { rows: moved } = await client.query<{ email: string }>(
+      'select email::text from public.users where id = $1',
+      [authUser.id],
+    );
+    expect(moved).toEqual([{ email: authUser.email }]);
     const { rows } = await client.query<{ conname: string; target: string }>(
       `select conname, confrelid::regclass::text as target from pg_constraint
         where contype = 'f'
@@ -112,9 +114,9 @@ describe('auth schema (API-100-50, migration 0008)', () => {
         order by conname`,
     );
     expect(rows).toEqual([
-      { conname: 'profiles_id_fkey', target: 'auth.users' },
-      { conname: 'safety_circle_members_user_id_fkey', target: 'auth.users' },
-      { conname: 'user_devices_user_id_fkey', target: 'auth.users' },
+      { conname: 'profiles_id_fkey', target: 'users' },
+      { conname: 'safety_circle_members_user_id_fkey', target: 'users' },
+      { conname: 'user_devices_user_id_fkey', target: 'users' },
     ]);
   });
 

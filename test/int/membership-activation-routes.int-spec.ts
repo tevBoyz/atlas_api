@@ -158,7 +158,11 @@ describe('only accept (and setup, for the owner row) activates a member row (API
             ...(route.method.toUpperCase() === 'GET' ? {} : { payload: JSON.stringify(hostile) }),
           });
           statuses.push(`${route.method} ${route.path} → ${reply.statusCode}`);
-          expect({ route: url, status: reply.statusCode < 500 }).toEqual({
+          // The SMS channel is off in this app: A18 answers its documented 503 (no code sent).
+          const smsOff =
+            reply.statusCode === 503 &&
+            reply.json<{ error?: { code?: string } }>().error?.code === 'auth:sms_unavailable';
+          expect({ route: url, status: reply.statusCode < 500 || smsOff }).toEqual({
             route: url,
             status: true,
           });

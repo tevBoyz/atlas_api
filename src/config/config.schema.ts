@@ -224,8 +224,10 @@ export const configSchema = z.object({
   // Test-only seam: GET /__test/auth-messages reads what the FAKE email/SMS adapters "sent"
   // (verification links, OTP codes). Refused when NODE_ENV=production.
   AUTH_TEST_MAILBOX_ENABLED: flag(),
-  // Dual-token window (API-100-59): accept Supabase access tokens at all, and until when.
-  SUPABASE_JWT_ACCEPT: z.stringbool({ truthy: ['true'], falsy: ['false'] }).default(true),
+  // Dual-token window (API-100-59): accept Supabase access tokens at all, and until when. Off by
+  // default since stage 7.1d (D40): the app has no Supabase sessions any more; the exchange route
+  // (D35) and the verifier stay, for an explicit SUPABASE_JWT_ACCEPT=true.
+  SUPABASE_JWT_ACCEPT: z.stringbool({ truthy: ['true'], falsy: ['false'] }).default(false),
   SUPABASE_JWT_ACCEPT_UNTIL: isoDateTime(),
   // Google / Apple ID-token sign-in (API-100-55). Without client ids the provider is disabled.
   GOOGLE_CLIENT_IDS: clientIdList(),

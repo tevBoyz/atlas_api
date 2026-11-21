@@ -27,11 +27,8 @@ describe('own access tokens and the dual-token guard (API-100-51)', () => {
     ({ app } = await createTestApp());
     signer = app.get(AccessTokenSigner);
     client = await openTestClient();
+    // The fixture's profile moves the user into users (migration 0010, D37).
     user = await createUser(client);
-    await client.query(
-      'insert into public.users (id, email, email_confirmed_at) values ($1, $2, now())',
-      [user.id, user.email],
-    );
   });
 
   afterAll(async () => {
@@ -94,7 +91,6 @@ describe('own access tokens and the dual-token guard (API-100-51)', () => {
 
   it('AC3: a session of another user, an unknown session and a disabled user are refused', async () => {
     const other = await createUser(client);
-    await client.query('insert into public.users (id) values ($1)', [other.id]);
     const otherSid = await newSession(other.id);
     expect(
       (await openIncident(`Bearer ${(await signer.issue(user.id, otherSid)).token}`)).statusCode,
@@ -110,7 +106,7 @@ describe('own access tokens and the dual-token guard (API-100-51)', () => {
     expect((await openIncident(`Bearer ${token}`)).statusCode).toBe(401);
   });
 
-  it('AC3: Supabase tokens are accepted while SUPABASE_JWT_ACCEPT=true (the default)', async () => {
+  it('AC3: Supabase tokens are accepted while SUPABASE_JWT_ACCEPT=true (set by the test setup; the default is false since D40)', async () => {
     const res = await openIncident((await authHeader(user.id)).authorization);
     expect(res.statusCode).toBe(200);
   });

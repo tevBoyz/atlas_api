@@ -1,4 +1,7 @@
-/** The actions recorded in Epic 100 (API-100-14 AC3). `auth.*` actions: Phase 6 (API-100-52 to 59). */
+/**
+ * The actions recorded in Epic 100 (API-100-14 AC3). `auth.*` actions: Phase 6 (API-100-52 to 59)
+ * and stage 7.1 (`auth.password.changed`, A16; `auth.phone.changed`, A18).
+ */
 export const AUDIT_ACTIONS = [
   'incident.created',
   'incident.renotified',
@@ -25,6 +28,8 @@ export const AUDIT_ACTIONS = [
   'auth.session.revoked',
   'auth.password.reset',
   'auth.session.exchanged',
+  'auth.password.changed',
+  'auth.phone.changed',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number] | `auth.${string}`;

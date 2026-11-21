@@ -118,6 +118,19 @@ export class UsersRepository {
        where id = ${userId}::uuid`);
   }
 
+  /**
+   * A18 (D39): the verified new number becomes the account's confirmed phone. False when another
+   * account took the number meanwhile (unique `users_phone_key`), nothing changed.
+   */
+  async setConfirmedPhone(tx: AuthTx, userId: string, phone: string): Promise<boolean> {
+    const result = await tx.execute(sql`
+      update public.users
+         set phone = ${phone}, phone_confirmed_at = now(), updated_at = now()
+       where id = ${userId}::uuid
+         and not exists (select 1 from public.users o where o.phone = ${phone} and o.id <> ${userId}::uuid)`);
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async credentialOf(tx: AuthTx, userId: string): Promise<StoredHash | undefined> {
     const row = firstRow<{ hash: string; algo: HashAlgorithm }>(
       await tx.execute(sql`

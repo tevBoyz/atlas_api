@@ -147,20 +147,19 @@ export const errorOf = (reply: { json: <T>() => T }) =>
 
 /**
  * A user of the OLD app: an `auth.users` row (with a complete profile) whose password is a bcrypt
- * hash as Supabase Auth stores it, signed in through the API (moved just in time, API-100-58). Such a
- * user has the `auth.users` row the existing foreign keys need (devices, profiles) until Phase 7
- * repoints them; a user created by API sign-up does not.
+ * hash as Supabase Auth stores it, signed in through the API. The profile write moves it into
+ * `users` with its bcrypt credential (migration 0010's trigger, D37, the rules of API-100-58); the
+ * sign-in re-hashes the password to argon2id.
  */
 export async function legacyUser(
   app: NestFastifyApplication,
   q: Queryable,
   password: string = GOOD_PASSWORD,
 ): Promise<{ id: string; email: string; password: string; session: SessionBody }> {
-  const user = await createUser(q, { phone: true });
-  await q.query('update auth.users set encrypted_password = $2 where id = $1', [
-    user.id,
-    await bcrypt.hash(password, 10),
-  ]);
+  const user = await createUser(q, {
+    phone: true,
+    encryptedPassword: await bcrypt.hash(password, 10),
+  });
   const res = await post(app, '/v1/auth/login', { email: user.email, password, device: DEVICE });
   if (res.statusCode !== 200) throw new Error(`legacy login answered ${res.statusCode}`);
   return { id: user.id, email: user.email, password, session: res.json<SessionBody>() };

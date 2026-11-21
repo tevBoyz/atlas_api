@@ -27,3 +27,6 @@ process.env.AVATAR_STORAGE = 'memory';
 useTestJwtEnvironment();
 // Own access tokens (API-100-51): fresh throwaway keys; no Google/Apple settings are inherited.
 useTestAuthEnvironment();
+// Supabase access tokens are off by default since stage 7.1d (D40); unit tests sign callers with
+// Supabase-style test tokens, so they turn them on explicitly.
+process.env.SUPABASE_JWT_ACCEPT = 'true';

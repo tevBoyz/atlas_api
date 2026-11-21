@@ -20,7 +20,10 @@ import { OAuthService } from './oauth.service';
 import { OtpCounters } from './otp-counters';
 import { OtpController } from './otp.controller';
 import { OtpService } from './otp.service';
+import { PhoneChangeController } from './phone-change.controller';
 import { Argon2PasswordHasher, PASSWORD_HASHER } from './password-hasher';
+import { PasswordChangeController } from './password-change.controller';
+import { PasswordChangeService } from './password-change.service';
 import { PasswordResetController } from './password-reset.controller';
 import { PasswordResetService } from './password-reset.service';
 import { PHONE_VERIFIER, PhoneVerifierFactory } from './phone-verification';
@@ -47,6 +50,8 @@ import { UsersRepository } from './users.repository';
     OAuthController,
     SessionsController,
     PasswordResetController,
+    PasswordChangeController,
+    PhoneChangeController,
     ExchangeController,
   ],
   providers: [
@@ -74,6 +79,7 @@ import { UsersRepository } from './users.repository';
     { provide: ID_TOKEN_VERIFIER, useClass: JoseIdTokenVerifier },
     OAuthService,
     PasswordResetService,
+    PasswordChangeService,
     TestMailboxRoute,
   ],
   exports: [AccessTokenSigner, SessionsRepository, LegacyUsers],

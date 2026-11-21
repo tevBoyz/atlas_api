@@ -19,8 +19,13 @@ import '../models/otp_send_request.dart';
 import '../models/otp_sent.dart';
 import '../models/otp_verified.dart';
 import '../models/otp_verify_request.dart';
+import '../models/password_change_request.dart';
 import '../models/password_forgot_request.dart';
 import '../models/password_reset_request.dart';
+import '../models/phone_change_accepted.dart';
+import '../models/phone_change_request.dart';
+import '../models/phone_change_verify_request.dart';
+import '../models/phone_changed.dart';
 import '../models/refresh_request.dart';
 import '../models/session.dart';
 import '../models/signup_accepted.dart';
@@ -118,6 +123,10 @@ abstract class AuthClient {
     @Header('X-Atlas-Installation-Id') String? xAtlasInstallationId,
   });
 
+  /// Change my password (current password required); my other devices are signed out
+  @PUT('/v1/auth/password')
+  Future<void> changePassword({@Body() required PasswordChangeRequest body});
+
   /// Email a password reset link (type=recovery)
   @POST('/v1/auth/password/forgot')
   Future<void> forgotPassword({@Body() required PasswordForgotRequest body});
@@ -147,6 +156,18 @@ abstract class AuthClient {
   /// My account: email, phone, confirmations and sign-in methods
   @GET('/v1/me')
   Future<User> getCurrentUser();
+
+  /// Text a code to my new phone number (the number changes only once it is verified)
+  @PUT('/v1/me/phone')
+  Future<PhoneChangeAccepted> changePhone({
+    @Body() required PhoneChangeRequest body,
+  });
+
+  /// Verify the code texted to my new phone number; the number becomes my confirmed phone
+  @POST('/v1/me/phone/verify')
+  Future<PhoneChanged> verifyPhoneChange({
+    @Body() required PhoneChangeVerifyRequest body,
+  });
 
   /// My signed-in devices (sessions), most recently used first
   @GET('/v1/me/sessions')

@@ -106,3 +106,14 @@ export class AuthLimits {
     return decision.remaining;
   }
 }
+
+/**
+ * A16 `PUT /v1/auth/password` (stage 7.1, D38): per signed-in user, 10 attempts (right or wrong
+ * current password) in any sliding 15 minutes, so a stolen access token cannot guess the password.
+ */
+export const PASSWORD_CHANGE_LIMIT: RateLimitPolicy = {
+  name: 'auth_password_change',
+  max: 10,
+  windowSeconds: 15 * 60,
+  scope: 'user',
+};

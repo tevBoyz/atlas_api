@@ -115,6 +115,83 @@ export class OtpService {
     });
   }
 
+  /**
+   * A18 `PUT /v1/me/phone` (stage 7.1c, D39): a code to the NEW number; the account keeps its
+   * current phone until the code is verified. The limits of the number are A4's (4 codes per 15
+   * minutes, a new request resets the failed attempts, 600 s). A number another account holds gets
+   * the same 202 and counts the same, but no code (no enumeration, as D28 / D29); its "code" never
+   * verifies. Calling it again is the resend.
+   */
+  async startPhoneChange(phone: string, caller: AuthenticatedUser): Promise<OtpSent> {
+    if (!this.messenger.smsEnabled) throw unavailable();
+    const free = await this.phoneFreeFor(phone, caller);
+    const decision = await this.withCounters(() => this.counters.takeSend(phone));
+    if (!decision.allowed) {
+      throw new DomainError('auth:otp_resend_limit', {
+        retryAfterSeconds: Math.max(1, Math.ceil(decision.retryAfterMs / 1000)),
+        details: { resends_remaining: 0 },
+      });
+    }
+    if (free) {
+      if ((await this.verifier.start(phone)) !== 'sent') throw unavailable();
+    }
+    await this.withCounters(() => this.counters.setPhoneChange(caller.id, phone));
+    await this.withCounters(() => this.counters.markPending(phone));
+    return { expires_in_seconds: OTP_TTL_SECONDS, resends_remaining: decision.resendsRemaining };
+  }
+
+  /**
+   * A18 `POST /v1/me/phone/verify` (D39): the code of the pending change. `phone` must be the
+   * caller's pending number (else 422 `auth:invalid_phone`); attempts and expiry as A6. Verified →
+   * the number is the account's phone, confirmed, with a `phone` identity; audit
+   * `auth.phone.changed` (no number in it). Answers `{user}`.
+   */
+  async verifyPhoneChange(
+    phone: string,
+    code: string | null,
+    caller: AuthenticatedUser,
+  ): Promise<{ user: UserJson }> {
+    if (!(await this.withCounters(() => this.counters.isPhoneChange(caller.id, phone)))) {
+      throw fail('auth:invalid_phone', 'phone');
+    }
+    const free = await this.phoneFreeFor(phone, caller);
+    await this.check(phone, code, free ? caller.id : null);
+    const result = await runAuthTransaction(this.database, async (tx) => {
+      const user = await this.users.byId(tx, caller.id, true);
+      if (!user) throw new DomainError('auth:not_authenticated');
+      if (user.disabled) throw new DomainError('auth:user_disabled');
+      if (!(await this.users.setConfirmedPhone(tx, user.id, phone))) {
+        throw fail('auth:invalid_phone', 'phone');
+      }
+      await this.users.addIdentity(tx, user.id, 'phone', user.id, null);
+      await this.audit.record(
+        {
+          action: 'auth.phone.changed',
+          actor_user_id: user.id,
+          target_type: 'user',
+          target_id: user.id,
+          detail: { had_number: user.phone !== null, same_number: user.phone === phone },
+        },
+        tx,
+      );
+      return { user: (await this.users.userJson(tx, user.id))! };
+    });
+    await this.withCounters(() => this.counters.clearPhoneChange(caller.id));
+    return result;
+  }
+
+  /** The caller may take `phone`: no other account holds it. 401 / 403 for a missing / disabled caller. */
+  private async phoneFreeFor(phone: string, caller: AuthenticatedUser): Promise<boolean> {
+    await this.legacy.migrateById(caller.id);
+    return runAuthTransaction(this.database, async (tx) => {
+      const user = await this.users.byId(tx, caller.id);
+      if (!user) throw new DomainError('auth:not_authenticated');
+      if (user.disabled) throw new DomainError('auth:user_disabled');
+      const holder = await this.users.byPhone(tx, phone);
+      return !holder || holder.id === user.id;
+    });
+  }
+
   private async confirm(tx: AuthTx, userId: string, already: boolean): Promise<void> {
     await this.users.confirmPhone(tx, userId);
     const user = (await this.users.byId(tx, userId))!;

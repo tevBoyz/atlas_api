@@ -55,7 +55,7 @@ const RATE_LIMIT_DEFAULTS = {
   AUTH_EMAIL_LINK_TTL_SECONDS: 300,
   AUTH_LINK_BASE: 'io.supabase.atlasmobile://login-callback/',
   AUTH_TEST_MAILBOX_ENABLED: false,
-  SUPABASE_JWT_ACCEPT: true,
+  SUPABASE_JWT_ACCEPT: false,
   GOOGLE_JWKS_URL: 'https://www.googleapis.com/oauth2/v3/certs',
   APPLE_SIGN_IN_ENABLED: false,
   APPLE_JWKS_URL: 'https://appleid.apple.com/auth/keys',
@@ -286,11 +286,11 @@ describe('parseConfig (API-100-02)', () => {
     it('parses client id lists, the Supabase acceptance date and the Apple switch', () => {
       const config = parseConfig({
         GOOGLE_CLIENT_IDS: ' web.apps.example , android.apps.example ',
-        SUPABASE_JWT_ACCEPT: 'false',
+        SUPABASE_JWT_ACCEPT: 'true',
         SUPABASE_JWT_ACCEPT_UNTIL: '2027-01-31T00:00:00Z',
       });
       expect(config.GOOGLE_CLIENT_IDS).toEqual(['web.apps.example', 'android.apps.example']);
-      expect(config.SUPABASE_JWT_ACCEPT).toBe(false);
+      expect(config.SUPABASE_JWT_ACCEPT).toBe(true);
       expect(config.SUPABASE_JWT_ACCEPT_UNTIL).toBe('2027-01-31T00:00:00Z');
       expect(validationError({ SUPABASE_JWT_ACCEPT_UNTIL: '2027-01-31' }).keys).toEqual([
         'SUPABASE_JWT_ACCEPT_UNTIL',
