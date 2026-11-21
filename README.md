@@ -570,6 +570,36 @@ Needs Docker running. No suite uses the compose stack or reads `.env`.
   sign-out (U2).
 - App hand-off: `docs/phase5_handoff.md` (decisions D22-D26).
 
+### Phase 6 gate (API-100-59)
+
+- `npm run build && npm run load:auth [-- --users 100]`: the built API with throwaway signing keys,
+  the fake email adapter and the test-only mailbox; sign-up then confirm bursts, a login burst,
+  5 refresh rotations per session (all sessions at once), and lockout bursts (12 wrong passwords at
+  once on 20 accounts: exactly 4 x 401 + 8 x 423 and one lock each; 4 at once on 20 more: exactly 4
+  counted). Fails on any unexpected status, a row check, an error log line, or p99 >= 2 s on sign-up,
+  verify, login or refresh.
+- `test/int/phase6-flows.int-spec.ts`: the checklist of spec §8.1-§8.8 and the D8 exchange.
+- App hand-off: `docs/phase6_handoff.md` (decisions D27-D36).
+
+## Own authentication (API-100-50 to 59, `src/modules/auth`, `src/common/auth`)
+
+- **Tables** (migrations 0008/0009): `users` (same ids as Supabase Auth), `user_credentials`
+  (argon2id; bcrypt for migrated users until their next sign-in), `user_identities`,
+  `device_sessions`, `refresh_tokens` (SHA-256), `auth_tokens` (email links, SHA-256).
+- **Tokens** (D27): EdDSA/ES256 access tokens, 15 min, from `AUTH_JWT_KEYS` / `AUTH_JWT_ACTIVE_KID`
+  (`npm run -s auth:keygen -- --kid <kid>`; rotation in `.env.example`); public keys at
+  `GET /v1/auth/.well-known/jwks.json`. The guard accepts own tokens of live sessions and, while
+  `SUPABASE_JWT_ACCEPT` allows, Supabase tokens; `npm run -s auth:token-usage` shows the Supabase share.
+- **Routes**: sign-up / email verify / resend (D28), phone OTP (D29), password login with the
+  lockout on `login_lockouts` (D30), Google / Apple (D31), refresh / logout / logout-all / sessions /
+  `GET /v1/me` (D32), password forgot / reset (D33), the one-time Supabase session exchange (D35).
+- **Email and SMS** go through the Phase 5 adapters (fakes; email has no provider, SMS is on the
+  Twilio hold). Local manual testing: `CHANNEL_EMAIL_ENABLED=true`, `CHANNEL_SMS_ENABLED=true` and
+  `AUTH_TEST_MAILBOX_ENABLED=true` (never in production) serve the fake messages at
+  `GET /__test/auth-messages?to=<address>`.
+- **User migration** (D34): `npm run auth:migrate-users [-- --dry-run]` (local database only unless
+  `--allow-remote`); users not migrated yet are moved just in time at sign-in.
+
 ## Notifications (API-100-44 to 48, `src/modules/notifications`, `src/jobs`)
 
 - **Devices** (U1/U2): `PUT /v1/me/devices/current` and `DELETE /v1/me/devices/current/push-token`
@@ -684,5 +714,6 @@ Stop your local `atlas-api` stack first (`docker compose down`) since both use p
 `npm run test:baseline` · `npm run openapi:generate` / `openapi:check` ·
 `npm run client:dart:generate` / `client:dart:build` ·
 `npm run auth:test-token` (local test token, see Authentication) · `npm run parity:report` /
-`load:incidents` / `load:circles` / `load:profiles` / `load:realtime` / `load:notifications` (phase
-gates, see Tests).
+`load:incidents` / `load:circles` / `load:profiles` / `load:realtime` / `load:notifications` /
+`load:auth` (phase gates, see Tests) · `npm run auth:keygen` / `auth:migrate-users` /
+`auth:token-usage` (own auth, see Own authentication).

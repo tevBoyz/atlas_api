@@ -7,7 +7,9 @@ import { testDatabaseUrl } from '../support/database';
  * `authenticated` have no table privileges and RLS is enabled with no policy (deny). Covers the
  * migration tracking table (runner + `0002_lock_down_api_schema_migrations.sql`),
  * `idempotency_keys` (`0001`), `audit_log` (`0003`), `user_devices` (`0005`),
- * `notification_outbox` (`0006`) and `notification_deliveries` (`0007`).
+ * `notification_outbox` (`0006`), `notification_deliveries` (`0007`) and the own-auth tables
+ * (`0008`: `users`, `user_credentials`, `user_identities`, `device_sessions`, `refresh_tokens`,
+ * `auth_tokens`).
  */
 const TABLES = [
   'public.api_schema_migrations',
@@ -16,6 +18,12 @@ const TABLES = [
   'public.user_devices',
   'public.notification_outbox',
   'public.notification_deliveries',
+  'public.users',
+  'public.user_credentials',
+  'public.user_identities',
+  'public.device_sessions',
+  'public.refresh_tokens',
+  'public.auth_tokens',
 ];
 const ROLES = ['anon', 'authenticated'];
 const PRIVILEGES = ['select', 'insert', 'update', 'delete'];

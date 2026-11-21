@@ -12,6 +12,36 @@ import { type GenericErrorCode, splitCode } from './error-codes';
 /** Full codes with their own status (§11.2 rows naming a whole code, §11.3 E1, generic codes). */
 export const FULL_CODE_STATUS: Readonly<Record<string, number>> = {
   'login_lockout:locked': 423,
+  // Own authentication (§11.3 A1-A20, Phase 6): every `auth:*` code by its full name, so suffixes
+  // such as `invalid_credentials` (not a 422) never fall into a generic row.
+  'auth:not_authenticated': 401,
+  'auth:invalid_email': 422,
+  'auth:invalid_phone': 422,
+  'auth:invalid_full_name': 422,
+  'auth:invalid_device': 422,
+  'auth:weak_password': 422,
+  'auth:same_password': 422,
+  'auth:link_invalid': 400,
+  'auth:link_expired': 410,
+  'auth:over_email_send_rate_limit': 429,
+  'auth:otp_resend_limit': 429,
+  'auth:otp_invalid': 400,
+  'auth:otp_expired': 410,
+  'auth:otp_invalidated': 423,
+  'auth:sms_unavailable': 503,
+  'auth:invalid_credentials': 401,
+  'auth:email_not_confirmed': 403,
+  'auth:phone_not_confirmed': 403,
+  'auth:user_disabled': 403,
+  'auth:oauth_invalid_token': 401,
+  'auth:identity_conflict': 409,
+  'auth:provider_disabled': 503,
+  'auth:provider_unavailable': 503,
+  'auth:session_expired': 401,
+  'auth:refresh_token_reused': 401,
+  'auth:session_not_found': 404,
+  'auth:exchange_not_allowed': 403,
+  'auth:session_already_exchanged': 409,
   'idempotency:key_mismatch': 422,
   'idempotency:in_progress': 409,
   'idempotency:key_required': 400,
@@ -34,7 +64,10 @@ export const FULL_CODE_STATUS: Readonly<Record<string, number>> = {
   'http:too_many_requests': 429,
   'http:client_error': 400,
   'rate_limit:exceeded': 429,
-} satisfies Record<GenericErrorCode | `idempotency:${string}` | 'login_lockout:locked', number>;
+} satisfies Record<
+  GenericErrorCode | `idempotency:${string}` | 'login_lockout:locked' | `auth:${string}`,
+  number
+>;
 
 /** §11.2 rows matched on the exact suffix. */
 export const SUFFIX_STATUS: Readonly<Record<string, number>> = {

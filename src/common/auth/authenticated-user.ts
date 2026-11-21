@@ -12,9 +12,12 @@ import { createParamDecorator, type ExecutionContext } from '@nestjs/common';
 export interface AuthenticatedUser {
   /** `sub`: the user id (auth.users.id), lowercase uuid. */
   readonly id: string;
-  /** Who issued the token. Own tokens (API-100-51) add `'atlas'`. */
-  readonly issuer: 'supabase';
-  /** `session_id` claim when present (Supabase Auth session), else null. */
+  /** Who issued the token: Supabase Auth, or the API itself (own tokens, API-100-51). */
+  readonly issuer: 'supabase' | 'atlas';
+  /**
+   * Own token: `sid`, the `device_sessions` id (always set). Supabase token: the `session_id` claim
+   * when present (a Supabase Auth session, not a row of this API), else null.
+   */
   readonly sessionId: string | null;
   readonly email: string | null;
   readonly phone: string | null;

@@ -139,6 +139,46 @@ describe('scrubber (API-100-06 AC2)', () => {
     });
   });
 
+  describe('own auth (Phase 6)', () => {
+    it('redacts passwords, refresh / ID / link tokens, codes and hashes by key', () => {
+      const out = scrub({
+        password: 'Secret123',
+        new_password: 'Secret456',
+        refresh_token: 'opaque-refresh-value',
+        id_token: 'header.payload.signature',
+        access_token: 'another',
+        token: 'link-token-value',
+        code: '123456',
+        password_hash: '$argon2id$v=19$m=19456,t=2,p=1$abc$def',
+        token_hash: 'digest',
+        error_code: 'otp_invalid',
+      }) as Record<string, unknown>;
+      for (const key of [
+        'password',
+        'new_password',
+        'refresh_token',
+        'id_token',
+        'access_token',
+        'token',
+        'code',
+        'password_hash',
+        'token_hash',
+      ]) {
+        expect(out[key]).toBe(REDACTED);
+      }
+      expect(out.error_code).toBe('otp_invalid');
+    });
+
+    it('redacts the token of an auth link in free text', () => {
+      const link =
+        'io.supabase.atlasmobile://login-callback/?type=recovery&token=AbC_123-xyzLongOpaqueValue';
+      expect(scrubString(`sent ${link} now`)).toBe(
+        `sent io.supabase.atlasmobile://login-callback/?type=recovery&token=${REDACTED} now`,
+      );
+      expect(scrubString('?code=123456&x=1')).toBe(`?code=${REDACTED}&x=1`);
+    });
+  });
+
   describe('structure', () => {
     it('recurses into nested objects and arrays', () => {
       expect(scrub({ a: [{ phone: PHONE }, { b: { password: 'x' } }] })).toEqual({

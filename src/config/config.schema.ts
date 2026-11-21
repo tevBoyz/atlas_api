@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import { z } from 'zod';
 
 import { dataStoreProblems } from './data-store-guard';
+import { JWT_KID_PATTERN, JwtKeysError, parseJwtKeys } from './jwt-keys';
 
 /**
  * Typed environment configuration (story API-100-02).
@@ -46,6 +47,27 @@ const integerInRange = (min: number, max: number) =>
 
 const flag = () => z.stringbool({ truthy: ['true'], falsy: ['false'] }).default(false);
 const nonEmpty = () => z.string().min(1).optional();
+
+/** `a, b ,c` → `['a', 'b', 'c']`: a comma-separated list of OAuth client ids (no blanks). */
+const clientIdList = () =>
+  z
+    .string()
+    .transform((value) =>
+      value
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
+    )
+    .pipe(z.array(z.string().regex(/^[A-Za-z0-9._:-]{1,255}$/)).min(1))
+    .optional();
+
+/** An ISO-8601 date-time with a time zone (e.g. `2027-01-31T00:00:00Z`). */
+const isoDateTime = () =>
+  z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/)
+    .refine((value) => !Number.isNaN(Date.parse(value)))
+    .optional();
 
 function isIpOrCidr(entry: string): boolean {
   const [address, prefix, ...rest] = entry.split('/');
@@ -175,6 +197,46 @@ export const configSchema = z.object({
     .string()
     .regex(/^\+[1-9][0-9]{7,14}$/)
     .optional(),
+  // Twilio Verify service for phone OTP (API-100-53); only used by the Twilio adapter (hold).
+  TWILIO_VERIFY_SERVICE_SID: z
+    .string()
+    .regex(/^VA[0-9a-fA-F]{32}$/)
+    .optional(),
+
+  // Own authentication (Phase 6, API-100-51 to 59).
+  // Signing keys of the access tokens: a JSON array of JWKs (SECRET) and the kid that signs.
+  AUTH_JWT_KEYS: nonEmpty(),
+  AUTH_JWT_ACTIVE_KID: z.string().regex(JWT_KID_PATTERN).optional(),
+  AUTH_JWT_ISSUER: z
+    .string()
+    .regex(/^[A-Za-z0-9:/._-]{1,200}$/)
+    .default('atlas-api'),
+  AUTH_JWT_AUDIENCE: z
+    .string()
+    .regex(/^[A-Za-z0-9:/._-]{1,200}$/)
+    .default('atlas-app'),
+  AUTH_ACCESS_TOKEN_TTL_SECONDS: integerInRange(60, 3600).default(900),
+  AUTH_JWT_CLOCK_SKEW_SECONDS: integerInRange(0, 30).default(30),
+  AUTH_REFRESH_TOKEN_TTL_DAYS: integerInRange(1, 90).default(30),
+  AUTH_SESSION_IDLE_DAYS: integerInRange(1, 90).default(7),
+  AUTH_EMAIL_LINK_TTL_SECONDS: integerInRange(60, 86_400).default(300),
+  AUTH_LINK_BASE: urlWithProtocol([]).default('io.supabase.atlasmobile://login-callback/'),
+  // Test-only seam: GET /__test/auth-messages reads what the FAKE email/SMS adapters "sent"
+  // (verification links, OTP codes). Refused when NODE_ENV=production.
+  AUTH_TEST_MAILBOX_ENABLED: flag(),
+  // Dual-token window (API-100-59): accept Supabase access tokens at all, and until when.
+  SUPABASE_JWT_ACCEPT: z.stringbool({ truthy: ['true'], falsy: ['false'] }).default(true),
+  SUPABASE_JWT_ACCEPT_UNTIL: isoDateTime(),
+  // Google / Apple ID-token sign-in (API-100-55). Without client ids the provider is disabled.
+  GOOGLE_CLIENT_IDS: clientIdList(),
+  GOOGLE_JWKS_URL: urlWithProtocol(['http:', 'https:']).default(
+    'https://www.googleapis.com/oauth2/v3/certs',
+  ),
+  APPLE_SIGN_IN_ENABLED: flag(),
+  APPLE_CLIENT_IDS: clientIdList(),
+  APPLE_JWKS_URL: urlWithProtocol(['http:', 'https:']).default(
+    'https://appleid.apple.com/auth/keys',
+  ),
 });
 
 export type Config = z.output<typeof configSchema>;
@@ -243,6 +305,25 @@ const RULES: Record<ConfigKey, string> = {
   TWILIO_ACCOUNT_SID: 'must be a string',
   TWILIO_AUTH_TOKEN: 'must be a string',
   TWILIO_FROM_NUMBER: 'must be an E.164 phone number (+ and 8-15 digits)',
+  TWILIO_VERIFY_SERVICE_SID: 'must be a Twilio Verify service SID (VA and 32 hex characters)',
+  AUTH_JWT_KEYS: 'must be a JSON array of JWKs',
+  AUTH_JWT_ACTIVE_KID: 'must be 1-64 letters, digits, ".", "_" or "-"',
+  AUTH_JWT_ISSUER: 'must be 1-200 letters, digits, ":", "/", ".", "_" or "-"',
+  AUTH_JWT_AUDIENCE: 'must be 1-200 letters, digits, ":", "/", ".", "_" or "-"',
+  AUTH_ACCESS_TOKEN_TTL_SECONDS: 'must be an integer from 60 to 3600',
+  AUTH_JWT_CLOCK_SKEW_SECONDS: 'must be an integer from 0 to 30',
+  AUTH_REFRESH_TOKEN_TTL_DAYS: 'must be an integer from 1 to 90',
+  AUTH_SESSION_IDLE_DAYS: 'must be an integer from 1 to 90',
+  AUTH_EMAIL_LINK_TTL_SECONDS: 'must be an integer from 60 to 86400',
+  AUTH_LINK_BASE: 'must be a URL (any scheme)',
+  AUTH_TEST_MAILBOX_ENABLED: 'must be true or false',
+  SUPABASE_JWT_ACCEPT: 'must be true or false',
+  SUPABASE_JWT_ACCEPT_UNTIL: 'must be an ISO-8601 date-time with a time zone',
+  GOOGLE_CLIENT_IDS: 'must be a comma-separated list of client ids',
+  GOOGLE_JWKS_URL: 'must be an http(s) URL',
+  APPLE_SIGN_IN_ENABLED: 'must be true or false',
+  APPLE_CLIENT_IDS: 'must be a comma-separated list of client ids',
+  APPLE_JWKS_URL: 'must be an http(s) URL',
 };
 
 /** FCM service-account keys (API-100-46). All or none. */
@@ -273,6 +354,9 @@ export const REQUIRED_IN_PRODUCTION = [
   'SUPABASE_JWT_ISSUER',
   // Signed avatar upload URLs (API-100-37); optional in development / tests.
   'SUPABASE_STORAGE_SERVICE_KEY',
+  // Own access tokens (API-100-51).
+  'AUTH_JWT_KEYS',
+  'AUTH_JWT_ACTIVE_KID',
 ] as const satisfies readonly ConfigKey[];
 
 /** At least one of these verifies Supabase JWTs; one is required when NODE_ENV=production. */
@@ -367,12 +451,51 @@ export function parseConfig(env: Record<string, unknown>): Config {
       problems.push({ keys: [problem.key], reason: problem.reason });
     }
     problems.push(...channelProblems(result.data));
+    problems.push(...authProblems(result.data));
   }
 
   if (problems.length > 0 || !result.success) {
     throw new ConfigValidationError(problems);
   }
   return result.data;
+}
+
+/**
+ * Own-auth rules across keys (Phase 6). Names keys only, never values (the keys are secret).
+ * - AUTH_JWT_KEYS and AUTH_JWT_ACTIVE_KID come together, and must parse (jwt-keys.ts).
+ * - The test mailbox (verification links and OTP codes of the fake adapters) never in production.
+ * - Apple sign-in needs its client ids when enabled.
+ */
+function authProblems(config: Config): ConfigProblem[] {
+  const problems: ConfigProblem[] = [];
+  const keys = config.AUTH_JWT_KEYS;
+  const kid = config.AUTH_JWT_ACTIVE_KID;
+  if ((keys === undefined) !== (kid === undefined)) {
+    problems.push({
+      keys: [keys === undefined ? 'AUTH_JWT_KEYS' : 'AUTH_JWT_ACTIVE_KID'],
+      reason: 'required together with AUTH_JWT_KEYS, AUTH_JWT_ACTIVE_KID',
+    });
+  } else if (keys !== undefined && kid !== undefined) {
+    try {
+      parseJwtKeys(keys, kid);
+    } catch (error) {
+      const reason = error instanceof JwtKeysError ? error.message : 'is invalid';
+      problems.push({ keys: ['AUTH_JWT_KEYS'], reason });
+    }
+  }
+  if (config.NODE_ENV === 'production' && config.AUTH_TEST_MAILBOX_ENABLED) {
+    problems.push({
+      keys: ['AUTH_TEST_MAILBOX_ENABLED'],
+      reason: 'must be false when NODE_ENV=production (test-only seam)',
+    });
+  }
+  if (config.APPLE_SIGN_IN_ENABLED && config.APPLE_CLIENT_IDS === undefined) {
+    problems.push({
+      keys: ['APPLE_CLIENT_IDS'],
+      reason: 'required when APPLE_SIGN_IN_ENABLED=true',
+    });
+  }
+  return problems;
 }
 
 /**

@@ -75,6 +75,23 @@ export class DevicesRepository {
     return result.rows[0].id;
   }
 
+  /**
+   * Links the caller's own-auth session (API-100-56) to this device row, so signing out of that
+   * session clears this device's push token. Nothing for a Supabase token (no session row).
+   */
+  async linkSession(
+    tx: DeviceTransaction,
+    userId: string,
+    sessionId: string,
+    deviceId: string,
+  ): Promise<void> {
+    await tx.execute(sql`
+      update public.device_sessions
+         set device_id = ${deviceId}::uuid
+       where id = ${sessionId}::uuid and user_id = ${userId}::uuid
+         and device_id is distinct from ${deviceId}::uuid`);
+  }
+
   /** U2: clears the token of the caller's installation. False when there was none to clear. */
   async clearPushToken(
     tx: DeviceTransaction,

@@ -1,4 +1,15 @@
+import { generateKeyPairSync } from 'node:crypto';
+
 import { ConfigValidationError, parseConfig } from './config.schema';
+
+/** A throwaway Ed25519 signing key generated at runtime (never key material in the repo). */
+function throwawayKey(kid: string, withPrivate = true): Record<string, string> {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const jwk = privateKey.export({ format: 'jwk' }) as Record<string, string>;
+  if (!withPrivate) delete jwk.d;
+  return { ...jwk, kid };
+}
+const AUTH_KEYS = JSON.stringify([throwawayKey('k1')]);
 
 /** Fake values only. The secret is long and distinctive so leaks are easy to detect. */
 const SECRET = 'fake-jwt-secret-0123456789-abcdefghij-SHOULD-NEVER-APPEAR';
@@ -34,6 +45,20 @@ const RATE_LIMIT_DEFAULTS = {
   CHANNEL_SMS_ADAPTER: 'fake',
   CHANNEL_SMS_TWILIO_HOLD_LIFTED: false,
   APNS_ENVIRONMENT: 'production',
+  // Own auth (Phase 6).
+  AUTH_JWT_ISSUER: 'atlas-api',
+  AUTH_JWT_AUDIENCE: 'atlas-app',
+  AUTH_ACCESS_TOKEN_TTL_SECONDS: 900,
+  AUTH_JWT_CLOCK_SKEW_SECONDS: 30,
+  AUTH_REFRESH_TOKEN_TTL_DAYS: 30,
+  AUTH_SESSION_IDLE_DAYS: 7,
+  AUTH_EMAIL_LINK_TTL_SECONDS: 300,
+  AUTH_LINK_BASE: 'io.supabase.atlasmobile://login-callback/',
+  AUTH_TEST_MAILBOX_ENABLED: false,
+  SUPABASE_JWT_ACCEPT: true,
+  GOOGLE_JWKS_URL: 'https://www.googleapis.com/oauth2/v3/certs',
+  APPLE_SIGN_IN_ENABLED: false,
+  APPLE_JWKS_URL: 'https://appleid.apple.com/auth/keys',
 };
 
 const PRODUCTION_ENV = {
@@ -58,6 +83,8 @@ const PRODUCTION_ENV = {
   CHANNEL_PUSH_ENABLED: 'false',
   CHANNEL_SMS_ENABLED: 'false',
   CHANNEL_EMAIL_ENABLED: 'FALSE',
+  AUTH_JWT_KEYS: AUTH_KEYS,
+  AUTH_JWT_ACTIVE_KID: 'k1',
 };
 
 function validationError(env: Record<string, unknown>): ConfigValidationError {
@@ -200,6 +227,8 @@ describe('parseConfig (API-100-02)', () => {
         'SUPABASE_URL',
         'SUPABASE_JWT_ISSUER',
         'SUPABASE_STORAGE_SERVICE_KEY',
+        'AUTH_JWT_KEYS',
+        'AUTH_JWT_ACTIVE_KID',
         'SUPABASE_JWT_JWKS_URL',
         'SUPABASE_JWT_SECRET',
       ]);
@@ -211,6 +240,62 @@ describe('parseConfig (API-100-02)', () => {
       expect(error.message).not.toContain('fake-storage-key');
       expect(parseConfig({ AVATAR_STORAGE: 'memory' }).AVATAR_STORAGE).toBe('memory');
       expect(validationError({ AVATAR_STORAGE: 's3' }).keys).toEqual(['AVATAR_STORAGE']);
+    });
+  });
+
+  describe('own auth (Phase 6)', () => {
+    it('accepts a key set with a verify-only (public) key next to the active one', () => {
+      const keys = JSON.stringify([throwawayKey('old', false), throwawayKey('new')]);
+      const config = parseConfig({ AUTH_JWT_KEYS: keys, AUTH_JWT_ACTIVE_KID: 'new' });
+      expect(config.AUTH_JWT_ACTIVE_KID).toBe('new');
+    });
+
+    it.each([
+      ['not JSON', '{nope', 'k1'],
+      ['an empty array', '[]', 'k1'],
+      ['an unknown active kid', AUTH_KEYS, 'k2'],
+      ['an active key without d', JSON.stringify([throwawayKey('k1', false)]), 'k1'],
+      ['a duplicated kid', JSON.stringify([throwawayKey('k1'), throwawayKey('k1')]), 'k1'],
+      ['an RSA key', JSON.stringify([{ kty: 'RSA', kid: 'k1', n: 'AQAB', e: 'AQAB' }]), 'k1'],
+      [
+        'a private part of another key',
+        JSON.stringify([{ ...throwawayKey('k1'), x: throwawayKey('k9').x }]),
+        'k1',
+      ],
+    ])('refuses %s, naming the key only (never key material)', (_label, keys, kid) => {
+      const error = validationError({ AUTH_JWT_KEYS: keys, AUTH_JWT_ACTIVE_KID: kid });
+      expect(error.keys).toEqual(['AUTH_JWT_KEYS']);
+      const parsed = JSON.parse(AUTH_KEYS) as Record<string, string>[];
+      expect(error.message).not.toContain(parsed[0].d);
+    });
+
+    it('needs both AUTH_JWT_KEYS and AUTH_JWT_ACTIVE_KID', () => {
+      expect(validationError({ AUTH_JWT_KEYS: AUTH_KEYS }).keys).toEqual(['AUTH_JWT_ACTIVE_KID']);
+      expect(validationError({ AUTH_JWT_ACTIVE_KID: 'k1' }).keys).toEqual(['AUTH_JWT_KEYS']);
+    });
+
+    it('refuses the test mailbox in production, allows it elsewhere', () => {
+      expect(
+        validationError({ ...PRODUCTION_ENV, AUTH_TEST_MAILBOX_ENABLED: 'true' }).keys,
+      ).toEqual(['AUTH_TEST_MAILBOX_ENABLED']);
+      expect(parseConfig({ AUTH_TEST_MAILBOX_ENABLED: 'true' }).AUTH_TEST_MAILBOX_ENABLED).toBe(
+        true,
+      );
+    });
+
+    it('parses client id lists, the Supabase acceptance date and the Apple switch', () => {
+      const config = parseConfig({
+        GOOGLE_CLIENT_IDS: ' web.apps.example , android.apps.example ',
+        SUPABASE_JWT_ACCEPT: 'false',
+        SUPABASE_JWT_ACCEPT_UNTIL: '2027-01-31T00:00:00Z',
+      });
+      expect(config.GOOGLE_CLIENT_IDS).toEqual(['web.apps.example', 'android.apps.example']);
+      expect(config.SUPABASE_JWT_ACCEPT).toBe(false);
+      expect(config.SUPABASE_JWT_ACCEPT_UNTIL).toBe('2027-01-31T00:00:00Z');
+      expect(validationError({ SUPABASE_JWT_ACCEPT_UNTIL: '2027-01-31' }).keys).toEqual([
+        'SUPABASE_JWT_ACCEPT_UNTIL',
+      ]);
+      expect(validationError({ APPLE_SIGN_IN_ENABLED: 'true' }).keys).toEqual(['APPLE_CLIENT_IDS']);
     });
   });
 

@@ -121,6 +121,9 @@ export function maskEmail(value: string): string {
 const BEARER_PATTERN = /\b(Bearer|Basic)\s+[^\s,;"']+/gi;
 const JWT_PATTERN = /\beyJ[\w-]{5,}\.[\w-]{5,}\.[\w-]*/g;
 const INVITE_PATH_PATTERN = /(invites?\/)[A-Za-z0-9_-]{8,}/gi;
+/** Secrets in a query string, e.g. an auth link `...login-callback/?type=signup&token=...` (Phase 6). */
+const QUERY_SECRET_PATTERN =
+  /([?&](?:token|code|refresh_token|access_token|id_token)=)[^&\s"'#]+/gi;
 const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 /** `+` then 7-15 digits, optionally separated by spaces, dots, dashes or parentheses. */
 const PHONE_PATTERN = /\+\d(?:[\s().-]*\d){6,14}/g;
@@ -131,6 +134,7 @@ export function scrubString(value: string): string {
     .replace(BEARER_PATTERN, (_match, scheme: string) => `${scheme} ${REDACTED}`)
     .replace(JWT_PATTERN, REDACTED)
     .replace(INVITE_PATH_PATTERN, (_match, prefix: string) => `${prefix}${REDACTED}`)
+    .replace(QUERY_SECRET_PATTERN, (_match, prefix: string) => `${prefix}${REDACTED}`)
     .replace(EMAIL_PATTERN, (match) => maskEmail(match))
     .replace(PHONE_PATTERN, (match) => maskPhone(match));
 }

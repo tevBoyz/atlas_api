@@ -1,4 +1,5 @@
 import { useTestJwtEnvironment } from './test-auth-config';
+import { useTestAuthEnvironment } from './test-auth-keys';
 
 /**
  * Jest setup for unit tests (`npm test`, API-100-07). Unit tests never need Docker: the API's data
@@ -24,3 +25,5 @@ for (const key of Object.keys(process.env)) {
 // Profile photos: the in-memory fake (unit tests never call Supabase Storage).
 process.env.AVATAR_STORAGE = 'memory';
 useTestJwtEnvironment();
+// Own access tokens (API-100-51): fresh throwaway keys; no Google/Apple settings are inherited.
+useTestAuthEnvironment();

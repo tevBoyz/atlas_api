@@ -40,9 +40,14 @@ export class DevicesService {
     installationId: string,
     input: DeviceRegistration,
   ): Promise<{ device_id: string }> {
-    const deviceId = await this.run((tx) =>
-      this.repository.register(tx, user.id, installationId, input),
-    );
+    const deviceId = await this.run(async (tx) => {
+      const id = await this.repository.register(tx, user.id, installationId, input);
+      // Own sessions (API-100-56): sign-out of this session clears this device's push token.
+      if (user.issuer === 'atlas' && user.sessionId) {
+        await this.repository.linkSession(tx, user.id, user.sessionId, id);
+      }
+      return id;
+    });
     return { device_id: deviceId };
   }
 

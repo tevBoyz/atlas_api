@@ -157,6 +157,9 @@ describe('no route exposes another user’s profile (API-100-34 AC2)', () => {
                 return link.token;
               case 'id':
                 return incident.id;
+              case 'session_id':
+                // Own sessions (API-100-56): an id that is nobody's session.
+                return randomUUID();
               default:
                 throw new Error(`No value for path parameter {${p}}: add one to this test`);
             }

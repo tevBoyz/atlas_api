@@ -5,6 +5,7 @@
 import 'package:dio/dio.dart';
 
 import 'clients/health_client.dart';
+import 'clients/auth_client.dart';
 import 'clients/circles_client.dart';
 import 'clients/config_client.dart';
 import 'clients/incidents_client.dart';
@@ -26,6 +27,7 @@ class AtlasApiClient {
   static String get version => '0.1.0';
 
   HealthClient? _health;
+  AuthClient? _auth;
   CirclesClient? _circles;
   ConfigClient? _config;
   IncidentsClient? _incidents;
@@ -36,6 +38,8 @@ class AtlasApiClient {
   MetaClient? _meta;
 
   HealthClient get health => _health ??= HealthClient(_dio, baseUrl: _baseUrl);
+
+  AuthClient get auth => _auth ??= AuthClient(_dio, baseUrl: _baseUrl);
 
   CirclesClient get circles =>
       _circles ??= CirclesClient(_dio, baseUrl: _baseUrl);

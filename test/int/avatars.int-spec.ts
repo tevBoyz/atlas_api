@@ -16,6 +16,7 @@ import {
   putPersonalInfo,
   setAvatar,
 } from '../support/profile-api';
+import { untilReady } from '../support/auth-api';
 
 /**
  * API-100-37: profile photos through signed Storage URLs, with the in-memory Storage fake
@@ -220,6 +221,8 @@ describe('avatars through signed Storage URLs (API-100-37)', () => {
         {},
         withTestConfig({ AVATAR_STORAGE: 'memory', RATE_LIMIT_AVATAR_UPLOAD_MAX: '2' }),
       );
+      // Redis must be connected first: the limiter lets requests through while it is not.
+      await untilReady(limited.app);
       try {
         const user = await createUser(client);
         const statuses: number[] = [];

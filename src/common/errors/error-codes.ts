@@ -177,6 +177,40 @@ export const PARITY_ERROR_CODES = {
     'invalid_push_token',
   ],
 
+  // §11.3 A1-A20 own authentication (Phase 6, API-100-51 to 59). New codes (no SQL function behind
+  // them, `auth:*` as the spec's endpoint map names them). Sign-in errors that existed before keep
+  // the `login_lockout:*` strings (§7.5). Field codes name `details.field`.
+  auth: [
+    'not_authenticated',
+    'invalid_email',
+    'invalid_phone',
+    'invalid_full_name',
+    'invalid_device',
+    'weak_password',
+    'same_password',
+    'link_invalid',
+    'link_expired',
+    'over_email_send_rate_limit',
+    'otp_resend_limit',
+    'otp_invalid',
+    'otp_expired',
+    'otp_invalidated',
+    'sms_unavailable',
+    'invalid_credentials',
+    'email_not_confirmed',
+    'phone_not_confirmed',
+    'user_disabled',
+    'oauth_invalid_token',
+    'identity_conflict',
+    'provider_disabled',
+    'provider_unavailable',
+    'session_expired',
+    'refresh_token_reused',
+    'session_not_found',
+    'exchange_not_allowed',
+    'session_already_exchanged',
+  ],
+
   // §11.2 / §11.3 E1 Idempotency-Key (enforced by API-100-10; `invalid_key` from its AC3)
   idempotency: ['key_mismatch', 'in_progress', 'key_required', 'invalid_key'],
 } as const;

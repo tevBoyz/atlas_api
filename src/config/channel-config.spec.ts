@@ -1,4 +1,15 @@
+import { generateKeyPairSync } from 'node:crypto';
+
 import { ConfigValidationError, parseConfig } from './config.schema';
+
+/** A throwaway signing key, generated at runtime (production needs one, API-100-51). */
+const AUTH_KEY = {
+  ...(generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' }) as Record<
+    string,
+    string
+  >),
+  kid: 'k1',
+};
 
 /** Fake values only. */
 const FAKE_SECRET = 'fake-channel-secret-SHOULD-NEVER-APPEAR';
@@ -26,6 +37,8 @@ const PRODUCTION = {
   SUPABASE_JWT_SECRET: 'fake-jwt-secret-0123456789-abcdefghij',
   SUPABASE_JWT_ISSUER: 'https://example.supabase.co/auth/v1',
   SUPABASE_STORAGE_SERVICE_KEY: 'fake-storage-key',
+  AUTH_JWT_KEYS: JSON.stringify([AUTH_KEY]),
+  AUTH_JWT_ACTIVE_KID: 'k1',
 };
 
 function problemsOf(env: Record<string, string>): { keys: string[]; message: string } {

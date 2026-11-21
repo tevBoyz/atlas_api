@@ -12,6 +12,8 @@ Plain SQL migrations owned by the Atlas API, applied **after** the Supabase base
 | `0005_user_devices.sql` | API-100-44 | `user_devices`: app installations and push tokens (token unique across devices) |
 | `0006_notification_outbox.sql` | API-100-45 | `notification_outbox`: transactional outbox published to BullMQ by the relay |
 | `0007_notification_deliveries.sql` | API-100-47 | `notification_deliveries`: one row per recipient x channel x device with its outcome |
+| `0008_auth_schema.sql` | API-100-50 | own auth: `users`, `user_credentials`, `user_identities`, `device_sessions`, `refresh_tokens`, `auth_tokens` (+ `citext` in `extensions`) |
+| `0009_auth_session_exchange.sql` | API-100-59 | `device_sessions.exchanged_supabase_session_id` (unique): the one-time Supabase session exchange (D8) |
 
 - File name: `<number>_<snake_case_description>.sql`, e.g. `0001_audit_log.sql`. Applied in number
   order; the id recorded is the file name without `.sql`.

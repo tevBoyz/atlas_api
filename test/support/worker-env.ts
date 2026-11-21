@@ -1,4 +1,5 @@
 import { useTestJwtEnvironment } from '../../src/testing/test-auth-config';
+import { useTestAuthEnvironment } from '../../src/testing/test-auth-keys';
 import { workerDatabaseUrl, workerId, workerRedisUrl } from './stack';
 
 /**
@@ -24,3 +25,6 @@ process.env.REALTIME_ADAPTER_KEY = `atlas:realtime:test:w${workerId()}`;
 // Profile photos go to the in-memory fake: tests never call Supabase Storage (API-100-37).
 process.env.AVATAR_STORAGE = 'memory';
 useTestJwtEnvironment();
+// Own access tokens (API-100-51): fresh throwaway keys per worker; never Google or Apple (their
+// settings are removed, so both providers are disabled unless a suite configures a fake JWKS).
+useTestAuthEnvironment();
