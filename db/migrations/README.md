@@ -14,6 +14,9 @@ Plain SQL migrations owned by the Atlas API, applied **after** the Supabase base
 | `0007_notification_deliveries.sql` | API-100-47 | `notification_deliveries`: one row per recipient x channel x device with its outcome |
 | `0008_auth_schema.sql` | API-100-50 | own auth: `users`, `user_credentials`, `user_identities`, `device_sessions`, `refresh_tokens`, `auth_tokens` (+ `citext` in `extensions`) |
 | `0009_auth_session_exchange.sql` | API-100-59 | `device_sessions.exchanged_supabase_session_id` (unique): the one-time Supabase session exchange (D8) |
+| `0010_users_foreign_keys.sql` | Phase 7 (D36, D37) | the `profiles` / `safety_circle_members` / `user_devices` foreign keys repointed at `users`; compatibility trigger |
+| `0011_session_revoke_password_change.sql` | Phase 7 (D38) | `device_sessions.revoke_reason` allows `password_change` |
+| `0012_retire_supabase_app_paths.sql` | API-100-62 (D42) | **non-additive (approved):** `anon` / `authenticated` / PUBLIC table and function grants revoked, `incidents` / `incident_events` out of `supabase_realtime`, `avatars` write policies dropped; recorded in `api_retired_supabase_access`; rollback `db/rollback/0012_down.sql` |
 
 - File name: `<number>_<snake_case_description>.sql`, e.g. `0001_audit_log.sql`. Applied in number
   order; the id recorded is the file name without `.sql`.
@@ -21,6 +24,8 @@ Plain SQL migrations owned by the Atlas API, applied **after** the Supabase base
   `public.api_schema_migrations (id text primary key, applied_at timestamptz)`.
 - **Additive and backward compatible only** (new tables, new nullable columns, new indexes): the
   mobile app and the Supabase SQL functions share this database until cutover (AGENTS.md rule 4).
+  The one approved exception is `0012` (API-100-62, D42), which ships with a tested rollback script
+  in `db/rollback/`.
 - Never edit a migration that has been applied anywhere; add a new one.
 - Re-runnable on a fresh database after the baseline (epic §5, definition of done 5).
 - Do not write `create index concurrently` (it cannot run inside a transaction).

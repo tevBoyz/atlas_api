@@ -9,7 +9,7 @@ import { testDatabaseUrl } from '../support/database';
  * `idempotency_keys` (`0001`), `audit_log` (`0003`), `user_devices` (`0005`),
  * `notification_outbox` (`0006`), `notification_deliveries` (`0007`) and the own-auth tables
  * (`0008`: `users`, `user_credentials`, `user_identities`, `device_sessions`, `refresh_tokens`,
- * `auth_tokens`).
+ * `auth_tokens`) and the record of migration 0012 (`api_retired_supabase_access`, D42).
  */
 const TABLES = [
   'public.api_schema_migrations',
@@ -24,6 +24,7 @@ const TABLES = [
   'public.device_sessions',
   'public.refresh_tokens',
   'public.auth_tokens',
+  'public.api_retired_supabase_access',
 ];
 const ROLES = ['anon', 'authenticated'];
 const PRIVILEGES = ['select', 'insert', 'update', 'delete'];

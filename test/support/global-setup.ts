@@ -1,19 +1,25 @@
 import { randomBytes } from 'node:crypto';
-import { resolve } from 'node:path';
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import { Client } from 'pg';
 import { GenericContainer, type StartedTestContainer, Wait } from 'testcontainers';
 
 import { applyBaseline } from '../../src/db/tooling/baseline';
-import { runMigrations } from '../../src/db/tooling/migrate';
+import { listMigrationFiles, runMigrations } from '../../src/db/tooling/migrate';
 import { assertSafeTarget } from '../../src/db/tooling/target-guard';
 import {
   POSTGRES_IMAGE,
+  PRE_0012_TEMPLATE_DATABASE,
+  PRODUCTION_TEMPLATE_DATABASE,
   REDIS_DATABASES,
   REDIS_IMAGE,
+  RETIREMENT_MIGRATION_NUMBER,
   STACK_ENV,
   TEMPLATE_DATABASE,
 } from './stack';
+import { applyTestHarnessRegrant } from './test-harness-grants';
 
 /**
  * Jest globalSetup (API-100-13 AC1): one Postgres and one Redis container per run, on random host
@@ -85,23 +91,49 @@ async function withClient<T>(url: string, fn: (client: Client) => Promise<T>): P
   }
 }
 
-/** Baseline + API migrations as the API role, then a template every worker database clones. */
-async function buildTemplate(apiUrl: string, adminMaintenanceUrl: string): Promise<void> {
-  await withClient(apiUrl, async (client) => {
-    await applyBaseline(client, resolve('db/baseline'), silent);
-    await runMigrations(client, resolve('db/migrations'), silent);
-  });
+/** Freezes the current `postgres` database into the template `name` (no connections allowed). */
+async function freezeTemplate(adminMaintenanceUrl: string, name: string): Promise<void> {
   await withClient(adminMaintenanceUrl, async (client) => {
     // CREATE DATABASE needs an idle source: the image's background workers are disconnected first.
     await client.query(
       `select pg_terminate_backend(pid) from pg_stat_activity
         where datname = 'postgres' and pid <> pg_backend_pid()`,
     );
-    await client.query(`create database ${TEMPLATE_DATABASE} template postgres owner postgres`);
-    await client.query(
-      `alter database ${TEMPLATE_DATABASE} with is_template true allow_connections false`,
-    );
+    await client.query(`create database ${name} template postgres owner postgres`);
+    await client.query(`alter database ${name} with is_template true allow_connections false`);
   });
+}
+
+/** Runs the API migrations numbered below `number` only (from a temporary copy of the folder). */
+async function runMigrationsBefore(client: Client, number: number): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), 'atlas-migrations-'));
+  try {
+    for (const file of listMigrationFiles(resolve('db/migrations'))) {
+      if (file.number < number)
+        copyFileSync(resolve('db/migrations', file.file), join(dir, file.file));
+    }
+    await runMigrations(client, dir, silent);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Baseline + API migrations as the API role, in three frozen steps: before 0012 (the rollback
+ * test), all migrations = the production state of 0012 / D42 (the production-state test), then the
+ * test harness re-grant (`test-harness-grants.ts`, test databases only) = the template every worker
+ * database clones.
+ */
+async function buildTemplate(apiUrl: string, adminMaintenanceUrl: string): Promise<void> {
+  await withClient(apiUrl, async (client) => {
+    await applyBaseline(client, resolve('db/baseline'), silent);
+    await runMigrationsBefore(client, RETIREMENT_MIGRATION_NUMBER);
+  });
+  await freezeTemplate(adminMaintenanceUrl, PRE_0012_TEMPLATE_DATABASE);
+  await withClient(apiUrl, (client) => runMigrations(client, resolve('db/migrations'), silent));
+  await freezeTemplate(adminMaintenanceUrl, PRODUCTION_TEMPLATE_DATABASE);
+  await withClient(apiUrl, applyTestHarnessRegrant);
+  await freezeTemplate(adminMaintenanceUrl, TEMPLATE_DATABASE);
 }
 
 export default async function globalSetup(): Promise<void> {

@@ -14,6 +14,22 @@ export const REDIS_DATABASES = 128;
 /** Built once per run: baseline + API migrations. Every worker database is cloned from it. */
 export const TEMPLATE_DATABASE = 'atlas_template';
 
+/**
+ * Built once per run from the same migrated database BEFORE the test harness re-grant
+ * (`test-harness-grants.ts`): the production state of migration 0012 / D42, cloned only by
+ * `test/int/production-state.int-spec.ts`.
+ */
+export const PRODUCTION_TEMPLATE_DATABASE = 'atlas_template_prod';
+
+/**
+ * The baseline and the API migrations BEFORE 0012 (D42): cloned only by
+ * `test/int/rollback-0012.int-spec.ts`, which applies 0012, rolls it back and compares the state.
+ */
+export const PRE_0012_TEMPLATE_DATABASE = 'atlas_template_pre0012';
+
+/** Migrations numbered below this are in {@link PRE_0012_TEMPLATE_DATABASE}. */
+export const RETIREMENT_MIGRATION_NUMBER = 12;
+
 export const STACK_ENV = {
   /** Superuser connection to a maintenance database (creates and drops worker databases). */
   adminUrl: 'ATLAS_TEST_PG_ADMIN_URL',
