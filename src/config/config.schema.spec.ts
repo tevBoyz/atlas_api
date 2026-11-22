@@ -44,6 +44,8 @@ const RATE_LIMIT_DEFAULTS = {
   CHANNEL_PUSH_ADAPTER: 'fake',
   CHANNEL_SMS_ADAPTER: 'fake',
   CHANNEL_SMS_TWILIO_HOLD_LIFTED: false,
+  CHANNEL_EMAIL_ADAPTER: 'fake',
+  SENDGRID_API_BASE_URL: 'https://api.sendgrid.com',
   APNS_ENVIRONMENT: 'production',
   // Own auth (Phase 6).
   AUTH_JWT_ISSUER: 'atlas-api',

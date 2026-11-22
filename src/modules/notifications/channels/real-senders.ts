@@ -1,6 +1,7 @@
 import { importPKCS8, SignJWT } from 'jose';
 
 import type {
+  EmailSender,
   PushMessage,
   PushSender,
   PushTarget,
@@ -13,8 +14,8 @@ import type { HttpResponse, HttpTransport } from './http-transport';
 import { pushData, pushText } from './push-content';
 
 /**
- * The real providers (API-100-46 AC2): built only when CHANNEL_PUSH_ADAPTER=real /
- * CHANNEL_SMS_ADAPTER=twilio with their keys (config.schema.ts), and only used when the channel is
+ * The real providers (API-100-46 AC2, D43): built only when CHANNEL_PUSH_ADAPTER=real /
+ * CHANNEL_SMS_ADAPTER=twilio / CHANNEL_EMAIL_ADAPTER=sendgrid with their keys (config.schema.ts), and only used when the channel is
  * enabled. Keys and tokens never appear in a result, an error or a log: a result carries a provider
  * message id or a {@link SendErrorCode} only.
  */
@@ -25,7 +26,12 @@ export function pemFromEnv(value: string): string {
 }
 
 function transportFailure(error: unknown): SendResult {
-  const name = error instanceof Error ? error.name : '';
+  // By name, not `instanceof Error`: fetch's timeout is a DOMException, which may come from another
+  // realm (it does under the test runner's VM), so `instanceof` would miss it.
+  const name =
+    error !== null && typeof error === 'object' && 'name' in error && typeof error.name === 'string'
+      ? error.name
+      : '';
   return failed(name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'transport_error');
 }
 
@@ -287,4 +293,92 @@ export class TwilioSmsSender implements SmsSender {
     }
     return failed(byStatus(response.status) ?? 'invalid_request');
   }
+}
+
+export interface SendGridSettings {
+  apiKey: string;
+  /** e.g. `https://api.sendgrid.com` (tests: a local fake server). No trailing path. */
+  baseUrl: string;
+  fromAddress: string;
+  fromName?: string;
+}
+
+/**
+ * SendGrid v3 Mail Send (D43): `POST {base}/v3/mail/send`, Bearer API key, JSON body, plain text
+ * only. Click and open tracking are switched off for every message: the auth links carry a
+ * single-use token and must reach the app unchanged (no tracking redirect, no pixel).
+ *
+ * Answers: 2xx (SendGrid answers 202) → `sent` with the `X-Message-Id` header; 400 about the
+ * recipient → `invalid_recipient`; any other 4xx → `invalid_request` (both permanent); 401 / 403
+ * → `auth_failed`, 429 → `rate_limited`, 5xx → `provider_unavailable`, network failure →
+ * `transport_error`, no answer in time → `timeout` (retried, as for the other adapters, D24).
+ * The key, the address and the text never appear in a result.
+ */
+export class SendGridEmailSender implements EmailSender {
+  private readonly url: string;
+
+  constructor(
+    private readonly settings: SendGridSettings,
+    private readonly transport: HttpTransport,
+  ) {
+    this.url = `${settings.baseUrl.replace(/\/+$/, '')}/v3/mail/send`;
+  }
+
+  async send(to: string, subject: string, text: string): Promise<SendResult> {
+    let response: HttpResponse;
+    try {
+      response = await this.transport.request({
+        method: 'POST',
+        url: this.url,
+        headers: {
+          authorization: `Bearer ${this.settings.apiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(sendGridBody(this.settings, to, subject, text)),
+      });
+    } catch (error) {
+      return transportFailure(error);
+    }
+    if (response.status >= 200 && response.status < 300) {
+      const id = response.headers['x-message-id'];
+      return { provider_message_id: id && id.length > 0 ? id : null, status: 'sent' };
+    }
+    return failed(sendGridErrorCode(response));
+  }
+}
+
+/** The v3 Mail Send body of one plain-text message to one recipient. */
+export function sendGridBody(
+  settings: Pick<SendGridSettings, 'fromAddress' | 'fromName'>,
+  to: string,
+  subject: string,
+  text: string,
+): Record<string, unknown> {
+  return {
+    personalizations: [{ to: [{ email: to }] }],
+    from: settings.fromName
+      ? { email: settings.fromAddress, name: settings.fromName }
+      : { email: settings.fromAddress },
+    subject,
+    content: [{ type: 'text/plain', value: text }],
+    tracking_settings: {
+      click_tracking: { enable: false, enable_text: false },
+      open_tracking: { enable: false },
+    },
+  };
+}
+
+/** SendGrid error → code. A 400 naming the recipient field means that address cannot be used. */
+function sendGridErrorCode(response: HttpResponse): SendErrorCode {
+  const byHttp = byStatus(response.status);
+  if (byHttp) return byHttp;
+  if (response.status === 400) {
+    const errors = parseJson(response.body).errors;
+    const list = Array.isArray(errors) ? (errors as Record<string, unknown>[]) : [];
+    const aboutRecipient = list.some(
+      (e) => typeof e.field === 'string' && /^personalizations\.\d+\.to/.test(e.field),
+    );
+    if (aboutRecipient) return 'invalid_recipient';
+  }
+  return 'invalid_request';
 }

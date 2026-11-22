@@ -6,7 +6,13 @@ import { ROOT_LOGGER } from '../../../observability/logger';
 import type { Channel, EmailSender, PushSender, SmsSender } from './channel.types';
 import { FakeEmailSender, FakePushSender, FakeSmsSender } from './fake-senders';
 import { FetchTransport, Http2Transport } from './http-transport';
-import { ApnsPushSender, FcmPushSender, RoutingPushSender, TwilioSmsSender } from './real-senders';
+import {
+  ApnsPushSender,
+  FcmPushSender,
+  RoutingPushSender,
+  SendGridEmailSender,
+  TwilioSmsSender,
+} from './real-senders';
 
 /**
  * The channel adapters of this process (API-100-46, D24), chosen from the config once at startup:
@@ -15,9 +21,10 @@ import { ApnsPushSender, FcmPushSender, RoutingPushSender, TwilioSmsSender } fro
  * | ------- | ---------------------------------------------------------- | -------------------------- |
  * | push    | `fake`, or `real` = FCM and/or APNs with their keys        | CHANNEL_PUSH_ENABLED=true  |
  * | sms     | `fake`, or `twilio` (refused while the Twilio hold is on)  | CHANNEL_SMS_ENABLED=true   |
- * | email   | `fake` only (no provider chosen yet)                       | CHANNEL_EMAIL_ENABLED=true |
+ * | email   | `fake`, or `sendgrid` with its key and sender (D43)        | CHANNEL_EMAIL_ENABLED=true |
  *
- * A disabled channel calls no adapter: its deliveries are recorded `skipped` (API-100-47).
+ * A disabled channel calls no adapter: its deliveries are recorded `skipped` (API-100-47). Every
+ * email (the auth links of AuthMessenger and the notification emails) goes through `email`.
  */
 @Injectable()
 export class ChannelSenders implements OnModuleDestroy {
@@ -82,15 +89,30 @@ export class ChannelSenders implements OnModuleDestroy {
       from
         ? new TwilioSmsSender({ accountSid: sid, authToken, from }, new FetchTransport(timeoutMs))
         : new FakeSmsSender();
-    this.email = new FakeEmailSender();
+    const sendgridKey = config.get('SENDGRID_API_KEY');
+    const fromAddress = config.get('EMAIL_FROM_ADDRESS');
+    // The config refuses `sendgrid` without its key and sender; checked again here.
+    this.email =
+      config.get('CHANNEL_EMAIL_ADAPTER') === 'sendgrid' && sendgridKey && fromAddress
+        ? new SendGridEmailSender(
+            {
+              apiKey: sendgridKey,
+              baseUrl: config.get('SENDGRID_API_BASE_URL'),
+              fromAddress,
+              fromName: config.get('EMAIL_FROM_NAME'),
+            },
+            new FetchTransport(timeoutMs),
+          )
+        : new FakeEmailSender();
 
     // Plain strings: the log scrubber masks any key named like `email`.
     const push = this.push instanceof FakePushSender ? 'fake' : 'real';
     const sms = this.sms instanceof FakeSmsSender ? 'fake' : 'twilio';
+    const mail = this.email instanceof FakeEmailSender ? 'fake' : 'sendgrid';
     logger.info(
       {
         channels_enabled: `push=${this.enabled.push},sms=${this.enabled.sms},mail=${this.enabled.email}`,
-        adapters: `push=${push},sms=${sms},mail=fake`,
+        adapters: `push=${push},sms=${sms},mail=${mail}`,
       },
       'notification channels',
     );

@@ -23,6 +23,10 @@ export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', '
 export const PUSH_ADAPTERS = ['fake', 'real'] as const;
 /** SMS adapter (API-100-46): the in-process fake, or Twilio (on hold: CHANNEL_SMS_TWILIO_HOLD_LIFTED). */
 export const SMS_ADAPTERS = ['fake', 'twilio'] as const;
+/** Email adapter (D43): the in-process fake, or SendGrid (v3 Mail Send). */
+export const EMAIL_ADAPTERS = ['fake', 'sendgrid'] as const;
+/** The real SendGrid API; tests point SENDGRID_API_BASE_URL at a local fake server. */
+export const SENDGRID_DEFAULT_BASE_URL = 'https://api.sendgrid.com';
 export const APNS_ENVIRONMENTS = ['production', 'sandbox'] as const;
 /** Every notification retry must happen within this time (spec §11.6: 3 retries within 60 s). */
 export const NOTIFICATION_RETRY_WINDOW_MS = 60_000;
@@ -191,6 +195,20 @@ export const configSchema = z.object({
   APNS_PRIVATE_KEY: nonEmpty(),
   APNS_BUNDLE_ID: nonEmpty(),
   APNS_ENVIRONMENT: z.enum(APNS_ENVIRONMENTS).default('production'),
+  // Email through SendGrid (D43, stage 7.7a): off by default; `sendgrid` needs the key and sender.
+  CHANNEL_EMAIL_ADAPTER: z.enum(EMAIL_ADAPTERS).default('fake'),
+  SENDGRID_API_KEY: nonEmpty(),
+  SENDGRID_API_BASE_URL: urlWithProtocol(['http:', 'https:']).default(SENDGRID_DEFAULT_BASE_URL),
+  EMAIL_FROM_ADDRESS: z
+    .string()
+    .max(254)
+    .regex(/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/)
+    .optional(),
+  EMAIL_FROM_NAME: z
+    .string()
+    .max(100)
+    .regex(/^[^\r\n<>"]+$/)
+    .optional(),
   TWILIO_ACCOUNT_SID: nonEmpty(),
   TWILIO_AUTH_TOKEN: nonEmpty(),
   TWILIO_FROM_NUMBER: z
@@ -304,6 +322,11 @@ const RULES: Record<ConfigKey, string> = {
   APNS_PRIVATE_KEY: 'must be a string',
   APNS_BUNDLE_ID: 'must be a string',
   APNS_ENVIRONMENT: `must be one of ${APNS_ENVIRONMENTS.join(', ')}`,
+  CHANNEL_EMAIL_ADAPTER: `must be one of ${EMAIL_ADAPTERS.join(', ')}`,
+  SENDGRID_API_KEY: 'must be a string',
+  SENDGRID_API_BASE_URL: 'must be an http(s) URL',
+  EMAIL_FROM_ADDRESS: 'must be an email address (name@domain.tld, at most 254 characters)',
+  EMAIL_FROM_NAME: 'must be 1-100 characters without line breaks, "<", ">" or quotes',
   TWILIO_ACCOUNT_SID: 'must be a string',
   TWILIO_AUTH_TOKEN: 'must be a string',
   TWILIO_FROM_NUMBER: 'must be an E.164 phone number (+ and 8-15 digits)',
@@ -346,6 +369,12 @@ export const TWILIO_KEYS = [
   'TWILIO_ACCOUNT_SID',
   'TWILIO_AUTH_TOKEN',
   'TWILIO_FROM_NUMBER',
+] as const satisfies readonly ConfigKey[];
+
+/** SendGrid keys (D43). All required by the SendGrid email adapter. */
+export const SENDGRID_KEYS = [
+  'SENDGRID_API_KEY',
+  'EMAIL_FROM_ADDRESS',
 ] as const satisfies readonly ConfigKey[];
 
 /** Keys that must be set when NODE_ENV=production (optional in development/test for now). */
@@ -504,8 +533,9 @@ function authProblems(config: Config): ConfigProblem[] {
  * Channel and retry rules across keys (API-100-46/47, D24, D25). Names keys only.
  * - A key set is all-or-none; the real push adapter needs at least one complete set (FCM or APNs).
  * - The Twilio adapter needs its keys AND CHANNEL_SMS_TWILIO_HOLD_LIFTED=true (Twilio hold).
- * - Production never runs an enabled channel on a fake adapter (it would record `sent` for nothing),
- *   and email has no real adapter yet (no provider chosen), so CHANNEL_EMAIL_ENABLED stays false.
+ * - The SendGrid email adapter needs SENDGRID_API_KEY and EMAIL_FROM_ADDRESS (D43).
+ * - Production never runs an enabled channel on a fake adapter (it would record `sent` for nothing):
+ *   email can only be enabled there with CHANNEL_EMAIL_ADAPTER=sendgrid and its keys, over https.
  * - All retries fit in {@link NOTIFICATION_RETRY_WINDOW_MS}.
  */
 function channelProblems(config: Config): ConfigProblem[] {
@@ -540,6 +570,12 @@ function channelProblems(config: Config): ConfigProblem[] {
       problems.push({ keys: absent, reason: 'required when CHANNEL_SMS_ADAPTER=twilio' });
     }
   }
+  if (config.CHANNEL_EMAIL_ADAPTER === 'sendgrid') {
+    const absent = missing(SENDGRID_KEYS);
+    if (absent.length > 0) {
+      problems.push({ keys: absent, reason: 'required when CHANNEL_EMAIL_ADAPTER=sendgrid' });
+    }
+  }
   if (config.NODE_ENV === 'production') {
     if (config.CHANNEL_PUSH_ENABLED && config.CHANNEL_PUSH_ADAPTER === 'fake') {
       problems.push({
@@ -553,10 +589,19 @@ function channelProblems(config: Config): ConfigProblem[] {
         reason: 'must be false when NODE_ENV=production and CHANNEL_SMS_ADAPTER=fake',
       });
     }
-    if (config.CHANNEL_EMAIL_ENABLED) {
+    if (config.CHANNEL_EMAIL_ENABLED && config.CHANNEL_EMAIL_ADAPTER === 'fake') {
       problems.push({
         keys: ['CHANNEL_EMAIL_ENABLED'],
-        reason: 'must be false when NODE_ENV=production (no email provider yet)',
+        reason: 'must be false when NODE_ENV=production and CHANNEL_EMAIL_ADAPTER=fake',
+      });
+    }
+    if (
+      config.CHANNEL_EMAIL_ADAPTER === 'sendgrid' &&
+      !config.SENDGRID_API_BASE_URL.startsWith('https:')
+    ) {
+      problems.push({
+        keys: ['SENDGRID_API_BASE_URL'],
+        reason: 'must be an https URL when NODE_ENV=production',
       });
     }
   }

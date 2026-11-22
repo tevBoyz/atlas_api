@@ -29,6 +29,11 @@ const TWILIO = {
   TWILIO_AUTH_TOKEN: FAKE_SECRET,
   TWILIO_FROM_NUMBER: '+12015550100',
 };
+const SENDGRID = {
+  CHANNEL_EMAIL_ADAPTER: 'sendgrid',
+  SENDGRID_API_KEY: FAKE_SECRET,
+  EMAIL_FROM_ADDRESS: 'alerts@example.test',
+};
 const PRODUCTION = {
   NODE_ENV: 'production',
   DATABASE_URL: 'postgresql://fake:fake@localhost:5432/atlas',
@@ -64,6 +69,8 @@ describe('channel and job configuration (API-100-45 to 47, D23-D25)', () => {
       CHANNEL_PUSH_ADAPTER: 'fake',
       CHANNEL_SMS_ADAPTER: 'fake',
       CHANNEL_SMS_TWILIO_HOLD_LIFTED: false,
+      CHANNEL_EMAIL_ADAPTER: 'fake',
+      SENDGRID_API_BASE_URL: 'https://api.sendgrid.com',
       NOTIFICATIONS_RETRY_ATTEMPTS: 3,
       NOTIFICATIONS_RETRY_BASE_DELAY_MS: 2000,
     });
@@ -124,6 +131,45 @@ describe('channel and job configuration (API-100-45 to 47, D23-D25)', () => {
     });
   });
 
+  describe('SendGrid email adapter (D43)', () => {
+    it('sendgrid needs the API key and the from address (named, key never echoed)', () => {
+      expect(problemsOf({ CHANNEL_EMAIL_ADAPTER: 'sendgrid' }).keys).toEqual([
+        'SENDGRID_API_KEY',
+        'EMAIL_FROM_ADDRESS',
+      ]);
+      const { keys, message } = problemsOf({
+        CHANNEL_EMAIL_ADAPTER: 'sendgrid',
+        SENDGRID_API_KEY: FAKE_SECRET,
+      });
+      expect(keys).toEqual(['EMAIL_FROM_ADDRESS']);
+      expect(message).not.toContain(FAKE_SECRET);
+      expect(problemsOf(SENDGRID).keys).toEqual([]);
+      expect(problemsOf({ ...SENDGRID, EMAIL_FROM_NAME: 'Atlas' }).keys).toEqual([]);
+    });
+
+    it('the key alone does nothing: the adapter stays fake unless CHANNEL_EMAIL_ADAPTER=sendgrid', () => {
+      const config = parseConfig({ SENDGRID_API_KEY: FAKE_SECRET });
+      expect(config.CHANNEL_EMAIL_ADAPTER).toBe('fake');
+    });
+
+    it.each([
+      ['EMAIL_FROM_ADDRESS', 'not-an-address'],
+      ['EMAIL_FROM_ADDRESS', 'Atlas <alerts@example.test>'],
+      ['EMAIL_FROM_NAME', 'Atlas\r\nBcc: x@example.test'],
+      ['EMAIL_FROM_NAME', 'x'.repeat(101)],
+      ['SENDGRID_API_BASE_URL', 'ftp://api.sendgrid.com'],
+      ['CHANNEL_EMAIL_ADAPTER', 'smtp'],
+    ])('%s=%j is refused', (key, value) => {
+      expect(problemsOf({ ...SENDGRID, [key]: value }).keys).toEqual([key]);
+    });
+
+    it('a local http base URL is allowed outside production only', () => {
+      const local = { ...SENDGRID, SENDGRID_API_BASE_URL: 'http://127.0.0.1:4010' };
+      expect(problemsOf(local).keys).toEqual([]);
+      expect(problemsOf({ ...PRODUCTION, ...local }).keys).toEqual(['SENDGRID_API_BASE_URL']);
+    });
+  });
+
   describe('production', () => {
     it('channels off: valid', () => {
       expect(problemsOf(PRODUCTION).keys).toEqual([]);
@@ -136,7 +182,28 @@ describe('channel and job configuration (API-100-45 to 47, D23-D25)', () => {
       },
     );
 
-    it('push enabled with the real adapter and keys is valid; email stays refused (no provider)', () => {
+    it('email enabled with SendGrid and its keys is valid (D43); the test mailbox stays refused', () => {
+      expect(
+        problemsOf({ ...PRODUCTION, CHANNEL_EMAIL_ENABLED: 'true', ...SENDGRID }).keys,
+      ).toEqual([]);
+      expect(
+        problemsOf({
+          ...PRODUCTION,
+          CHANNEL_EMAIL_ENABLED: 'true',
+          ...SENDGRID,
+          AUTH_TEST_MAILBOX_ENABLED: 'true',
+        }).keys,
+      ).toEqual(['AUTH_TEST_MAILBOX_ENABLED']);
+      expect(
+        problemsOf({
+          ...PRODUCTION,
+          CHANNEL_EMAIL_ENABLED: 'true',
+          CHANNEL_EMAIL_ADAPTER: 'sendgrid',
+        }).keys,
+      ).toEqual(['SENDGRID_API_KEY', 'EMAIL_FROM_ADDRESS']);
+    });
+
+    it('push enabled with the real adapter and keys is valid', () => {
       expect(
         problemsOf({
           ...PRODUCTION,

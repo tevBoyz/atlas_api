@@ -67,7 +67,7 @@ export class FakeSmsSender implements SmsSender {
   }
 }
 
-/** In-process email adapter (AC2). The only email adapter until a provider is chosen (D24). */
+/** In-process email adapter (AC2): the default; SendGrid only with CHANNEL_EMAIL_ADAPTER=sendgrid (D43). */
 export class FakeEmailSender implements EmailSender {
   readonly sent: FakeSent<string>[] = [];
 

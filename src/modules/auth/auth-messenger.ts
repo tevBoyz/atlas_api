@@ -24,8 +24,9 @@ const BODIES: Record<LinkKind, string> = {
  * Sends the auth emails and texts through the Phase 5 channel adapters (API-100-46, D24): email
  * links (verification, magic link, password reset) and, for the fake phone verification, the SMS
  * code. Sends happen after the commit and never block or fail the request (no timing difference
- * between existing and unknown accounts). A disabled channel sends nothing (the email channel has no
- * provider yet: an open item before the switch). Addresses, links and codes are never logged.
+ * between existing and unknown accounts). A disabled channel sends nothing. Emails go through the
+ * selected email adapter: the fake by default, SendGrid with CHANNEL_EMAIL_ADAPTER=sendgrid (D43).
+ * Addresses, links and codes are never logged.
  */
 @Injectable()
 export class AuthMessenger {

@@ -1,6 +1,7 @@
 # Phase 7 hand-off (Epic 100 API-100-60 to 62)
 
-Notes for the coordinator and Dawit about Phase 7 database changes. Earlier Phase 7 stages (7.1 to 7.5)
+Notes for the coordinator and Dawit about Phase 7 (7.6 database changes, 7.7a the SendGrid adapter;
+the single-switch runbook is `docs/runbook.md`, the parity sign-off `docs/parity_signoff.md`). Earlier Phase 7 stages (7.1 to 7.5)
 are described in `docs/phase6_handoff.md` section 0 and in the decisions D37 to D41 (epic §18).
 
 ## 7.6 Retire the Supabase app paths (API-100-62, D42)
@@ -101,3 +102,94 @@ and `api_retired_supabase_access` gone.
   (42501), and the API end to end (sign-up, profile, circle, invite + join, SOS, responder list,
   mark safe).
 - `test/int/rollback-0012.int-spec.ts` runs on the template frozen before 0012.
+
+## 7.7a SendGrid email adapter, off by default (D43)
+
+### What changed
+
+A real `EmailSender` for SendGrid (`SendGridEmailSender` in
+`src/modules/notifications/channels/real-senders.ts`), chosen in `channel-senders.ts`. With the
+default settings **nothing changes**: the email adapter stays the in-process fake. There is no
+SendGrid account and no domain yet, so it is switched on nowhere (not on staging either).
+
+Every email goes through the selected adapter: the three auth links of `AuthMessenger` (verification
+after sign-up, magic link, password reset) and the notification emails of the delivery worker (incident notices use push only today, D26, so in practice only the
+auth emails would go through SendGrid). `CHANNEL_EMAIL_ENABLED` still decides whether anything is
+sent at all.
+
+| Env name | Value | Notes |
+| --- | --- | --- |
+| `CHANNEL_EMAIL_ADAPTER` | `fake` (default) or `sendgrid` | `sendgrid` is refused at startup without the two keys below |
+| `SENDGRID_API_KEY` | SECRET | a restricted key with the "Mail Send" permission only; host secret store only |
+| `EMAIL_FROM_ADDRESS` | e.g. `no-reply@<your domain>` | must be on a domain authenticated in SendGrid (or a verified single sender) |
+| `EMAIL_FROM_NAME` | optional, e.g. `Atlas` | at most 100 characters, no line breaks, `<`, `>` or quotes |
+| `SENDGRID_API_BASE_URL` | leave empty | default `https://api.sendgrid.com`; only tests point it at a local fake server; production refuses a non-https URL |
+| `CHANNEL_EMAIL_ENABLED` | `true` to send | production now accepts `true` only with `CHANNEL_EMAIL_ADAPTER=sendgrid` and its keys |
+| `AUTH_TEST_MAILBOX_ENABLED` | `false` | still refused in production; it only ever shows what the FAKE adapter "sent", so with `sendgrid` it is empty |
+
+What a send does: `POST https://api.sendgrid.com/v3/mail/send` with `Authorization: Bearer <key>`,
+one recipient, the from address / name, the subject and one plain-text part. Click and open tracking
+are switched off for every message (the links carry a single-use token and must not be rewritten).
+202 → `sent` with SendGrid's `X-Message-Id` as `provider_message_id`; a 400 about the recipient →
+`invalid_recipient`, other 4xx → `invalid_request` (both final, not retried); 401 / 403 → `auth_failed`,
+429 → `rate_limited`, 5xx → `provider_unavailable`, network failure → `transport_error`, no answer in
+`NOTIFICATIONS_SEND_TIMEOUT_MS` → `timeout` (retried by the worker for notification emails; for auth
+emails the request has already answered, and the failure is logged as `auth email not sent` with the
+kind and the code only). The key, addresses and email texts are never logged.
+
+### Switching it on later (Dawit)
+
+1. **SendGrid account.** Create it (any plan that allows API sending; check today's free-tier limits).
+2. **Sender authentication** (SendGrid: Settings → Sender Authentication). Two options:
+   - **Single Sender Verification**: SendGrid emails one address; you click to confirm it. Quick, good
+     for a first test, but mail sent "from" an address on a domain you do not authenticate (for
+     example a Gmail address) is often rejected or put in spam (DMARC). Not for production.
+   - **Domain Authentication (recommended, needed for production)**: enter your domain (SendGrid can
+     use a subdomain such as `em1234.<domain>` for the return path). SendGrid shows DNS records,
+     normally three CNAMEs (return path and two DKIM keys `s1._domainkey`, `s2._domainkey`); add them
+     at your DNS provider and press Verify (DNS can take minutes to hours). Also add a DMARC TXT record
+     at `_dmarc.<domain>` (start with `v=DMARC1; p=none; rua=mailto:<your address>`) and, optionally,
+     Link Branding. The from address is then any address on that domain, e.g. `no-reply@<domain>`.
+3. **API key.** Settings → API Keys → Create → **Restricted Access**, "Mail Send" only. Copy it once
+   into the host's secret store (or `api/.env` on the laptop) as `SENDGRID_API_KEY`. Never paste it
+   in a chat, a ticket or the repo.
+4. **Settings** (API host, then restart the API and the worker): `CHANNEL_EMAIL_ADAPTER=sendgrid`,
+   `SENDGRID_API_KEY`, `EMAIL_FROM_ADDRESS=no-reply@<domain>`, `EMAIL_FROM_NAME=Atlas`,
+   `CHANNEL_EMAIL_ENABLED=true`, `AUTH_TEST_MAILBOX_ENABLED=false`; leave `SENDGRID_API_BASE_URL` empty.
+5. **Check.** The startup log line `notification channels` shows `mail=sendgrid`. Sign up with your
+   own address: the "Confirm your Atlas account" email arrives (SendGrid Activity Feed shows it as
+   delivered). A failure shows in the API log as `auth email not sent` with an `error_code`
+   (`auth_failed` = wrong key; `invalid_request` = usually the from address is not authenticated).
+6. **Back to the fake** at any time: `CHANNEL_EMAIL_ADAPTER=fake` (or `CHANNEL_EMAIL_ENABLED=false`) and
+   restart. Nothing is stored about the adapter.
+
+**Staging note:** the staging smoke guide and the phone tests read links from the test mailbox or the
+API log. With `sendgrid` the mailbox is empty, so keep staging on the fake for those runs, or read the
+links from the real inbox.
+
+### The links (gap 14, not built yet)
+
+The emails still carry `AUTH_LINK_BASE=io.supabase.atlasmobile://login-callback/?type=...&token=...`
+(the prototype scheme; it only opens the app, which then calls the API). **Many mail apps (for example
+Gmail) do not make a custom-scheme link clickable in a plain-text email**, so real email is only
+convenient once gap 14 is built: https App Links on Dawit's domain (decided 2026-11-22), e.g.
+`AUTH_LINK_BASE=https://<domain>/auth/callback` and `INVITE_URL_BASE=https://<domain>/invite/`, with
+`/.well-known/assetlinks.json` and `/.well-known/apple-app-site-association` hosted on the domain, an
+Android intent filter with `autoVerify`, iOS Associated Domains, the app's link parser for https, a
+store redirect when the app is not installed, and the old scheme accepted for a while. That work
+needs the same domain as SendGrid and a mobile change; it is a later stage (see the runbook's going
+live checklist, `docs/runbook.md`).
+
+### Tests
+
+- Unit (`channels.spec.ts`): the request (URL, Bearer header, JSON body, tracking off), every answer
+  class, timeouts and network errors, nothing secret in a result; which adapter `ChannelSenders`
+  builds. Config (`channel-config.spec.ts`): `sendgrid` needs the key and the sender, field formats,
+  the production rules (fake + enabled refused, sendgrid + keys allowed, non-https refused, test
+  mailbox refused).
+- Integration (`test/int/email-sendgrid.int-spec.ts`): a local fake SendGrid HTTP server and the real
+  fetch transport: 202 → sent + message id; 400 → permanent; 401, 429, 500 → retried codes; a slow
+  answer → `timeout`; a closed port → `transport_error`; sign-up, magic link and reset emails reach
+  the fake SendGrid (and a sign-up link from it verifies the account); a SendGrid 500 never fails the
+  sign-up; a notification email retried 429 → 500 → 202 ends `sent` with the message id; a 400 ends
+  `failed` after one attempt; no key or address in any log. No test reaches the real SendGrid.

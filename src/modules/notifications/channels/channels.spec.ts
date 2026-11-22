@@ -21,6 +21,8 @@ import {
   FcmPushSender,
   pemFromEnv,
   RoutingPushSender,
+  SendGridEmailSender,
+  sendGridBody,
   TwilioSmsSender,
 } from './real-senders';
 
@@ -181,6 +183,18 @@ describe('ChannelSenders: which adapter, and whether it may send (AC2, AC4)', ()
         TWILIO_FROM_NUMBER: '+12015550100',
       }),
     ).toThrow('Twilio hold');
+  });
+
+  it('email: SendGrid only with CHANNEL_EMAIL_ADAPTER=sendgrid and its key and sender (D43)', () => {
+    expect(sendersWith({ CHANNEL_EMAIL_ENABLED: 'true' }).email).toBeInstanceOf(FakeEmailSender);
+    const senders = sendersWith({
+      CHANNEL_EMAIL_ADAPTER: 'sendgrid',
+      SENDGRID_API_KEY: SECRET_MARKER,
+      EMAIL_FROM_ADDRESS: 'alerts@example.test',
+    });
+    expect(senders.email).toBeInstanceOf(SendGridEmailSender);
+    expect(senders.isEnabled('email')).toBe(false);
+    expect(() => sendersWith({ CHANNEL_EMAIL_ADAPTER: 'sendgrid' })).toThrow('SENDGRID_API_KEY');
   });
 });
 
@@ -350,6 +364,93 @@ describe('Twilio adapter against a fake transport (never built during the hold)'
     const result = await new TwilioSmsSender(credentials, transport).send('+12015550123', 'x');
     expect(result.error_code).toBe(code);
     expect(JSON.stringify(result)).not.toContain(SECRET_MARKER);
+  });
+});
+
+describe('SendGrid email adapter against a fake transport (D43)', () => {
+  const settings = {
+    apiKey: SECRET_MARKER,
+    baseUrl: 'https://api.sendgrid.com',
+    fromAddress: 'alerts@example.test',
+    fromName: 'Atlas',
+  };
+  const TO = 'member@example.test';
+  const TEXT = 'Open this link: io.supabase.atlasmobile://login-callback/?type=signup&token=abc';
+
+  it('posts one plain-text message with the Bearer key, tracking off; 202 -> sent with X-Message-Id', async () => {
+    const transport = new FakeTransport();
+    transport.answers.push({ status: 202, headers: { 'x-message-id': 'sg-msg-1' }, body: '' });
+    const result = await new SendGridEmailSender(settings, transport).send(TO, 'Subject', TEXT);
+    expect(result).toEqual({ provider_message_id: 'sg-msg-1', status: 'sent' });
+    const [request] = transport.requests;
+    expect(request).toMatchObject({
+      method: 'POST',
+      url: 'https://api.sendgrid.com/v3/mail/send',
+      headers: { authorization: `Bearer ${SECRET_MARKER}`, 'content-type': 'application/json' },
+    });
+    expect(JSON.parse(request.body)).toEqual({
+      personalizations: [{ to: [{ email: TO }] }],
+      from: { email: 'alerts@example.test', name: 'Atlas' },
+      subject: 'Subject',
+      content: [{ type: 'text/plain', value: TEXT }],
+      tracking_settings: {
+        click_tracking: { enable: false, enable_text: false },
+        open_tracking: { enable: false },
+      },
+    });
+  });
+
+  it('no from name: from has the address only; a base URL with a trailing slash still works', async () => {
+    expect(sendGridBody({ fromAddress: 'a@example.test' }, TO, 's', 't').from).toEqual({
+      email: 'a@example.test',
+    });
+    const transport = new FakeTransport();
+    transport.answers.push({ status: 202, headers: {}, body: '' });
+    const result = await new SendGridEmailSender(
+      { ...settings, baseUrl: 'http://127.0.0.1:9999/' },
+      transport,
+    ).send(TO, 's', 't');
+    expect(transport.requests[0].url).toBe('http://127.0.0.1:9999/v3/mail/send');
+    expect(result).toEqual({ provider_message_id: null, status: 'sent' });
+  });
+
+  it.each([
+    [
+      400,
+      { errors: [{ field: 'personalizations.0.to.0.email', message: 'invalid' }] },
+      'invalid_recipient',
+      true,
+    ],
+    [400, { errors: [{ field: 'from.email', message: 'not verified' }] }, 'invalid_request', true],
+    [400, 'not json', 'invalid_request', true],
+    [413, {}, 'invalid_request', true],
+    [401, { errors: [{ message: 'bad key' }] }, 'auth_failed', false],
+    [403, {}, 'auth_failed', false],
+    [429, {}, 'rate_limited', false],
+    [500, {}, 'provider_unavailable', false],
+    [503, {}, 'provider_unavailable', false],
+  ])(
+    'HTTP %i %o -> %s (permanent: %s), never the key, address or text',
+    async (status, body, code, permanent) => {
+      const transport = new FakeTransport().answer(status, body);
+      const result = await new SendGridEmailSender(settings, transport).send(TO, 'Subject', TEXT);
+      expect(result).toEqual({ provider_message_id: null, status: 'failed', error_code: code });
+      expect(isPermanentFailure(result.error_code)).toBe(permanent);
+      const serialized = JSON.stringify(result);
+      for (const secret of [SECRET_MARKER, TO, 'token=abc'])
+        expect(serialized).not.toContain(secret);
+    },
+  );
+
+  it('a timeout and a network failure are retryable failures', async () => {
+    const timeout = Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+    const transport = new FakeTransport();
+    transport.answers.push(timeout, new Error('ECONNREFUSED'));
+    const sender = new SendGridEmailSender(settings, transport);
+    expect((await sender.send(TO, 's', 't')).error_code).toBe('timeout');
+    expect((await sender.send(TO, 's', 't')).error_code).toBe('transport_error');
+    expect(isPermanentFailure('timeout')).toBe(false);
+    expect(isPermanentFailure('transport_error')).toBe(false);
   });
 });
 
