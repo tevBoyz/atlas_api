@@ -126,6 +126,25 @@ export const REALTIME_CONTRACT = {
         'medical_conditions are arrays of strings); updated_at = when it last changed ' +
         '(live_share_updated_at). The activation snapshot never changes.',
     },
+    [SERVER_EVENTS.responders]: {
+      room: 'incident:{id} (per receiver: user_id in full for the resident and for the member whose row it is, masked as incident.event actor_id for other members)',
+      payload: ['incident_id', 'responder', 'occurred_at'],
+      responder_keys: [
+        'user_id',
+        'display_name',
+        'avatar_url',
+        'status',
+        'acknowledged_at',
+        'status_at',
+        'is_me',
+      ],
+      note:
+        'SCRUM-49/50/51/55 (D56): sent after a member acknowledged for the first time or set or ' +
+        'changed their response (responding / unable). responder is the row of that member exactly ' +
+        'as GET /v1/incidents/{id}/responders shows it to the receiver; replace the row with the ' +
+        'same user_id (the masked id is stable per member). Not sent for a repeat that changed ' +
+        'nothing. After a reconnect, re-fetch the list over REST.',
+    },
     [SERVER_EVENTS.membershipEnded]: {
       room: 'user:{id} of the member who was removed or left (all their sockets; D49)',
       payload: ['circle_id', 'occurred_at'],

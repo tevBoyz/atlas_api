@@ -8,11 +8,13 @@ import 'package:retrofit/retrofit.dart';
 import '../models/delivery_counts.dart';
 import '../models/incident_details.dart';
 import '../models/incident_event.dart';
+import '../models/incident_response_request.dart';
 import '../models/incident_send.dart';
 import '../models/incident_shared.dart';
 import '../models/incident_submit_result.dart';
 import '../models/open_incident_result.dart';
 import '../models/recent_incident.dart';
+import '../models/responder.dart';
 import '../models/responder_incident.dart';
 import '../models/set_incident_notes_request.dart';
 import '../models/submit_emergency_alert_request.dart';
@@ -71,6 +73,19 @@ abstract class IncidentsClient {
   /// Re-notify the members of the caller's active alert
   @POST('/v1/incidents/{id}/renotify')
   Future<IncidentSend> renotifyEmergencyAlert({@Path('id') required String id});
+
+  /// Every notified member with their response status, responding first
+  @GET('/v1/incidents/{id}/responders')
+  Future<List<Responder>> listIncidentResponders({
+    @Path('id') required String id,
+  });
+
+  /// Set the caller's response to the alert: responding or unable to respond
+  @POST('/v1/incidents/{id}/response')
+  Future<Responder> setIncidentResponse({
+    @Path('id') required String id,
+    @Body() required IncidentResponseRequest body,
+  });
 
   /// The active and resolved incidents of the caller, newest first
   @GET('/v1/me/incidents')

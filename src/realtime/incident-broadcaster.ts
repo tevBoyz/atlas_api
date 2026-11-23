@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { maskActorId } from '../modules/incidents/incident-actor-mask';
+import { type ResponderViewer, responderView } from '../modules/incidents/incident-responder-view';
 import { RESIDENT_ONLY_DETAIL_KEYS } from '../modules/incidents/incident-events.service';
 import type {
   IncidentDeliveryCountsEvent,
@@ -10,6 +11,7 @@ import type {
   IncidentPostCommitHook,
   IncidentRenotifiedEvent,
   IncidentResolvedEvent,
+  IncidentRespondersEvent,
   IncidentSharedInfoEvent,
   IncidentSubmittedEvent,
 } from '../modules/incidents/incident-post-commit';
@@ -24,6 +26,7 @@ import { RealtimeGateway } from './realtime.gateway';
 import {
   type IncidentBroadcastState,
   type IncidentEventRow,
+  type IncidentResponderState,
   type IncidentSharedInfoState,
   RealtimeReadsRepository,
 } from './realtime-reads.repository';
@@ -122,6 +125,18 @@ export function deliveryCountsPayload(state: IncidentBroadcastState) {
 }
 
 /**
+ * `incident.responders` (D56) as one receiver sees it: the changed member's row with the rules of
+ * `GET /v1/incidents/{id}/responders` (the resident full ids; a member others' ids masked, D11).
+ */
+export function respondersPayload(state: IncidentResponderState, viewer: ResponderViewer) {
+  return {
+    incident_id: state.incident_id,
+    responder: responderView(state.responder, viewer),
+    occurred_at: state.occurred_at,
+  };
+}
+
+/**
  * `incident.event` as one receiver sees it, with the rules of `GET /v1/incidents/{id}/events`:
  * the resident gets the row as stored; anyone else never gets `recipient_ids` (D3) and gets
  * `actor_id` masked (D11) unless it is their own id (`viewerId`; null = a member who is not the
@@ -163,7 +178,10 @@ export function eventPayload(
  * - `incident.shared_info_updated` to `incident:{id}` when the resident changed their shared info
  *   during the incident (D53): the live view, never the activation snapshot;
  * - `incident.event` per inserted event, per receiver role: the resident (`incident:{id}:resident`)
- *   the row as stored, the actor's own sockets their own id unmasked, every other member D3/D11.
+ *   the row as stored, the actor's own sockets their own id unmasked, every other member D3/D11;
+ * - `incident.responders` (D56) after a member's first acknowledge or a response change, per
+ *   receiver the same way: the resident full ids, the member's own sockets their own row in full,
+ *   every other member the row with the user id masked.
  *
  * Every payload carries `incident_id` and `occurred_at` (database time); row events also carry the
  * row's `updated_at`.
@@ -249,6 +267,40 @@ export class IncidentBroadcaster implements IncidentPostCommitHook {
       [incidentRoom(state.incident_id)],
       SERVER_EVENTS.sharedInfoUpdated,
       sharedInfoPayload(state),
+    );
+  }
+
+  /**
+   * `incident.responders` (D56) to the incident room, one emit per receiver role (a socket gets it
+   * once): the resident's sockets (`incident:{id}:resident`) the row with the full user id; the
+   * member's own sockets (`incident:{id}:user:{uid}`) their row in full with `is_me` true; every other
+   * joined member the row with the user id masked (D11). Nothing when the member is no longer on the
+   * list (membership ended since the write).
+   */
+  async afterResponders(event: IncidentRespondersEvent): Promise<void> {
+    const state = await this.reads.responder(event.incident_id, event.member_user_id);
+    if (!state) return;
+    const id = state.incident_id;
+    const member = state.responder.user_id;
+    const residentRoom = incidentResidentRoom(id);
+    const memberRoom = incidentUserRoom(id, member);
+    this.gateway.emit(
+      [residentRoom],
+      SERVER_EVENTS.responders,
+      respondersPayload(state, { resident: true }),
+    );
+    this.gateway.emit(
+      [incidentRoom(id)],
+      SERVER_EVENTS.responders,
+      // Every member who is not the row's member: masked (an empty viewer id matches no row).
+      respondersPayload(state, { resident: false, viewerId: '' }),
+      [residentRoom, memberRoom],
+    );
+    this.gateway.emit(
+      [memberRoom],
+      SERVER_EVENTS.responders,
+      respondersPayload(state, { resident: false, viewerId: member }),
+      [residentRoom],
     );
   }
 

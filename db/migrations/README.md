@@ -19,6 +19,7 @@ Plain SQL migrations owned by the Atlas API, applied **after** the Supabase base
 | `0012_retire_supabase_app_paths.sql` | API-100-62 (D42) | **non-additive (approved):** `anon` / `authenticated` / PUBLIC table and function grants revoked, `incidents` / `incident_events` out of `supabase_realtime`, `avatars` write policies dropped; recorded in `api_retired_supabase_access`; rollback `db/rollback/0012_down.sql` |
 | `0013_membership_end_status.sql` | SCRUM-30/31 (D44) | `safety_circle_members.status` allows `removed` / `left`; nullable `ended_at` (set exactly for those two, check `safety_circle_members_ended_shape`): remove / leave keep the row as history |
 | `0014_medical_info_items.sql` | SCRUM-21 (D51-D53) | `profile_allergies` / `profile_medical_conditions` (one row per item, owner-only; back-filled: each existing non-blank text becomes one item); `profiles.medical_info_updated_at`; `incidents.live_share_payload` + `live_share_updated_at` (the live shared info of an active incident; `share_payload` stays the activation snapshot) |
+| `0015_incident_response_status.sql` | SCRUM-49/50/51/55 (D56) | `incident_deliveries.response_status` (null / `responding` / `unable`, check `incident_deliveries_response_status_allowed`) + `response_at` (set exactly with the status, check `incident_deliveries_response_shape`); existing rows unchanged |
 
 - File name: `<number>_<snake_case_description>.sql`, e.g. `0001_audit_log.sql`. Applied in number
   order; the id recorded is the file name without `.sql`.

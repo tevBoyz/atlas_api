@@ -1142,6 +1142,22 @@
         ],
         "type": "object"
       },
+      "IncidentResponseRequest": {
+        "properties": {
+          "status": {
+            "description": "\"responding\" (I am responding) or \"unable\" (unable to respond). Anything else is 422 incident_response:invalid_status.",
+            "enum": [
+              "responding",
+              "unable"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "IncidentSend": {
         "additionalProperties": false,
         "properties": {
@@ -3291,6 +3307,64 @@
           "member_id",
           "circle_id",
           "removed"
+        ],
+        "type": "object"
+      },
+      "Responder": {
+        "additionalProperties": false,
+        "properties": {
+          "acknowledged_at": {
+            "description": "When the member acknowledged (also set by their first response); null if not.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "avatar_url": {
+            "description": "Public URL of the member's profile photo, as in the circle member list; null without one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "description": "The member's profile name (trimmed), else the name stored on their membership.",
+            "type": "string"
+          },
+          "is_me": {
+            "description": "True on the caller's own row.",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "responding / unable: the member's response; acknowledged: seen, no response yet; no_response: not acknowledged.",
+            "enum": [
+              "responding",
+              "acknowledged",
+              "unable",
+              "no_response"
+            ],
+            "type": "string"
+          },
+          "status_at": {
+            "description": "When the current status was set: the response time for responding / unable, the acknowledge time for acknowledged, null for no_response.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "description": "The member. The resident gets the full UUID. A member gets the ids of other members obscured as incident event actor ids (D11): the first 4 and the last 4 hex characters kept, every other hex character \"*\", hyphens kept (e.g. \"4f3a****-****-****-****-********9c2d\"); their own id in full. Not a usable UUID when obscured.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "display_name",
+          "avatar_url",
+          "status",
+          "acknowledged_at",
+          "status_at",
+          "is_me"
         ],
         "type": "object"
       },
@@ -8512,6 +8586,336 @@
           }
         ],
         "summary": "Re-notify the members of the caller's active alert",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/v1/incidents/{id}/responders": {
+      "get": {
+        "operationId": "listIncidentResponders",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "The incident id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Responder"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Responding, then acknowledged, then unable, then no response; each oldest first. Members whose membership ended are left out."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "incident_responders:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "incident_responders:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "incident_responders:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "incident_responders:not_found"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Every notified member with their response status, responding first",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/v1/incidents/{id}/response": {
+      "post": {
+        "operationId": "setIncidentResponse",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "The incident id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IncidentResponseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Responder"
+                }
+              }
+            },
+            "description": "The caller's own responder row (set now, or unchanged when the status was already set)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "incident_response:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "incident_response:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "incident_response:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "incident_response:not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "incident_response:not_open",
+                    "details": {},
+                    "message": "This alert is no longer open."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "incident_response:not_open"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "incident_response:invalid_status",
+                    "details": {},
+                    "message": "Choose responding or unable."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "incident_response:invalid_status",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Set the caller's response to the alert: responding or unable to respond",
         "tags": [
           "incidents"
         ]
@@ -14327,6 +14731,24 @@
           "occurred_at"
         ],
         "room": "incident:{id}, user:{id} of each delivery recipient and user:{resident_id} (D48; once per socket)"
+      },
+      "incident.responders": {
+        "note": "SCRUM-49/50/51/55 (D56): sent after a member acknowledged for the first time or set or changed their response (responding / unable). responder is the row of that member exactly as GET /v1/incidents/{id}/responders shows it to the receiver; replace the row with the same user_id (the masked id is stable per member). Not sent for a repeat that changed nothing. After a reconnect, re-fetch the list over REST.",
+        "payload": [
+          "incident_id",
+          "responder",
+          "occurred_at"
+        ],
+        "responder_keys": [
+          "user_id",
+          "display_name",
+          "avatar_url",
+          "status",
+          "acknowledged_at",
+          "status_at",
+          "is_me"
+        ],
+        "room": "incident:{id} (per receiver: user_id in full for the resident and for the member whose row it is, masked as incident.event actor_id for other members)"
       },
       "incident.shared_info_updated": {
         "note": "SCRUM-21 (D53): sent after the resident changed their shared emergency info during an active incident. share_payload is the live view (only what is shared now; allergies and medical_conditions are arrays of strings); updated_at = when it last changed (live_share_updated_at). The activation snapshot never changes.",

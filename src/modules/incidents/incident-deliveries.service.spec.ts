@@ -38,7 +38,10 @@ function serviceWith(overrides: Partial<Record<keyof IncidentDeliveriesRepositor
     ...overrides,
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
-  const postCommit = { afterDeliveryCounts: jest.fn().mockResolvedValue(undefined) };
+  const postCommit = {
+    afterDeliveryCounts: jest.fn().mockResolvedValue(undefined),
+    afterResponders: jest.fn().mockResolvedValue(undefined),
+  };
   const database = {
     db: { transaction: (run: (tx: object) => Promise<unknown>) => run({}) },
   };
@@ -110,6 +113,13 @@ describe('IncidentDeliveriesService (API-100-20)', () => {
       delivered_count: 2,
       acknowledged_count: 1,
     });
+    // D56: the member's responder row changed (acknowledged).
+    expect(postCommit.afterResponders).toHaveBeenCalledWith({
+      incident_id: INCIDENT_ID,
+      resident_id: 'r1',
+      circle_id: 'c1',
+      member_user_id: USER.id,
+    });
   });
 
   it('acknowledge: a repeat writes nothing, no audit and no hook', async () => {
@@ -122,5 +132,6 @@ describe('IncidentDeliveriesService (API-100-20)', () => {
     expect(repository.acknowledge).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
     expect(postCommit.afterDeliveryCounts).not.toHaveBeenCalled();
+    expect(postCommit.afterResponders).not.toHaveBeenCalled();
   });
 });

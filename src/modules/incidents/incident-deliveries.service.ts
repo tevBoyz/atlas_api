@@ -47,7 +47,8 @@ export class IncidentDeliveriesService {
    *    started at or before the incident (`circle.activeMemberSince`) → `not_found`;
    * 3. status not `active` → `not_open`;
    * 4. `acknowledged_at = now()` only when `delivered_at` is set and it is not acknowledged yet.
-   * A repeat writes nothing, no second audit row and no hook. Returns DeliveryCounts.
+   * A repeat writes nothing, no second audit row and no hook. Returns DeliveryCounts. A first
+   * acknowledge also raises `incident.responders` (D56) after the commit.
    *
    * Lock order: one row lock and nothing after it that locks a profile. The SQL function inserts no
    * event, and `audit_log` has no foreign key (migration 0003), so the audit insert takes no lock on
@@ -95,6 +96,13 @@ export class IncidentDeliveriesService {
         circle_id: done.incident.circle_id,
         delivered_count: done.body.delivered_count,
         acknowledged_count: done.body.acknowledged_count,
+      });
+      // SCRUM-49 / D56: the member's responder row is now "acknowledged" for everyone watching.
+      void this.postCommit.afterResponders({
+        incident_id: done.incident.id,
+        resident_id: done.incident.resident_id,
+        circle_id: done.incident.circle_id,
+        member_user_id: user.id,
       });
     }
     return done.body;

@@ -41,6 +41,8 @@ export const SERVER_EVENTS = {
   incoming: 'incident.incoming',
   /** The resident changed their shared info during the incident: the live view (SCRUM-21, D53). */
   sharedInfoUpdated: 'incident.shared_info_updated',
+  /** One member's responder row changed: acknowledged, responding or unable (D56). */
+  responders: 'incident.responders',
   /** To `user:{id}` of a member whose membership was removed or who left (D49). */
   membershipEnded: 'circle.membership_ended',
   /** Sent just before the server disconnects a socket whose token reached `exp` (API-100-39 AC4). */

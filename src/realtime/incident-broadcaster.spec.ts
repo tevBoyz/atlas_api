@@ -7,6 +7,7 @@ import {
   notesPayload,
   renotifiedPayload,
   resolvedPayload,
+  respondersPayload,
   sharedInfoPayload,
   updatedPayload,
 } from './incident-broadcaster';
@@ -15,6 +16,7 @@ import type { RealtimeGateway } from './realtime.gateway';
 import type {
   IncidentBroadcastState,
   IncidentEventRow,
+  IncidentResponderState,
   IncidentSharedInfoState,
   RealtimeReadsRepository,
 } from './realtime-reads.repository';
@@ -65,6 +67,22 @@ function sharedInfo(): IncidentSharedInfoState {
   };
 }
 
+function responderState(): IncidentResponderState {
+  return {
+    incident_id: INCIDENT,
+    resident_id: RESIDENT,
+    responder: {
+      user_id: MEMBER,
+      display_name: 'Milo',
+      avatar_url: null,
+      status: 'responding',
+      acknowledged_at: T,
+      status_at: T,
+    },
+    occurred_at: T,
+  };
+}
+
 function eventRow(actor: string | null, detail: Record<string, unknown> = {}): IncidentEventRow {
   return {
     incident_id: INCIDENT,
@@ -86,6 +104,7 @@ function setup(row?: IncidentEventRow) {
     recipientUserIds: jest.fn().mockResolvedValue([MEMBER]),
     event: jest.fn().mockResolvedValue(row),
     sharedInfo: jest.fn().mockResolvedValue(sharedInfo()),
+    responder: jest.fn().mockResolvedValue(responderState()),
   };
   const broadcaster = new IncidentBroadcaster(
     { emit } as unknown as RealtimeGateway,
@@ -263,6 +282,35 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
     expect(emit).not.toHaveBeenCalled();
   });
 
+  it('responders (D56): resident full, the member their own row, every other member masked', async () => {
+    const { broadcaster, calls, emit, reads } = setup();
+    await broadcaster.afterResponders({ ...ref, member_user_id: MEMBER });
+    expect(reads.responder).toHaveBeenCalledWith(INCIDENT, MEMBER);
+    const residentRoom = `incident:${INCIDENT}:resident`;
+    const memberRoom = `incident:${INCIDENT}:user:${MEMBER}`;
+    expect(calls()).toEqual([
+      [[residentRoom], 'incident.responders', []],
+      [[`incident:${INCIDENT}`], 'incident.responders', [residentRoom, memberRoom]],
+      [[memberRoom], 'incident.responders', [residentRoom]],
+    ]);
+    const sent = (n: number) =>
+      (emit.mock.calls[n] as [string[], string, { responder: Record<string, unknown> }])[2]
+        .responder;
+    expect(sent(0)).toMatchObject({ user_id: MEMBER, is_me: false });
+    expect(sent(1)).toMatchObject({
+      user_id: '5e4b****-****-****-****-********0d3e',
+      is_me: false,
+    });
+    expect(sent(2)).toMatchObject({ user_id: MEMBER, is_me: true });
+  });
+
+  it('responders (D56): a member no longer on the list emits nothing', async () => {
+    const { broadcaster, emit, reads } = setup();
+    reads.responder.mockResolvedValue(undefined);
+    await broadcaster.afterResponders({ ...ref, member_user_id: MEMBER });
+    expect(emit).not.toHaveBeenCalled();
+  });
+
   it('a gone incident or event emits nothing', async () => {
     const { broadcaster, emit, reads } = setup(undefined);
     reads.incidentState.mockResolvedValue(undefined);
@@ -290,6 +338,12 @@ describe('the published contract (x-realtime) matches the payloads', () => {
     expect(Object.keys(sharedInfoPayload(sharedInfo()))).toEqual(
       events['incident.shared_info_updated'].payload,
     );
+  });
+
+  it('incident.responders', () => {
+    const payload = respondersPayload(responderState(), { resident: true });
+    expect(Object.keys(payload)).toEqual(events['incident.responders'].payload);
+    expect(Object.keys(payload.responder)).toEqual(events['incident.responders'].responder_keys);
   });
 
   it('incident.event', () => {

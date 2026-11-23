@@ -232,6 +232,68 @@ export const incidentEventSchema = componentSchema(
 
 export const incidentEventListSchema = z.array(incidentEventSchema);
 
+/**
+ * `POST /v1/incidents/{id}/response` (SCRUM-50/51, D56; documentation: the route validates as
+ * `responseStatusFromBody` describes).
+ */
+export const incidentResponseRequestSchema = z.object({
+  status: z
+    .enum(['responding', 'unable'])
+    .describe(
+      '"responding" (I am responding) or "unable" (unable to respond). Anything else is 422 incident_response:invalid_status.',
+    ),
+});
+
+/**
+ * One notified member on the responder list (SCRUM-49/50/51/55, D56), and the body of
+ * `POST /v1/incidents/{id}/response` (the caller's own row). Exactly these 7 keys: never a phone,
+ * email or other profile field.
+ */
+export const responderSchema = componentSchema(
+  'Responder',
+  z.object({
+    user_id: z
+      .string()
+      .describe(
+        'The member. The resident gets the full UUID. A member gets the ids of other members obscured as ' +
+          'incident event actor ids (D11): the first 4 and the last 4 hex characters kept, every ' +
+          'other hex character "*", hyphens kept (e.g. "4f3a****-****-****-****-********9c2d"); ' +
+          'their own id in full. Not a usable UUID when obscured.',
+      ),
+    display_name: z
+      .string()
+      .describe("The member's profile name (trimmed), else the name stored on their membership."),
+    avatar_url: z
+      .string()
+      .nullable()
+      .describe(
+        "Public URL of the member's profile photo, as in the circle member list; null without one.",
+      ),
+    status: z
+      .enum(['responding', 'acknowledged', 'unable', 'no_response'])
+      .describe(
+        "responding / unable: the member's response; acknowledged: seen, no response yet; no_response: not acknowledged.",
+      ),
+    acknowledged_at: z
+      .string()
+      .nullable()
+      .describe('When the member acknowledged (also set by their first response); null if not.'),
+    status_at: z
+      .string()
+      .nullable()
+      .describe(
+        'When the current status was set: the response time for responding / unable, the acknowledge time for acknowledged, null for no_response.',
+      ),
+    is_me: z.boolean().describe("True on the caller's own row."),
+  }),
+);
+
+/**
+ * `GET /v1/incidents/{id}/responders`: every notified member who is still a member inside the window,
+ * responding first, then acknowledged, then unable, then no response, each oldest first.
+ */
+export const responderListSchema = z.array(responderSchema);
+
 /** `list_my_recent_incidents(p_limit integer default 5)`: null → 5, then clamped to 1–20. */
 export const RECENT_INCIDENTS_DEFAULT_LIMIT = 5;
 export const RECENT_INCIDENTS_MIN_LIMIT = 1;

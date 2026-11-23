@@ -8,6 +8,8 @@ export const AUDIT_ACTIONS = [
   'incident.notes_set',
   'incident.resolved',
   'incident.acknowledged',
+  // SCRUM-50/51 (D56): detail {delivery_id, status, previous_status, acknowledged_now}; ids only.
+  'incident.response_set',
   'circle.invite.created',
   'circle.invite.resent',
   'circle.invite.canceled',

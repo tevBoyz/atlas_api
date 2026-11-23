@@ -77,6 +77,15 @@ export interface IncidentEventRecordedEvent extends IncidentRef {
 export type IncidentSharedInfoEvent = IncidentRef;
 
 /**
+ * Realtime `incident.responders` (SCRUM-49/50/51/55, D56): one member's responder row changed (their
+ * first acknowledge, or a new response status). Ids only: the hook reads the row after the commit.
+ * Not raised for a repeat that changed nothing, an error or a read.
+ */
+export interface IncidentRespondersEvent extends IncidentRef {
+  member_user_id: string;
+}
+
+/**
  * Work that follows a committed incident write: realtime (API-100-41) and the outbox (API-100-48).
  * A hook implements the events it cares about.
  */
@@ -89,6 +98,7 @@ export interface IncidentPostCommitHook {
   afterDeliveryCounts?(event: IncidentDeliveryCountsEvent): void | Promise<void>;
   afterEvent?(event: IncidentEventRecordedEvent): void | Promise<void>;
   afterSharedInfo?(event: IncidentSharedInfoEvent): void | Promise<void>;
+  afterResponders?(event: IncidentRespondersEvent): void | Promise<void>;
 }
 
 /** The registered hooks: the realtime broadcaster (API-100-41/42); the outbox (API-100-48) later. */
@@ -141,6 +151,11 @@ export class IncidentPostCommitRunner {
   /** `incident.shared_info_updated` (D53). Never rejects. */
   afterSharedInfo(event: IncidentSharedInfoEvent): Promise<void> {
     return this.run('afterSharedInfo', event, (hook) => hook.afterSharedInfo?.(event));
+  }
+
+  /** `incident.responders` (D56). Never rejects. */
+  afterResponders(event: IncidentRespondersEvent): Promise<void> {
+    return this.run('afterResponders', event, (hook) => hook.afterResponders?.(event));
   }
 
   /**

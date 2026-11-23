@@ -155,6 +155,11 @@ export const PARITY_ERROR_CODES = {
   get_incident_details: ['not_authenticated', 'not_found'],
   // §11.3 E11 `GET /v1/incidents/{id}/events` (API-100-22): new code, no SQL function behind it.
   incident_events: ['not_authenticated', 'not_found'],
+  // SCRUM-49/50/51/55 (D56): `POST /v1/incidents/{id}/response` (a notified member says whether they
+  // are responding) and `GET /v1/incidents/{id}/responders` (the responder list). New codes, no SQL
+  // function behind them.
+  incident_response: ['not_authenticated', 'invalid_status', 'not_found', 'not_open'],
+  incident_responders: ['not_authenticated', 'not_found'],
 
   // §7.5 Login lockout (prefix `login_lockout`, not the function name)
   login_lockout: [

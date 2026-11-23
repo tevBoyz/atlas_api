@@ -11,6 +11,9 @@ import { IncidentDeliveriesService } from './incident-deliveries.service';
 import { IncidentEventsController } from './incident-events.controller';
 import { IncidentEventService } from './incident-events.service';
 import { INCIDENT_POST_COMMIT_HOOKS, IncidentPostCommitRunner } from './incident-post-commit';
+import { IncidentRespondersController } from './incident-responders.controller';
+import { IncidentRespondersRepository } from './incident-responders.repository';
+import { IncidentRespondersService } from './incident-responders.service';
 import { IncidentReadsService } from './incident-reads.service';
 import { IncidentsController } from './incidents.controller';
 import { IncidentsRepository } from './incidents.repository';
@@ -28,6 +31,7 @@ import { ResponderIncidentsService } from './responder-incidents.service';
     IncidentDeliveriesController,
     ResponderIncidentsController,
     IncidentEventsController,
+    IncidentRespondersController,
   ],
   providers: [
     IncidentEventService,
@@ -36,6 +40,8 @@ import { ResponderIncidentsService } from './responder-incidents.service';
     IncidentReadsService,
     IncidentDeliveriesRepository,
     IncidentDeliveriesService,
+    IncidentRespondersRepository,
+    IncidentRespondersService,
     ResponderIncidentsRepository,
     ResponderIncidentsService,
     IncidentPostCommitRunner,

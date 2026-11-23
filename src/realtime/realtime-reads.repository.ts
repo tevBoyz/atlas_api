@@ -2,7 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { type SQL, sql } from 'drizzle-orm';
 
 import { incidentAlias, incidentMemberView } from '../common/policies';
+import { ApiConfigService } from '../config';
 import { DatabaseService } from '../db/database.service';
+import { type AvatarUrlBase, avatarUrlBase } from '../modules/circles/circles.repository';
+import {
+  type ResponderRow,
+  responderRowsSql,
+} from '../modules/incidents/incident-responders.repository';
 
 /**
  * What a broadcast needs about one incident, read after the write committed (API-100-41). Built by
@@ -88,13 +94,29 @@ export interface IncidentSharedInfoState {
   occurred_at: string;
 }
 
+/** `incident.responders` (D56): one member's responder row (user id in full) after a change. */
+export interface IncidentResponderState {
+  incident_id: string;
+  resident_id: string;
+  responder: ResponderRow;
+  /** Database time of this read (`statement_timestamp()`). */
+  occurred_at: string;
+}
+
 /**
  * The post-commit reads of the realtime broadcasts (API-100-41, API-100-42). Each runs in its own
  * read-only transaction in UTC on the pool; it never holds a lock and never runs inside the write.
  */
 @Injectable()
 export class RealtimeReadsRepository {
-  constructor(private readonly database: DatabaseService) {}
+  private readonly avatars: AvatarUrlBase;
+
+  constructor(
+    private readonly database: DatabaseService,
+    config: ApiConfigService,
+  ) {
+    this.avatars = avatarUrlBase(config);
+  }
 
   /** The incident's broadcast state; undefined when the row is gone. */
   async incidentState(incidentId: string): Promise<IncidentBroadcastState | undefined> {
@@ -168,6 +190,30 @@ export class RealtimeReadsRepository {
        where d.incident_id = ${incidentId}::uuid
          and ${memberView}`);
     return body ?? [];
+  }
+
+  /**
+   * One member's responder row (D56), with the same rules as `GET /v1/incidents/{id}/responders`:
+   * undefined when the incident or the delivery is gone, or the member no longer passes
+   * `incident.memberView` (membership ended since the write: they are not on the list any more).
+   */
+  async responder(
+    incidentId: string,
+    memberUserId: string,
+  ): Promise<IncidentResponderState | undefined> {
+    return this.readOne<IncidentResponderState>(sql`
+      select jsonb_build_object(
+               'incident_id', rec.id,
+               'resident_id', rec.resident_id,
+               'responder', r.rows -> 0,
+               'occurred_at', statement_timestamp()
+             ) as body
+        from public.incidents rec
+       cross join lateral (
+         select ${responderRowsSql(sql`rec.id`, this.avatars, memberUserId)} as rows
+       ) r
+       where rec.id = ${incidentId}::uuid
+         and jsonb_array_length(r.rows) = 1`);
   }
 
   /** One event row with its incident's resident; undefined when gone. */

@@ -67,12 +67,13 @@ describe('stage 7.6: db/rollback/0012_down.sql restores the pre-0012 state (D42)
 
   it('0012 -> production state; rollback -> exactly the pre-0012 state; 0012 again; rollback twice refused', async () => {
     // The first run also applies the later migrations (0013, D44; 0014, SCRUM-21: its new tables
-    // revoke every Supabase role grant), so the snapshot comparison below is unchanged, and they stay
-    // recorded through the rollback.
+    // revoke every Supabase role grant; 0015, D56: two columns only), so the snapshot comparison
+    // below is unchanged, and they stay recorded through the rollback.
     expect(await runMigrations(client, resolve('db/migrations'), silent)).toEqual([
       '0012_retire_supabase_app_paths',
       '0013_membership_end_status',
       '0014_medical_info_items',
+      '0015_incident_response_status',
     ]);
     expect(await supabasePrivilegesLeft(client)).toEqual([]);
     expect(await realtimeMembersLeft(client)).toEqual([]);
