@@ -93,6 +93,10 @@ export const SUFFIX_STATUS: Readonly<Record<string, number>> = {
   avatar_not_found: 404,
   // `profiles:avatar_storage_unavailable` (API-100-37): Storage is not configured or not answering.
   avatar_storage_unavailable: 503,
+  // `profiles:*` medical items (SCRUM-21, D51).
+  medical_item_not_found: 404,
+  duplicate_medical_item: 409,
+  medical_item_limit_reached: 409,
 
   already_active: 409,
   already_member: 409,

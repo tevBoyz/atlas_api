@@ -16,6 +16,10 @@ export const AUDIT_ACTIONS = [
   'circle.member.removed',
   'circle.member.left',
   'profile.setup_completed',
+  // SCRUM-21 (D51): detail {list, item_id} only, never the text.
+  'profile.medical_item.added',
+  'profile.medical_item.updated',
+  'profile.medical_item.deleted',
   'auth.signup',
   'auth.email_verified',
   'auth.phone_verified',

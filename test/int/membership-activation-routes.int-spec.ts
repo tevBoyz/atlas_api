@@ -131,6 +131,9 @@ describe('only accept (and setup, for the owner row) activates a member row (API
         case 'session_id':
           // Own sessions (API-100-56): an id that is nobody's session.
           return randomUUID();
+        case 'item_id':
+          // SCRUM-21 medical items: an id that is nobody's item.
+          return randomUUID();
         default:
           throw new Error(`No value for path parameter {${param}}: add one to this test`);
       }

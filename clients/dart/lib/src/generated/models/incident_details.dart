@@ -33,6 +33,8 @@ class IncidentDetails {
     required this.resolvedReason,
     required this.sentAt,
     required this.sharePayload,
+    required this.sharePayloadAtActivation,
+    required this.sharePayloadUpdatedAt,
     required this.status,
   });
 
@@ -74,8 +76,18 @@ class IncidentDetails {
   final String? resolvedReason;
   @JsonKey(name: 'sent_at')
   final String? sentAt;
+
+  /// The LIVE shared info (SCRUM-21, D53): the latest shared fields when they changed them during the incident, else the activation snapshot; `{}` when none. Allergies / conditions: arrays of strings (a single string in older incidents).
   @JsonKey(name: 'share_payload')
-  final Map<String, String> sharePayload;
+  final Map<String, dynamic> sharePayload;
+
+  /// What was shared at activation (what the alerts carried); never changes. `{}` when none.
+  @JsonKey(name: 'share_payload_at_activation')
+  final Map<String, dynamic> sharePayloadAtActivation;
+
+  /// When the resident last changed the shared info during the incident; null = unchanged since activation.
+  @JsonKey(name: 'share_payload_updated_at')
+  final String? sharePayloadUpdatedAt;
   final IncidentDetailsStatus status;
 
   Map<String, Object?> toJson() =>

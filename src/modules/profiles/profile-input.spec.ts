@@ -158,14 +158,15 @@ describe('profile request parsing (API-100-35)', () => {
         emergency_contact_phone: '+2203000001',
         emergency_contact_email: null,
         blood_type: null,
-        allergies: 'Dust',
-        medical_conditions: null,
         emergency_preferred_language: null,
         emergency_notes: null,
         share_blood_type: true,
         location_sharing_enabled: true,
       });
       expect(Object.keys(values)).not.toContain('emergency_info_completed_at');
+      // SCRUM-21 (D51): the item lists own these columns; the PUT ignores them.
+      expect(Object.keys(values)).not.toContain('allergies');
+      expect(Object.keys(values)).not.toContain('medical_conditions');
     });
 
     it('checks in field order, each with its own code', () => {
@@ -213,7 +214,6 @@ describe('profile request parsing (API-100-35)', () => {
           'emergency_notes',
         ],
         [{ share_allergies: undefined }, 'validation:invalid_request', 'share_allergies'],
-        [{ allergies: 5 }, 'validation:invalid_request', 'allergies'],
       ];
       for (const [overrides, code, field] of cases) {
         expect({

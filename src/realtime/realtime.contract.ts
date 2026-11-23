@@ -117,6 +117,15 @@ export const REALTIME_CONTRACT = {
         ...TIMES,
       ],
     },
+    [SERVER_EVENTS.sharedInfoUpdated]: {
+      room: 'incident:{id}',
+      payload: ['incident_id', 'share_payload', 'updated_at', 'occurred_at'],
+      note:
+        'SCRUM-21 (D53): sent after the resident changed their shared emergency info during an active ' +
+        'incident. share_payload is the live view (only what is shared now; allergies and ' +
+        'medical_conditions are arrays of strings); updated_at = when it last changed ' +
+        '(live_share_updated_at). The activation snapshot never changes.',
+    },
     [SERVER_EVENTS.membershipEnded]: {
       room: 'user:{id} of the member who was removed or left (all their sockets; D49)',
       payload: ['circle_id', 'occurred_at'],

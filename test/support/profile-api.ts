@@ -9,7 +9,7 @@ import { authHeader } from '../../src/testing/test-tokens';
  */
 const headersFor = async (userId: string | null) => (userId ? await authHeader(userId) : {});
 
-type Method = 'GET' | 'PUT' | 'PATCH' | 'POST';
+type Method = 'GET' | 'PUT' | 'PATCH' | 'POST' | 'DELETE';
 
 async function send(
   app: NestFastifyApplication,
@@ -32,6 +32,34 @@ async function send(
 /** `GET /v1/me/profile` (P1). */
 export const getProfile = (app: NestFastifyApplication, userId: string | null) =>
   send(app, 'GET', userId, '/v1/me/profile');
+
+/** The two medical lists of SCRUM-21 (D51), as their route segments. */
+export type MedicalListRoute = 'allergies' | 'medical-conditions';
+
+/** `POST /v1/me/profile/{list}` (SCRUM-21, D51). */
+export const addMedicalItem = (
+  app: NestFastifyApplication,
+  userId: string | null,
+  list: MedicalListRoute,
+  body: unknown,
+) => send(app, 'POST', userId, `/v1/me/profile/${list}`, body);
+
+/** `PATCH /v1/me/profile/{list}/{item_id}`. */
+export const editMedicalItem = (
+  app: NestFastifyApplication,
+  userId: string | null,
+  list: MedicalListRoute,
+  itemId: string,
+  body: unknown,
+) => send(app, 'PATCH', userId, `/v1/me/profile/${list}/${itemId}`, body);
+
+/** `DELETE /v1/me/profile/{list}/{item_id}`. */
+export const deleteMedicalItem = (
+  app: NestFastifyApplication,
+  userId: string | null,
+  list: MedicalListRoute,
+  itemId: string,
+) => send(app, 'DELETE', userId, `/v1/me/profile/${list}/${itemId}`);
 
 /** `PUT /v1/me/profile/personal-info` (P2). */
 export const putPersonalInfo = (

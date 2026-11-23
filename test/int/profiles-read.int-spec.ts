@@ -68,7 +68,7 @@ describe('GET /v1/me/profile (API-100-34)', () => {
     expect(rows.map((r) => r.name)).toEqual([...PROFILE_COLUMNS]);
   });
 
-  it('AC1: the body is the app’s select * (same keys, order, values and text) plus avatar_url', async () => {
+  it('AC1: the body is the app’s select * (same keys, order, values and text) plus avatar_url and the SCRUM-21 lists', async () => {
     const user = await createUser(client, { fullName: '  Spaced Name ' });
     await client.query(
       `update public.profiles
@@ -81,8 +81,20 @@ describe('GET /v1/me/profile (API-100-34)', () => {
     expect(reply.statusCode).toBe(200);
     const viaRls = await profileViaRls(client, user.id);
     const body = reply.json<Body>();
-    expect(Object.keys(body)).toEqual([...PROFILE_COLUMNS, 'avatar_url']);
-    const { avatar_url: avatarUrl, ...columns } = body;
+    // SCRUM-21 (D51): the two item lists follow avatar_url (the app's select * has neither).
+    expect(Object.keys(body)).toEqual([
+      ...PROFILE_COLUMNS,
+      'avatar_url',
+      'allergy_items',
+      'medical_condition_items',
+    ]);
+    const {
+      avatar_url: avatarUrl,
+      allergy_items: allergyItems,
+      medical_condition_items: conditionItems,
+      ...columns
+    } = body;
+    expect([allergyItems, conditionItems]).toEqual([[], []]);
     expect(JSON.stringify(columns)).toBe(viaRls);
     expect(body.personal_info_completed_at).toBe('2026-11-20T10:00:00+00:00');
     expect(body.date_of_birth).toBe('1990-01-15');

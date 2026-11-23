@@ -7,10 +7,15 @@ part of 'profile.dart';
 // **************************************************************************
 
 Profile _$ProfileFromJson(Map<String, dynamic> json) => Profile(
-  emergencyContactPhone: json['emergency_contact_phone'] as String?,
+  emergencyContactRelationship: json['emergency_contact_relationship'] == null
+      ? null
+      : Relationship.fromJson(json['emergency_contact_relationship'] as String),
   alertPushEnabled: json['alert_push_enabled'] as bool,
   alertSmsEnabled: json['alert_sms_enabled'] as bool,
   allergies: json['allergies'] as String?,
+  allergyItems: (json['allergy_items'] as List<dynamic>)
+      .map((e) => MedicalItem.fromJson(e as Map<String, dynamic>))
+      .toList(),
   appLanguage: json['app_language'] as String,
   avatarPath: json['avatar_path'] as String?,
   avatarUrl: json['avatar_url'] as String?,
@@ -21,10 +26,8 @@ Profile _$ProfileFromJson(Map<String, dynamic> json) => Profile(
   dateOfBirth: json['date_of_birth'] as String,
   emergencyContactEmail: json['emergency_contact_email'] as String?,
   emergencyContactFullName: json['emergency_contact_full_name'] as String?,
+  emergencyContactPhone: json['emergency_contact_phone'] as String?,
   alertEmailEnabled: json['alert_email_enabled'] as bool,
-  emergencyContactRelationship: json['emergency_contact_relationship'] == null
-      ? null
-      : Relationship.fromJson(json['emergency_contact_relationship'] as String),
   emergencyInfoCompletedAt: json['emergency_info_completed_at'] as String?,
   emergencyNotes: json['emergency_notes'] as String?,
   emergencyNotesShareable: json['emergency_notes_shareable'] as bool,
@@ -36,8 +39,12 @@ Profile _$ProfileFromJson(Map<String, dynamic> json) => Profile(
   hideProfileFromNonMembers: json['hide_profile_from_non_members'] as bool,
   id: json['id'] as String,
   locationSharingEnabled: json['location_sharing_enabled'] as bool,
+  medicalConditionItems: (json['medical_condition_items'] as List<dynamic>)
+      .map((e) => MedicalItem.fromJson(e as Map<String, dynamic>))
+      .toList(),
   medicalConditions: json['medical_conditions'] as String?,
   updatedAt: json['updated_at'] as String,
+  personalInfoCompletedAt: json['personal_info_completed_at'] as String?,
   preferencesCompletedAt: json['preferences_completed_at'] as String?,
   preferredLanguage: PreferredLanguage.fromJson(
     json['preferred_language'] as String,
@@ -55,7 +62,7 @@ Profile _$ProfileFromJson(Map<String, dynamic> json) => Profile(
       json['share_emergency_preferred_language'] as bool,
   shareMedicalConditions: json['share_medical_conditions'] as bool,
   timezone: json['timezone'] as String,
-  personalInfoCompletedAt: json['personal_info_completed_at'] as String?,
+  medicalInfoUpdatedAt: json['medical_info_updated_at'] as String?,
 );
 
 Map<String, dynamic> _$ProfileToJson(Profile instance) => <String, dynamic>{
@@ -63,6 +70,7 @@ Map<String, dynamic> _$ProfileToJson(Profile instance) => <String, dynamic>{
   'alert_push_enabled': instance.alertPushEnabled,
   'alert_sms_enabled': instance.alertSmsEnabled,
   'allergies': instance.allergies,
+  'allergy_items': instance.allergyItems,
   'app_language': instance.appLanguage,
   'avatar_path': instance.avatarPath,
   'avatar_url': instance.avatarUrl,
@@ -82,7 +90,9 @@ Map<String, dynamic> _$ProfileToJson(Profile instance) => <String, dynamic>{
   'hide_profile_from_non_members': instance.hideProfileFromNonMembers,
   'id': instance.id,
   'location_sharing_enabled': instance.locationSharingEnabled,
+  'medical_condition_items': instance.medicalConditionItems,
   'medical_conditions': instance.medicalConditions,
+  'medical_info_updated_at': instance.medicalInfoUpdatedAt,
   'personal_info_completed_at': instance.personalInfoCompletedAt,
   'preferences_completed_at': instance.preferencesCompletedAt,
   'preferred_language': instance.preferredLanguage,

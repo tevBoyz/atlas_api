@@ -70,6 +70,13 @@ export interface IncidentEventRecordedEvent extends IncidentRef {
 }
 
 /**
+ * Realtime `incident.shared_info_updated` (SCRUM-21, D53): the resident changed their emergency info
+ * during the incident and its live share payload (`live_share_payload`) was rewritten. Ids only: the
+ * hook reads the payload after the commit.
+ */
+export type IncidentSharedInfoEvent = IncidentRef;
+
+/**
  * Work that follows a committed incident write: realtime (API-100-41) and the outbox (API-100-48).
  * A hook implements the events it cares about.
  */
@@ -81,6 +88,7 @@ export interface IncidentPostCommitHook {
   afterResolved?(event: IncidentResolvedEvent): void | Promise<void>;
   afterDeliveryCounts?(event: IncidentDeliveryCountsEvent): void | Promise<void>;
   afterEvent?(event: IncidentEventRecordedEvent): void | Promise<void>;
+  afterSharedInfo?(event: IncidentSharedInfoEvent): void | Promise<void>;
 }
 
 /** The registered hooks: the realtime broadcaster (API-100-41/42); the outbox (API-100-48) later. */
@@ -128,6 +136,11 @@ export class IncidentPostCommitRunner {
   /** `incident.delivery_counts`. Never rejects. */
   afterDeliveryCounts(event: IncidentDeliveryCountsEvent): Promise<void> {
     return this.run('afterDeliveryCounts', event, (hook) => hook.afterDeliveryCounts?.(event));
+  }
+
+  /** `incident.shared_info_updated` (D53). Never rejects. */
+  afterSharedInfo(event: IncidentSharedInfoEvent): Promise<void> {
+    return this.run('afterSharedInfo', event, (hook) => hook.afterSharedInfo?.(event));
   }
 
   /**

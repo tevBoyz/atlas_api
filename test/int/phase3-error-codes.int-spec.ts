@@ -10,9 +10,12 @@ import { openTestClient } from '../support/database';
 import { createUser, fakePhone } from '../support/fixtures';
 import { insertMember } from '../support/invite-rows';
 import {
+  addMedicalItem,
   completeSetup,
   createAuthUser,
   createAvatarUploadUrl,
+  deleteMedicalItem,
+  editMedicalItem,
   emergencyInfoBody,
   getProfile,
   personalInfoBody,
@@ -52,6 +55,10 @@ const EXPECTED_STATUS: Record<string, number> = {
   'profiles:profile_not_found': 404,
   'profiles:avatar_not_found': 404,
   'profiles:avatar_storage_unavailable': 503,
+  // SCRUM-21 (D51).
+  'profiles:duplicate_medical_item': 409,
+  'profiles:medical_item_limit_reached': 409,
+  'profiles:medical_item_not_found': 404,
   'complete_profile_setup:not_authenticated': 401,
   'complete_profile_setup:profile_not_found': 404,
   'complete_profile_setup:personal_info_incomplete': 409,
@@ -267,6 +274,40 @@ describe('Phase 3 gate: every profile error code of the spec is produced (API-10
           content_length: 1,
         }),
         'profiles:avatar_storage_unavailable',
+      );
+    },
+    'profiles:invalid_medical_item': async () =>
+      record(
+        await addMedicalItem(app, (await createUser(client)).id, 'allergies', { text: ' ' }),
+        'profiles:invalid_medical_item',
+      ),
+    'profiles:duplicate_medical_item': async () => {
+      const user = await createUser(client);
+      await addMedicalItem(app, user.id, 'medical-conditions', { text: 'Asthma' });
+      record(
+        await addMedicalItem(app, user.id, 'medical-conditions', { text: 'ASTHMA' }),
+        'profiles:duplicate_medical_item',
+      );
+    },
+    'profiles:medical_item_limit_reached': async () => {
+      const user = await createUser(client);
+      for (let i = 0; i < 20; i += 1) {
+        await addMedicalItem(app, user.id, 'allergies', { text: `Item ${i}` });
+      }
+      record(
+        await addMedicalItem(app, user.id, 'allergies', { text: 'Item 20' }),
+        'profiles:medical_item_limit_reached',
+      );
+    },
+    'profiles:medical_item_not_found': async () => {
+      const user = await createUser(client);
+      record(
+        await editMedicalItem(app, user.id, 'allergies', randomUUID(), { text: 'x' }),
+        'profiles:medical_item_not_found',
+      );
+      record(
+        await deleteMedicalItem(app, user.id, 'medical-conditions', randomUUID()),
+        'profiles:medical_item_not_found',
       );
     },
     'complete_profile_setup:not_authenticated': async () =>

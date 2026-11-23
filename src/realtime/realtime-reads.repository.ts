@@ -15,7 +15,8 @@ export interface IncidentBroadcastState {
   /**
    * The 16 keys the app merges today from `postgres_changes` (spec §9) plus
    * `location_sharing_ended_at` (spec §11.5); never `resident_id` / `circle_id`. `share_payload` is
-   * `{}` when null, as in the REST incident details.
+   * the live view (`live_share_payload`, SCRUM-21 D53) else the activation snapshot, `{}` when
+   * null, as in the REST incident details.
    */
   incident: Record<string, unknown>;
   status: string;
@@ -73,8 +74,19 @@ const INCIDENT_UPDATED_JSON = sql`jsonb_build_object(
     'location_sharing_ended_at', rec.location_sharing_ended_at,
     'incident_notes', rec.incident_notes,
     'incident_notes_updated_at', rec.incident_notes_updated_at,
-    'share_payload', coalesce(rec.share_payload, '{}'::jsonb)
+    'share_payload', coalesce(rec.live_share_payload, rec.share_payload, '{}'::jsonb)
   )`;
+
+/** `incident.shared_info_updated` (SCRUM-21, D53): the live shared info of one incident. */
+export interface IncidentSharedInfoState {
+  incident_id: string;
+  /** `live_share_payload` (else the activation `share_payload`, else `{}`), as the member read. */
+  share_payload: Record<string, unknown>;
+  /** `live_share_updated_at`: when the live view last changed. */
+  updated_at: string | null;
+  /** Database time of this read (`statement_timestamp()`). */
+  occurred_at: string;
+}
 
 /**
  * The post-commit reads of the realtime broadcasts (API-100-41, API-100-42). Each runs in its own
@@ -122,6 +134,19 @@ export class RealtimeReadsRepository {
            from public.incident_deliveries d
           where d.incident_id = rec.id
        ) c
+       where rec.id = ${incidentId}::uuid`);
+  }
+
+  /** The live shared info of an incident (D53); undefined when the row is gone. */
+  async sharedInfo(incidentId: string): Promise<IncidentSharedInfoState | undefined> {
+    return this.readOne<IncidentSharedInfoState>(sql`
+      select jsonb_build_object(
+               'incident_id', rec.id,
+               'share_payload', coalesce(rec.live_share_payload, rec.share_payload, '{}'::jsonb),
+               'updated_at', rec.live_share_updated_at,
+               'occurred_at', statement_timestamp()
+             ) as body
+        from public.incidents rec
        where rec.id = ${incidentId}::uuid`);
   }
 

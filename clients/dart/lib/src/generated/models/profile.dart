@@ -8,6 +8,7 @@ import 'package:atlas_api_client/src/unknown_enum_values.dart';
 
 import 'blood_type.dart';
 import 'gender.dart';
+import 'medical_item.dart';
 import 'preferred_language.dart';
 import 'relationship.dart';
 
@@ -16,10 +17,11 @@ part 'profile.g.dart';
 @JsonSerializable()
 class Profile {
   const Profile({
-    required this.emergencyContactPhone,
+    required this.emergencyContactRelationship,
     required this.alertPushEnabled,
     required this.alertSmsEnabled,
     required this.allergies,
+    required this.allergyItems,
     required this.appLanguage,
     required this.avatarPath,
     required this.avatarUrl,
@@ -28,8 +30,8 @@ class Profile {
     required this.dateOfBirth,
     required this.emergencyContactEmail,
     required this.emergencyContactFullName,
+    required this.emergencyContactPhone,
     required this.alertEmailEnabled,
-    required this.emergencyContactRelationship,
     required this.emergencyInfoCompletedAt,
     required this.emergencyNotes,
     required this.emergencyNotesShareable,
@@ -39,8 +41,10 @@ class Profile {
     required this.hideProfileFromNonMembers,
     required this.id,
     required this.locationSharingEnabled,
+    required this.medicalConditionItems,
     required this.medicalConditions,
     required this.updatedAt,
+    required this.personalInfoCompletedAt,
     required this.preferencesCompletedAt,
     required this.preferredLanguage,
     required this.profileSetupCompletedAt,
@@ -53,7 +57,7 @@ class Profile {
     required this.shareEmergencyPreferredLanguage,
     required this.shareMedicalConditions,
     required this.timezone,
-    required this.personalInfoCompletedAt,
+    required this.medicalInfoUpdatedAt,
   });
 
   factory Profile.fromJson(Map<String, Object?> json) =>
@@ -65,7 +69,13 @@ class Profile {
   final bool alertPushEnabled;
   @JsonKey(name: 'alert_sms_enabled')
   final bool alertSmsEnabled;
+
+  /// The allergy items joined with ", " (kept for old readers); use `allergy_items`.
   final String? allergies;
+
+  /// The allergies, oldest first (SCRUM-21, D51).
+  @JsonKey(name: 'allergy_items')
+  final List<MedicalItem> allergyItems;
   @JsonKey(name: 'app_language')
   final String appLanguage;
 
@@ -110,8 +120,18 @@ class Profile {
   final String id;
   @JsonKey(name: 'location_sharing_enabled')
   final bool locationSharingEnabled;
+
+  /// The medical conditions, oldest first (SCRUM-21, D51).
+  @JsonKey(name: 'medical_condition_items')
+  final List<MedicalItem> medicalConditionItems;
+
+  /// The medical-condition items joined with ", " (kept for old readers); use `medical_condition_items`.
   @JsonKey(name: 'medical_conditions')
   final String? medicalConditions;
+
+  /// When the medical info last changed: an allergy or condition added, edited or deleted, or the blood type changed (SCRUM-21). Null before the first change.
+  @JsonKey(name: 'medical_info_updated_at')
+  final String? medicalInfoUpdatedAt;
 
   /// Set by the server the first time Personal Info is saved; never reset.
   @JsonKey(name: 'personal_info_completed_at')

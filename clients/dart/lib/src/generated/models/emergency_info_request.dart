@@ -38,7 +38,7 @@ class EmergencyInfoRequest {
   factory EmergencyInfoRequest.fromJson(Map<String, Object?> json) =>
       keepRawJson(_$EmergencyInfoRequestFromJson(json), json);
 
-  /// Free text. Trimmed; blank or left out is stored as null.
+  /// Ignored since SCRUM-21 (D51): use `POST /v1/me/profile/allergies` and its item routes.
   final String? allergies;
 
   /// Blank or left out: null (`profiles:invalid_blood_type`).
@@ -71,7 +71,7 @@ class EmergencyInfoRequest {
   @JsonKey(name: 'location_sharing_enabled')
   final bool locationSharingEnabled;
 
-  /// Free text. Trimmed; blank or left out is stored as null.
+  /// Ignored since SCRUM-21 (D51): use `POST /v1/me/profile/medical-conditions` and its item routes.
   @JsonKey(name: 'medical_conditions')
   final String? medicalConditions;
   @JsonKey(name: 'share_allergies')

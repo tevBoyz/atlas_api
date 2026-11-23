@@ -4,6 +4,7 @@ import type { Client } from 'pg';
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
 import { authHeader } from '../../src/testing/test-tokens';
 import { openTestClient } from '../support/database';
+import { asSqlSharePayloadShape } from '../support/share-payload-shape';
 import {
   addActiveMember,
   type CircleFixture,
@@ -60,6 +61,9 @@ const DETAIL_KEYS = [
   'location_sharing_ended_at',
   'location_source',
   'share_payload',
+  // SCRUM-21 (D53): the activation snapshot and when the live view last changed.
+  'share_payload_at_activation',
+  'share_payload_updated_at',
 ].sort();
 
 describe('responder incident list and details (API-100-21)', () => {
@@ -296,7 +300,7 @@ describe('responder incident list and details (API-100-21)', () => {
       expect(errorOf(bad).details).toEqual({ field: 'id' });
     });
 
-    it('AC2, AC3: exactly 19 keys, share_payload stored or {}, no resident_id/circle_id', async () => {
+    it('AC2, AC3: the 19 SQL keys + 2 SCRUM-21 keys, share_payload stored or {}, no resident_id/circle_id', async () => {
       const s = await scene(1, 'Resident Details');
       await client.query(
         `update public.profiles set blood_type = 'O+', share_blood_type = true where id = $1`,
@@ -315,6 +319,8 @@ describe('responder incident list and details (API-100-21)', () => {
         status: 'active',
         incident_notes: 'Back door',
         share_payload: { blood_type: 'O+' },
+        share_payload_at_activation: { blood_type: 'O+' },
+        share_payload_updated_at: null,
       });
       expect(reply.body).not.toContain(s.resident.id);
       expect(reply.body).not.toContain(s.circle.id);
@@ -322,6 +328,10 @@ describe('responder incident list and details (API-100-21)', () => {
       await client.query('update public.incidents set share_payload = null where id = $1', [id]);
       expect(
         (await getIncidentDetails(app, s.members[0].id, id)).json<Body>().share_payload,
+      ).toEqual({});
+      expect(
+        (await getIncidentDetails(app, s.members[0].id, id)).json<Body>()
+          .share_payload_at_activation,
       ).toEqual({});
     });
 
@@ -406,7 +416,7 @@ describe('responder incident list and details (API-100-21)', () => {
       expect(await listIds(after.id)).toEqual([]);
     });
 
-    it('interchangeable with get_incident_details: the same bytes (open, located, noted, closed)', async () => {
+    it('interchangeable with get_incident_details: the same JSON in the SQL shape (open, located, noted, closed)', async () => {
       const s = await scene(2);
       await client.query(
         `update public.profiles set allergies = 'Peanuts', share_allergies = true where id = $1`,
@@ -417,7 +427,11 @@ describe('responder incident list and details (API-100-21)', () => {
         for (const member of s.members) {
           const api = await getIncidentDetails(app, member.id, id);
           const sql = await callSqlAs(client, member.id, 'public.get_incident_details($1)', [id]);
-          expect(api.body).toBe(JSON.stringify(sql));
+          // SCRUM-21 (D52, D53): the stored snapshot holds arrays (read by both sides): joined, and the
+          // two new keys removed; the rest identical.
+          expect(JSON.stringify(asSqlSharePayloadShape(api.json<Body>()))).toBe(
+            JSON.stringify(asSqlSharePayloadShape(sql)),
+          );
         }
       };
       await compare();

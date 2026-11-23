@@ -132,6 +132,10 @@ export const profiles = pgTable(
     shareEmergencyPreferredLanguage: boolean('share_emergency_preferred_language')
       .default(false)
       .notNull(),
+    medicalInfoUpdatedAt: timestamp('medical_info_updated_at', {
+      withTimezone: true,
+      mode: 'string',
+    }),
   },
   (table) => [
     index('profiles_emergency_info_completed_at_idx').using(
@@ -316,6 +320,8 @@ export const incidents = pgTable(
       withTimezone: true,
       mode: 'string',
     }),
+    liveSharePayload: jsonb('live_share_payload'),
+    liveShareUpdatedAt: timestamp('live_share_updated_at', { withTimezone: true, mode: 'string' }),
   },
   (table) => [
     index('incidents_circle_id_idx')

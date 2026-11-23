@@ -142,6 +142,30 @@ const PHASES: Record<PhaseNumber, Phase> = {
       'These `membership_access_window.sql` assertions check the `activated_at` trigger on ' +
       'membership writes, which the API got in Phase 2 (and the setup owner row, L84, in Phase 3). ' +
       'They are proved by the story named here.',
+    divergences: [
+      {
+        decision: 'D52, D53 (SCRUM-21; approved by Dawit 2026-11-23, plan `scrum-21-plan.md`)',
+        case:
+          'The share payload of a new incident (`submit_emergency_alert`) when allergies / medical ' +
+          'conditions are shared; the member incident details (`get_incident_details`); a resident ' +
+          'who changes their shared info during an active incident.',
+        sql:
+          '`allergies` / `medical_conditions` are one string (the text column). Details have 19 ' +
+          'keys, `share_payload` = the activation snapshot; later edits never reach the incident.',
+        api:
+          'Arrays of strings (the SCRUM-21 items, oldest first; a text with no item = one item). ' +
+          'Details add `share_payload_at_activation` (the snapshot, never rewritten) and ' +
+          '`share_payload_updated_at`; `share_payload` is the live view (`live_share_payload`, ' +
+          'migration 0014) once the resident changed it, with `incident.shared_info_updated` to the ' +
+          "incident room. The resident's own reads keep the snapshot. The SQL-side assertions are " +
+          'unchanged (their fixtures share no list, or compare in the SQL shape).',
+        provedBy:
+          '`test/int/profiles-medical-items-scrum21.int-spec.ts`, ' +
+          '`test/int/realtime-shared-info-d53.int-spec.ts`, `test/int/incidents-responder.int-spec.ts` ' +
+          'and `test/int/phase1-mixed-writers.int-spec.ts` (SQL vs API in the SQL shape, ' +
+          '`test/support/share-payload-shape.ts`)',
+      },
+    ],
   },
   2: {
     number: 2,
@@ -230,6 +254,26 @@ const PHASES: Record<PhaseNumber, Phase> = {
     scope: (file, line) => (PHASE3_LINES[file]?.[line] ? { gate: true } : null),
     deferredHeading: 'Deferred',
     deferredText: 'Nothing is deferred: Phase 3 completes the last open parity assertions.',
+    divergences: [
+      {
+        decision: 'D51 (SCRUM-21; approved by Dawit 2026-11-23, plan `scrum-21-plan.md`)',
+        case:
+          'Allergies and medical conditions written through the API (`PUT /v1/me/profile/emergency-info` ' +
+          'and the new item routes), and the profile read.',
+        sql:
+          'The app wrote `profiles.allergies` / `medical_conditions` as one free text each; the ' +
+          'SQL functions read those columns.',
+        api:
+          'Lists of items (`profile_allergies`, `profile_medical_conditions`, migration 0014, ' +
+          'back-filled one item per text); the PUT ignores the two text fields; the text columns ' +
+          'are kept equal to the items joined with ", " so the SQL functions still read them. The ' +
+          'Profile adds `medical_info_updated_at` (a column) and `allergy_items` / ' +
+          '`medical_condition_items`.',
+        provedBy:
+          '`test/int/profiles-medical-items-scrum21.int-spec.ts`, `test/int/profiles-write.int-spec.ts`, ' +
+          '`test/int/phase3-mixed-writers.int-spec.ts` (app vs API end state with the items)',
+      },
+    ],
   },
 };
 

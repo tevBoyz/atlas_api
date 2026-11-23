@@ -23,6 +23,18 @@ export const submitEmergencyAlertRequestSchema = z.object({
   emergency_type: z.enum(SUBMITTABLE_EMERGENCY_TYPES),
 });
 
+/**
+ * A share payload (spec §6.5): what the resident chose to share, by field. Every value is a string,
+ * except `allergies` and `medical_conditions`, which are arrays of strings in payloads written since
+ * SCRUM-21 (D52) and a single string in older incidents: clients accept both.
+ */
+const sharePayloadSchema = () =>
+  z
+    .record(z.string(), z.unknown())
+    .describe(
+      'Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. Keys not shared are left out.',
+    );
+
 export const SUBMIT_OUTCOMES = ['created', 'promoted', 'renotified'] as const;
 
 export type SubmitOutcome = (typeof SUBMIT_OUTCOMES)[number];
@@ -48,7 +60,7 @@ export const incidentSharedSchema = componentSchema(
     location_source: locationSourceSchema.nullable(),
     cancelled_at: z.string().nullable(),
     sent_at: z.string().nullable(),
-    share_payload: z.record(z.string(), z.string()).nullable(),
+    share_payload: sharePayloadSchema().nullable(),
     incident_notes: z.string().nullable(),
     incident_notes_updated_at: z.string().nullable(),
     renotified_at: z.string().nullable(),
@@ -161,8 +173,9 @@ export const responderIncidentSchema = componentSchema(
 export const responderIncidentListSchema = z.array(responderIncidentSchema);
 
 /**
- * IncidentDetails (spec §7.4, `get_incident_details`): exactly 19 keys. `share_payload` is the stored
- * snapshot, `{}` when none. Never `resident_id` or `circle_id` (API-100-21 AC3).
+ * IncidentDetails (spec §7.4, `get_incident_details`): the 19 keys of the SQL function plus
+ * `share_payload_at_activation` and `share_payload_updated_at` (SCRUM-21, D53). `share_payload` is the
+ * live shared info (else the activation snapshot), `{}` when none. Never `resident_id` or `circle_id` (API-100-21 AC3).
  */
 export const incidentDetailsSchema = componentSchema(
   'IncidentDetails',
@@ -175,7 +188,18 @@ export const incidentDetailsSchema = componentSchema(
     location_sharing_ended_at: z.string().nullable(),
     incident_notes: z.string().nullable(),
     incident_notes_updated_at: z.string().nullable(),
-    share_payload: z.record(z.string(), z.string()),
+    share_payload: sharePayloadSchema().describe(
+      'The LIVE shared info (SCRUM-21, D53): the latest shared fields when they changed them during the incident, else the activation snapshot; `{}` when none. Allergies / conditions: arrays of strings (a single string in older incidents).',
+    ),
+    share_payload_at_activation: sharePayloadSchema().describe(
+      'What was shared at activation (what the alerts carried); never changes. `{}` when none.',
+    ),
+    share_payload_updated_at: z
+      .string()
+      .nullable()
+      .describe(
+        'When the resident last changed the shared info during the incident; null = unchanged since activation.',
+      ),
   }),
 );
 

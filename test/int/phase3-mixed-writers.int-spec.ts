@@ -8,6 +8,7 @@ import { createTestApp, withTestConfig } from '../../src/testing/test-app';
 import { sqlAs } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
+  addMedicalItem,
   asAppUser,
   completeSetup,
   createAuthUser,
@@ -41,10 +42,12 @@ type Body = Record<string, unknown>;
 
 const CONTACT_PHONE = '+12015550166';
 
-/** The Profile without the key the app's `select *` does not have. */
+/** The Profile without the keys the app's `select *` does not have (`avatar_url`, SCRUM-21 lists). */
 function withoutAvatarUrl(body: Body): Body {
   const copy = { ...body };
   delete copy.avatar_url;
+  delete copy.allergy_items;
+  delete copy.medical_condition_items;
   return copy;
 }
 
@@ -106,6 +109,15 @@ describe('Phase 3 gate: mixed writers (API-100-38)', () => {
   async function apiWrites(id: string) {
     expect((await putPersonalInfo(app, id, personal)).statusCode).toBe(200);
     expect((await putEmergencyInfo(app, id, emergency)).statusCode).toBe(200);
+    // SCRUM-21 (D51): the API writes allergies / conditions as items (the PUT ignores the text);
+    // the old text columns then hold the same values as the app's direct write.
+    expect(
+      (await addMedicalItem(app, id, 'allergies', { text: emergency.allergies })).statusCode,
+    ).toBe(200);
+    expect(
+      (await addMedicalItem(app, id, 'medical-conditions', { text: emergency.medical_conditions }))
+        .statusCode,
+    ).toBe(200);
     expect((await putPreferences(app, id, prefs)).statusCode).toBe(200);
   }
 
@@ -126,7 +138,8 @@ describe('Phase 3 gate: mixed writers (API-100-38)', () => {
     ).rows[0];
     const out: Body = {};
     for (const column of PROFILE_COLUMNS) {
-      if (['id', 'created_at', 'updated_at'].includes(column)) continue;
+      // `medical_info_updated_at` is owned by the API (SCRUM-21, D51): the app's writes never set it.
+      if (['id', 'created_at', 'updated_at', 'medical_info_updated_at'].includes(column)) continue;
       out[column] = column.endsWith('_completed_at') ? profile[column] !== null : profile[column];
     }
     const circles = (

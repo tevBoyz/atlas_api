@@ -65,6 +65,8 @@ export 'models/location_sharing_request.dart';
 export 'models/location_source.dart';
 export 'models/lockout_status.dart';
 export 'models/login_request.dart';
+export 'models/medical_item.dart';
+export 'models/medical_item_request.dart';
 export 'models/member_invite_payload.dart';
 export 'models/member_status.dart';
 export 'models/o_auth_session.dart';

@@ -37,9 +37,7 @@ IncidentSubmitResult _$IncidentSubmitResultFromJson(
   resolvedAt: json['resolved_at'] as String?,
   resolvedReason: json['resolved_reason'] as String?,
   sentAt: json['sent_at'] as String?,
-  sharePayload: (json['share_payload'] as Map<String, dynamic>?)?.map(
-    (k, e) => MapEntry(k, e as String),
-  ),
+  sharePayload: json['share_payload'] as Map<String, dynamic>?,
   status: IncidentSubmitResultStatus.fromJson(json['status'] as String),
   submitOutcome: IncidentSubmitResultSubmitOutcome.fromJson(
     json['submit_outcome'] as String,

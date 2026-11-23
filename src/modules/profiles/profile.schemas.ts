@@ -28,6 +28,18 @@ export const preferredLanguageSchema = componentSchema(
   z.enum(['en', 'wo', 'mnk', 'ff']),
 );
 
+/** One allergy or medical condition (SCRUM-21, D51). */
+export const medicalItemSchema = componentSchema(
+  'MedicalItem',
+  z.object({
+    id: z.uuid(),
+    text: z
+      .string()
+      .describe('1-100 characters, trimmed (an item from the old free text may be longer).'),
+    updated_at: z.string().describe('When the item was added or last edited.'),
+  }),
+);
+
 /**
  * Profile (spec §4.2 + `avatar_url`): every `profiles` column, in the table's column order (as the
  * app's `select *` returns them today), then `avatar_url`. Only ever the caller's own row.
@@ -64,8 +76,16 @@ export const profileSchema = componentSchema(
     emergency_contact_phone: z.string().nullable(),
     emergency_contact_email: z.string().nullable(),
     blood_type: bloodTypeSchema.nullable(),
-    allergies: z.string().nullable(),
-    medical_conditions: z.string().nullable(),
+    allergies: z
+      .string()
+      .nullable()
+      .describe('The allergy items joined with ", " (kept for old readers); use `allergy_items`.'),
+    medical_conditions: z
+      .string()
+      .nullable()
+      .describe(
+        'The medical-condition items joined with ", " (kept for old readers); use `medical_condition_items`.',
+      ),
     emergency_preferred_language: z.string().nullable(),
     emergency_info_completed_at: timestamp().describe(
       'Set by the server the first time Emergency Info is saved; never reset.',
@@ -83,12 +103,21 @@ export const profileSchema = componentSchema(
     share_allergies: z.boolean(),
     share_medical_conditions: z.boolean(),
     share_emergency_preferred_language: z.boolean(),
+    medical_info_updated_at: timestamp().describe(
+      'When the medical info last changed: an allergy or condition added, edited or deleted, or the blood type changed (SCRUM-21). Null before the first change.',
+    ),
     avatar_url: z
       .string()
       .nullable()
       .describe(
         'Public URL of `avatar_path`: `{SUPABASE_URL}/storage/v1/object/public/avatars/{avatar_path}`; null without a photo.',
       ),
+    allergy_items: z
+      .array(medicalItemSchema)
+      .describe('The allergies, oldest first (SCRUM-21, D51).'),
+    medical_condition_items: z
+      .array(medicalItemSchema)
+      .describe('The medical conditions, oldest first (SCRUM-21, D51).'),
   }),
 );
 
@@ -152,8 +181,20 @@ export const emergencyInfoRequestSchema = z.object({
     .nullable()
     .optional()
     .describe('Blank or left out: null (`profiles:invalid_blood_type`).'),
-  allergies: optionalText('Free text.'),
-  medical_conditions: optionalText('Free text.'),
+  allergies: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      'Ignored since SCRUM-21 (D51): use `POST /v1/me/profile/allergies` and its item routes.',
+    ),
+  medical_conditions: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      'Ignored since SCRUM-21 (D51): use `POST /v1/me/profile/medical-conditions` and its item routes.',
+    ),
   emergency_preferred_language: optionalText('Free text.'),
   location_sharing_enabled: z.boolean(),
   emergency_notes: optionalText('At most 500 characters (`profiles:emergency_notes_too_long`).'),
@@ -166,6 +207,24 @@ export const emergencyInfoRequestSchema = z.object({
   share_allergies: z.boolean(),
   share_medical_conditions: z.boolean(),
   share_emergency_preferred_language: z.boolean(),
+});
+
+/** `POST` / `PATCH` of an allergy or medical condition (SCRUM-21, D51). */
+export const medicalItemRequestSchema = z.object({
+  text: z
+    .string()
+    .describe(
+      'Trimmed; 1-100 characters (`profiles:invalid_medical_item`); not the same as another item of the list, ignoring case (`profiles:duplicate_medical_item`).',
+    ),
+});
+
+/** The `{item_id}` of an allergy or medical condition. */
+export const medicalItemParamsSchema = z.object({
+  item_id: z
+    .guid()
+    .describe(
+      "The item id. Another user's item, or one of the other list, is `medical_item_not_found`.",
+    ),
 });
 
 /** `PUT /v1/me/profile/preferences` (P4). */

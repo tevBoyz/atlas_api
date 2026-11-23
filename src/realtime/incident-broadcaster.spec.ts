@@ -7,6 +7,7 @@ import {
   notesPayload,
   renotifiedPayload,
   resolvedPayload,
+  sharedInfoPayload,
   updatedPayload,
 } from './incident-broadcaster';
 import { REALTIME_CONTRACT } from './realtime.contract';
@@ -14,6 +15,7 @@ import type { RealtimeGateway } from './realtime.gateway';
 import type {
   IncidentBroadcastState,
   IncidentEventRow,
+  IncidentSharedInfoState,
   RealtimeReadsRepository,
 } from './realtime-reads.repository';
 
@@ -54,6 +56,15 @@ function state(): IncidentBroadcastState {
   };
 }
 
+function sharedInfo(): IncidentSharedInfoState {
+  return {
+    incident_id: INCIDENT,
+    share_payload: { blood_type: 'O+', allergies: ['Peanuts', 'Dust'] },
+    updated_at: T,
+    occurred_at: T,
+  };
+}
+
 function eventRow(actor: string | null, detail: Record<string, unknown> = {}): IncidentEventRow {
   return {
     incident_id: INCIDENT,
@@ -74,6 +85,7 @@ function setup(row?: IncidentEventRow) {
     incidentState: jest.fn().mockResolvedValue(state()),
     recipientUserIds: jest.fn().mockResolvedValue([MEMBER]),
     event: jest.fn().mockResolvedValue(row),
+    sharedInfo: jest.fn().mockResolvedValue(sharedInfo()),
   };
   const broadcaster = new IncidentBroadcaster(
     { emit } as unknown as RealtimeGateway,
@@ -231,6 +243,26 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
     ]);
   });
 
+  it('shared info (D53): incident.shared_info_updated to the incident room only, live payload', async () => {
+    const { broadcaster, calls, payload, reads } = setup();
+    await broadcaster.afterSharedInfo(ref);
+    expect(reads.sharedInfo).toHaveBeenCalledWith(INCIDENT);
+    expect(calls()).toEqual([[[`incident:${INCIDENT}`], 'incident.shared_info_updated', []]]);
+    expect(payload(0)).toEqual({
+      incident_id: INCIDENT,
+      share_payload: { blood_type: 'O+', allergies: ['Peanuts', 'Dust'] },
+      updated_at: T,
+      occurred_at: T,
+    });
+  });
+
+  it('shared info (D53): a gone incident emits nothing', async () => {
+    const { broadcaster, emit, reads } = setup();
+    reads.sharedInfo.mockResolvedValue(undefined);
+    await broadcaster.afterSharedInfo(ref);
+    expect(emit).not.toHaveBeenCalled();
+  });
+
   it('a gone incident or event emits nothing', async () => {
     const { broadcaster, emit, reads } = setup(undefined);
     reads.incidentState.mockResolvedValue(undefined);
@@ -252,6 +284,12 @@ describe('the published contract (x-realtime) matches the payloads', () => {
     ['incident.incoming', incomingPayload],
   ] as const)('%s', (name, build) => {
     expect(Object.keys(build(state()))).toEqual(events[name].payload);
+  });
+
+  it('incident.shared_info_updated', () => {
+    expect(Object.keys(sharedInfoPayload(sharedInfo()))).toEqual(
+      events['incident.shared_info_updated'].payload,
+    );
   });
 
   it('incident.event', () => {

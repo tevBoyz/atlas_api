@@ -27,7 +27,13 @@ Map<String, Object?> incidentDetailsJson({
   'resolved_at': null,
   'resolved_reason': null,
   'sent_at': '2026-11-18T10:00:00.123456+00:00',
-  'share_payload': {'blood_type': 'O+'},
+  'share_payload': {
+    'blood_type': 'O+',
+    'allergies': ['Peanuts', 'Latex'],
+  },
+  // SCRUM-21 (D53): the activation snapshot and when the live view last changed.
+  'share_payload_at_activation': {'blood_type': 'O+', 'allergies': 'Peanuts'},
+  'share_payload_updated_at': '2026-11-18T10:05:00+00:00',
   'status': status,
 };
 

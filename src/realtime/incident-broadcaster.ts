@@ -10,6 +10,7 @@ import type {
   IncidentPostCommitHook,
   IncidentRenotifiedEvent,
   IncidentResolvedEvent,
+  IncidentSharedInfoEvent,
   IncidentSubmittedEvent,
 } from '../modules/incidents/incident-post-commit';
 import {
@@ -23,6 +24,7 @@ import { RealtimeGateway } from './realtime.gateway';
 import {
   type IncidentBroadcastState,
   type IncidentEventRow,
+  type IncidentSharedInfoState,
   RealtimeReadsRepository,
 } from './realtime-reads.repository';
 
@@ -97,6 +99,16 @@ export function resolvedPayload(state: IncidentBroadcastState) {
   };
 }
 
+/** `incident.shared_info_updated` (SCRUM-21, D53): the live shared info and when it changed. */
+export function sharedInfoPayload(state: IncidentSharedInfoState) {
+  return {
+    incident_id: state.incident_id,
+    share_payload: state.share_payload,
+    updated_at: state.updated_at,
+    occurred_at: state.occurred_at,
+  };
+}
+
 /** `incident.delivery_counts` (the resident only), the REST DeliveryCounts keys plus the times. */
 export function deliveryCountsPayload(state: IncidentBroadcastState) {
   return {
@@ -148,6 +160,8 @@ export function eventPayload(
  *   `incident.resolved` to those user rooms and the resident's (D48), so they learn it ended;
  * - `incident.delivery_counts` to the resident's own sockets (`user:{resident_id}`) on submit,
  *   re-notify, the first acknowledge and the close;
+ * - `incident.shared_info_updated` to `incident:{id}` when the resident changed their shared info
+ *   during the incident (D53): the live view, never the activation snapshot;
  * - `incident.event` per inserted event, per receiver role: the resident (`incident:{id}:resident`)
  *   the row as stored, the actor's own sockets their own id unmasked, every other member D3/D11.
  *
@@ -220,6 +234,22 @@ export class IncidentBroadcaster implements IncidentPostCommitHook {
   async afterDeliveryCounts(event: IncidentDeliveryCountsEvent): Promise<void> {
     const state = await this.state(event.incident_id);
     if (state) this.sendCounts(state);
+  }
+
+  /**
+   * `incident.shared_info_updated` (SCRUM-21, D53) to the incident room: the resident and the members
+   * inside the window who joined it (the join is re-checked per join, D20; a removed member's sockets
+   * were evicted). The live payload holds only what the resident shares now (a flag turned off
+   * removes that key). No actor, no recipient ids (D3/D11).
+   */
+  async afterSharedInfo(event: IncidentSharedInfoEvent): Promise<void> {
+    const state = await this.reads.sharedInfo(event.incident_id);
+    if (!state) return;
+    this.gateway.emit(
+      [incidentRoom(state.incident_id)],
+      SERVER_EVENTS.sharedInfoUpdated,
+      sharedInfoPayload(state),
+    );
   }
 
   async afterEvent(event: IncidentEventRecordedEvent): Promise<void> {

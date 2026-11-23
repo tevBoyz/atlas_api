@@ -41,6 +41,11 @@ const REDACT_KEYS = new Set([
   'cookies',
   'set_cookie',
   'share_payload',
+  // SCRUM-21: the live incident view and the activation copy, and the medical item lists.
+  'live_share_payload',
+  'share_payload_at_activation',
+  'allergy_items',
+  'medical_condition_items',
   'invite_url',
   // Medical / emergency information (spec §4.2, §6.5)
   'blood_type',

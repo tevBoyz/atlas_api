@@ -10,6 +10,7 @@ import { errorOf } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import { createUser } from '../support/fixtures';
 import {
+  addMedicalItem,
   asAppUser,
   createAuthUser,
   emergencyInfoBody,
@@ -249,7 +250,8 @@ describe('profile writes (API-100-35)', () => {
         emergency_contact_phone: '+12015550188',
         emergency_contact_email: null,
         blood_type: 'O+',
-        allergies: 'Peanuts',
+        // SCRUM-21 (D51): the PUT no longer writes these; the item lists own them.
+        allergies: null,
         medical_conditions: null,
         emergency_preferred_language: 'Wolof',
         location_sharing_enabled: false,
@@ -482,7 +484,14 @@ describe('profile writes (API-100-35)', () => {
       const stored = await row(id);
       const out: Body = {};
       for (const column of PROFILE_COLUMNS) {
-        if (['id', 'created_at', 'updated_at', ...SERVER_OWNED].includes(column)) continue;
+        // `medical_info_updated_at` is owned by the API (SCRUM-21, D51): the app's writes never set it.
+        if (
+          ['id', 'created_at', 'updated_at', 'medical_info_updated_at', ...SERVER_OWNED].includes(
+            column,
+          )
+        ) {
+          continue;
+        }
         out[column] = stored[column];
       }
       return out;
@@ -531,6 +540,12 @@ describe('profile writes (API-100-35)', () => {
 
       await putPersonalInfo(app, viaApi, { ...personal, avatar_path: `${viaApi}/avatar.jpg` });
       await putEmergencyInfo(app, viaApi, emergency);
+      // SCRUM-21 (D51): through the API, allergies and conditions are items; the old text columns
+      // then hold what the app's direct write stored.
+      await addMedicalItem(app, viaApi, 'allergies', { text: emergency.allergies });
+      await addMedicalItem(app, viaApi, 'medical-conditions', {
+        text: emergency.medical_conditions,
+      });
       await putPreferences(app, viaApi, prefs);
 
       const a = await comparable(viaApp);

@@ -46,6 +46,20 @@ describe('profile write errors (API-100-35: never a 500 for a table rule)', () =
     );
   });
 
+  it.each(['profile_allergies_user_text_uidx', 'profile_medical_conditions_user_text_uidx'])(
+    'a duplicate item (%s, SCRUM-21) → 409 profiles:duplicate_medical_item',
+    (index) => {
+      const mapped = profileWriteError(pgError('23505', index));
+      expect(mapped?.code).toBe('profiles:duplicate_medical_item');
+      expect(mapped?.status).toBe(409);
+      expect(mapped?.details).toEqual({ field: 'text' });
+    },
+  );
+
+  it('another unique violation is not mapped', () => {
+    expect(profileWriteError(pgError('23505', 'profiles_pkey'))).toBeUndefined();
+  });
+
   it('date input errors → profiles:invalid_date_of_birth', () => {
     expect(profileWriteError(pgError('22008'))?.code).toBe('profiles:invalid_date_of_birth');
     expect(profileWriteError(pgError('22007'))?.code).toBe('profiles:invalid_date_of_birth');

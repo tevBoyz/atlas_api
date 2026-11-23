@@ -6,6 +6,7 @@ import type { Database } from '../../db';
 import { IncidentEventService } from './incident-events.service';
 import { INCIDENT_SEND_JSON, INCIDENT_SHARED_JSON } from './incident-json';
 import type { SubmitOutcome, SubmittableEmergencyType } from './incident.schemas';
+import { SHARE_PAYLOAD_SQL } from './share-payload';
 
 /** The open transaction of a submit. */
 export type IncidentTransaction = Pick<Database, 'execute'>;
@@ -37,41 +38,6 @@ export interface WrittenIncidentRow extends Record<string, unknown> {
   id: string;
   circle_id: string | null;
 }
-
-/**
- * `_incident_share_payload` for the profile aliased `p` (spec rules 31-32). Built in SQL on purpose:
- * `btrim` removes spaces only (a tab-only value is kept), which `String.prototype.trim` would not match.
- */
-const SHARE_PAYLOAD = sql`coalesce(
-  jsonb_strip_nulls(
-    jsonb_build_object(
-      'emergency_contact_full_name',
-        case when p.share_emergency_contact_full_name
-             then nullif(btrim(p.emergency_contact_full_name), '') end,
-      'emergency_contact_relationship',
-        case when p.share_emergency_contact_relationship
-             then nullif(btrim(p.emergency_contact_relationship), '') end,
-      'emergency_contact_phone',
-        case when p.share_emergency_contact_phone
-             then nullif(btrim(p.emergency_contact_phone), '') end,
-      'emergency_contact_email',
-        case when p.share_emergency_contact_email
-             then nullif(btrim(p.emergency_contact_email), '') end,
-      'blood_type',
-        case when p.share_blood_type then nullif(btrim(p.blood_type), '') end,
-      'allergies',
-        case when p.share_allergies then nullif(btrim(p.allergies), '') end,
-      'medical_conditions',
-        case when p.share_medical_conditions then nullif(btrim(p.medical_conditions), '') end,
-      'emergency_preferred_language',
-        case when p.share_emergency_preferred_language
-             then nullif(btrim(p.emergency_preferred_language), '') end,
-      'emergency_notes',
-        case when p.emergency_notes_shareable then nullif(btrim(p.emergency_notes), '') end
-    )
-  ),
-  '{}'::jsonb
-)`;
 
 /**
  * The SQL statements of `submit_emergency_alert` (final definition: baseline migration
@@ -144,7 +110,7 @@ export class IncidentsRepository {
          set status = 'active',
              emergency_type = ${emergencyType}::text,
              sent_at = now(),
-             share_payload = ${SHARE_PAYLOAD},
+             share_payload = ${SHARE_PAYLOAD_SQL},
              cancelled_at = null
         from public.profiles p
        where i.id = ${incidentId}::uuid
@@ -169,7 +135,7 @@ export class IncidentsRepository {
              ${emergencyType}::text,
              now(),
              now(),
-             ${SHARE_PAYLOAD}
+             ${SHARE_PAYLOAD_SQL}
         from public.profiles p
        where p.id = ${residentId}::uuid
       on conflict (resident_id) where (status in ('activating', 'active'))
@@ -310,6 +276,32 @@ export class IncidentsRepository {
   async keyShareProfile(tx: IncidentTransaction, residentId: string): Promise<void> {
     await tx.execute(sql`
       select 1 from public.profiles p where p.id = ${residentId}::uuid for key share`);
+  }
+
+  /**
+   * SCRUM-21 live incident view (D53): recomputes the resident's share payload (the same SQL as the
+   * activation snapshot, from the profile as this transaction sees it) into `live_share_payload` and
+   * `live_share_updated_at = now()` of their ACTIVE incident(s), only where it differs from what
+   * members see now (`live_share_payload`, else the activation `share_payload`). `share_payload` is
+   * never touched. Run inside the profile write's transaction, after the profile row was written
+   * (lock order profile → incident, as submit). Returns the incidents that changed (ids only).
+   */
+  async refreshLiveSharePayload(
+    tx: IncidentTransaction,
+    residentId: string,
+  ): Promise<WrittenIncidentRow[]> {
+    const result = await tx.execute<WrittenIncidentRow>(sql`
+      update public.incidents i
+         set live_share_payload = s.payload,
+             live_share_updated_at = now()
+        from (select ${SHARE_PAYLOAD_SQL} as payload
+                from public.profiles p
+               where p.id = ${residentId}::uuid) s
+       where i.resident_id = ${residentId}::uuid
+         and i.status = 'active'
+         and coalesce(i.live_share_payload, i.share_payload, '{}'::jsonb) is distinct from s.payload
+      returning i.id, i.circle_id`);
+    return result.rows;
   }
 
   /** `_incident_send_json(rec)` of one incident (IncidentSend). */

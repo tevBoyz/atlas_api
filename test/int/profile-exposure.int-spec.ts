@@ -111,6 +111,27 @@ describe('no route exposes another user’s profile (API-100-34 AC2)', () => {
         avatarPath,
       ],
     );
+    // SCRUM-21 (D51): the target's medical items carry the same markers; their ids are the
+    // `{item_id}` every other caller tries.
+    const targetItems = await client.query<{ id: string }>(
+      'insert into public.profile_allergies (user_id, text) values ($1, $2) returning id',
+      [target.id, MARKERS.allergies],
+    );
+    const targetCondition = await client.query<{ id: string }>(
+      'insert into public.profile_medical_conditions (user_id, text) values ($1, $2) returning id',
+      [target.id, MARKERS.medical_conditions],
+    );
+    const itemsHash = async () =>
+      (
+        await client.query<{ h: string }>(
+          `select md5(coalesce(string_agg(t, '|' order by t), '')) as h from (
+             select a::text as t from public.profile_allergies a where user_id = $1
+             union all
+             select c::text from public.profile_medical_conditions c where user_id = $1) x`,
+          [target.id],
+        )
+      ).rows[0].h;
+    const itemsBefore = await itemsHash();
     const circle = await createCircle(client, target);
     const member = await createUser(client, { fullName: 'Member Reader', phone: true });
     const memberRow = await addActiveMember(client, circle, member);
@@ -160,6 +181,11 @@ describe('no route exposes another user’s profile (API-100-34 AC2)', () => {
               case 'session_id':
                 // Own sessions (API-100-56): an id that is nobody's session.
                 return randomUUID();
+              case 'item_id':
+                // SCRUM-21: the target's own allergy / condition item.
+                return route.path.includes('medical-conditions')
+                  ? targetCondition.rows[0].id
+                  : targetItems.rows[0].id;
               default:
                 throw new Error(`No value for path parameter {${p}}: add one to this test`);
             }
@@ -198,5 +224,6 @@ describe('no route exposes another user’s profile (API-100-34 AC2)', () => {
     expect(calls).toBeGreaterThan(routes.length);
     expect(leaks).toEqual([]);
     expect(await profileHash(target.id)).toBe(before);
+    expect(await itemsHash()).toBe(itemsBefore);
   });
 });

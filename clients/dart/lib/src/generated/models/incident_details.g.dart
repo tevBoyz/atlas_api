@@ -31,7 +31,10 @@ IncidentDetails _$IncidentDetailsFromJson(Map<String, dynamic> json) =>
       resolvedAt: json['resolved_at'] as String?,
       resolvedReason: json['resolved_reason'] as String?,
       sentAt: json['sent_at'] as String?,
-      sharePayload: Map<String, String>.from(json['share_payload'] as Map),
+      sharePayload: json['share_payload'] as Map<String, dynamic>,
+      sharePayloadAtActivation:
+          json['share_payload_at_activation'] as Map<String, dynamic>,
+      sharePayloadUpdatedAt: json['share_payload_updated_at'] as String?,
       status: IncidentDetailsStatus.fromJson(json['status'] as String),
     );
 
@@ -55,5 +58,7 @@ Map<String, dynamic> _$IncidentDetailsToJson(IncidentDetails instance) =>
       'resolved_reason': instance.resolvedReason,
       'sent_at': instance.sentAt,
       'share_payload': instance.sharePayload,
+      'share_payload_at_activation': instance.sharePayloadAtActivation,
+      'share_payload_updated_at': instance.sharePayloadUpdatedAt,
       'status': instance.status,
     };

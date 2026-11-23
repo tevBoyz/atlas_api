@@ -6,6 +6,7 @@ import type { Client } from 'pg';
 import { maskActorId } from '../../src/modules/incidents/incident-actor-mask';
 import { createTestApp } from '../../src/testing/test-app';
 import { openTestClient } from '../support/database';
+import { asSqlSharePayloadShape } from '../support/share-payload-shape';
 import {
   addActiveMember,
   createCircle,
@@ -528,9 +529,11 @@ describe('Phase 1 gate: SQL and API writers are interchangeable (API-100-23 AC3)
     const { cast, result } = await run(mode);
     results[mode] = result;
     const walk = normalizer(cast, result);
+    // SCRUM-21 (D52, D53): the API's list values are arrays and member details carry two more keys;
+    // compared in the SQL shape (`asSqlSharePayloadShape`), everything else exactly.
     normalized[mode] = {
-      steps: canonicalSteps(walk(result.steps) as Record<string, unknown>),
-      rows: canonicalRows(walk(result.rows)),
+      steps: canonicalSteps(asSqlSharePayloadShape(walk(result.steps)) as Record<string, unknown>),
+      rows: canonicalRows(asSqlSharePayloadShape(walk(result.rows))),
     };
   });
 

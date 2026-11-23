@@ -8,7 +8,8 @@ import { DomainError, type ErrorCode } from '../../common/errors';
  * - 23514 (check violation): the constraint names the field (spec §4.2 constraint names);
  * - 23503 on `profiles_id_fkey`: the token's user has no `auth.users` row (deleted account) →
  *   `profiles:not_authenticated` (401), as an unknown user;
- * - 22007 / 22008 (date input): `profiles:invalid_date_of_birth`.
+ * - 22007 / 22008 (date input): `profiles:invalid_date_of_birth`;
+ * - 23505 on a medical list's `*_user_text_uidx` (SCRUM-21): `profiles:duplicate_medical_item`.
  * Anything else is unexpected (undefined → the caller rethrows → 500, logged without values).
  */
 const CHECK_CONSTRAINTS: Readonly<Record<string, { code: ErrorCode; field: string }>> = {
@@ -30,6 +31,12 @@ const CHECK_CONSTRAINTS: Readonly<Record<string, { code: ErrorCode; field: strin
     field: 'emergency_notes',
   },
 };
+
+/** The case-insensitive unique indexes of the medical lists (migration 0014). */
+const DUPLICATE_ITEM_INDEXES: ReadonlySet<string> = new Set([
+  'profile_allergies_user_text_uidx',
+  'profile_medical_conditions_user_text_uidx',
+]);
 
 interface PgErrorLike {
   code?: unknown;
@@ -56,6 +63,12 @@ export function profileWriteError(error: unknown): DomainError | undefined {
   }
   if (pg.code === '23503' && constraint === 'profiles_id_fkey') {
     return new DomainError('profiles:not_authenticated', { cause: error });
+  }
+  if (pg.code === '23505' && DUPLICATE_ITEM_INDEXES.has(constraint)) {
+    return new DomainError('profiles:duplicate_medical_item', {
+      details: { field: 'text' },
+      cause: error,
+    });
   }
   if (pg.code === '22007' || pg.code === '22008') {
     return new DomainError('profiles:invalid_date_of_birth', {

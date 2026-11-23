@@ -81,8 +81,10 @@ class IncidentShared {
   final String? resolvedReason;
   @JsonKey(name: 'sent_at')
   final String? sentAt;
+
+  /// Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. Keys not shared are left out.
   @JsonKey(name: 'share_payload')
-  final Map<String, String>? sharePayload;
+  final Map<String, dynamic>? sharePayload;
   final IncidentSharedStatus status;
 
   Map<String, Object?> toJson() =>

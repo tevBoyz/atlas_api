@@ -171,7 +171,8 @@ export type EmergencyInfoInput = Record<string, string | boolean | null>;
 /**
  * P3 in field order (spec §11.3 P3): contact name (trimmed, not blank), relationship (one of 7),
  * phone (trimmed, strict E.164; no country code is added), email (optional, the app's rule), blood
- * type (optional, one of 9), allergies, medical conditions, preferred language (optional text),
+ * type (optional, one of 9), preferred language (optional text; `allergies` / `medical_conditions`
+ * are ignored since SCRUM-21, D51),
  * `location_sharing_enabled`, notes (optional, at most 500 characters), then the 9 share flags.
  */
 export function emergencyInfoFromBody(raw: unknown): EmergencyInfoInput {
@@ -206,8 +207,8 @@ export function emergencyInfoFromBody(raw: unknown): EmergencyInfoInput {
   }
   values.blood_type = bloodType;
 
-  values.allergies = optionalText(body, 'allergies');
-  values.medical_conditions = optionalText(body, 'medical_conditions');
+  // `allergies` / `medical_conditions` are not read (SCRUM-21, D51): the item lists own those columns
+  // (`/v1/me/profile/allergies`, `/v1/me/profile/medical-conditions`); sent values are ignored.
   values.emergency_preferred_language = optionalText(body, 'emergency_preferred_language');
   values.location_sharing_enabled = flag(body, 'location_sharing_enabled');
 

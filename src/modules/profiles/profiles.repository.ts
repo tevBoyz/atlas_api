@@ -4,6 +4,7 @@ import { type SQL, sql } from 'drizzle-orm';
 import { aliasColumn, profileSelf } from '../../common/policies';
 import type { Database } from '../../db/database.service';
 import { type AvatarUrlBase, avatarUrlSql } from '../circles/circles.repository';
+import { MEDICAL_LISTS, type MedicalList } from './medical-items';
 import type { PersonalInfoInput } from './profile-input';
 import { SHARE_FLAGS } from './profile.schemas';
 
@@ -63,18 +64,39 @@ export const PROFILE_COLUMNS = [
   'share_allergies',
   'share_medical_conditions',
   'share_emergency_preferred_language',
+  // SCRUM-21 (D51), migration 0014.
+  'medical_info_updated_at',
 ] as const;
 
 /**
+ * The items of one medical list of the profile `alias` as JSON `[{id, text, updated_at}]`, oldest
+ * first (`created_at`, then `id`); `[]` when none (SCRUM-21, D51).
+ */
+function medicalItemsJsonSql(alias: string, list: MedicalList): SQL {
+  return sql.raw(`coalesce(
+      (select json_agg(json_build_object('id', item.id, 'text', item.text,
+                                         'updated_at', item.updated_at)
+                       order by item.created_at, item.id)
+         from public.${list.table} item
+        where item.user_id = ${alias}.id),
+      '[]'::json)`);
+}
+
+/**
  * The Profile JSON of the row `alias` (a `profiles` alias): `json_build_object` (json, so keys keep
- * this order) of every column, then `avatar_url` ({@link avatarUrlSql}, as `_avatars_public_url`).
+ * this order) of every column, then `avatar_url` ({@link avatarUrlSql}, as `_avatars_public_url`),
+ * then the SCRUM-21 lists `allergy_items` and `medical_condition_items` (D51).
  * Timestamps are the UTC text of the transaction's `TimeZone`; `date_of_birth` is `YYYY-MM-DD`.
  */
 export function profileJsonSql(alias: string, avatars: AvatarUrlBase): SQL {
   const pairs = PROFILE_COLUMNS.map((column) => sql.raw(`'${column}', ${alias}.${column}`));
+  const lists = MEDICAL_LISTS.map(
+    (list) => sql`${sql.raw(`'${list.itemsKey}'`)}, ${medicalItemsJsonSql(alias, list)}`,
+  );
   return sql`json_build_object(
     ${sql.join(pairs, sql`, `)},
-    'avatar_url', ${avatarUrlSql(aliasColumn(alias, 'avatar_path'), avatars)}
+    'avatar_url', ${avatarUrlSql(aliasColumn(alias, 'avatar_path'), avatars)},
+    ${sql.join(lists, sql`, `)}
   )`;
 }
 
@@ -175,6 +197,13 @@ export class ProfilesRepository {
         ? sql`${sql.identifier(column)} = ${value}::boolean`
         : sql`${sql.identifier(column)} = ${value}::text`;
     });
+    if (values.blood_type !== undefined) {
+      // SCRUM-21 (D51): a blood-type change is a medical-info change (`p.blood_type` = old value).
+      assignments.push(
+        sql`medical_info_updated_at = case when p.blood_type is distinct from ${values.blood_type}::text
+                                            then now() else p.medical_info_updated_at end`,
+      );
+    }
     if (completedColumn) {
       assignments.push(
         sql`${sql.identifier(completedColumn)} = coalesce(${sql.raw(`p.${completedColumn}`)}, now())`,
@@ -188,6 +217,123 @@ export class ProfilesRepository {
       returning ${profileJsonSql('p', avatars)} as body`);
     return result.rows[0]?.body;
   }
+}
+
+/** One medical item (SCRUM-21, D51). */
+export interface MedicalItemRow extends Record<string, unknown> {
+  id: string;
+}
+
+/**
+ * The SQL of the medical items (SCRUM-21, D51), every statement limited to the caller's own rows. The
+ * caller's `profiles` row is locked first (`FOR NO KEY UPDATE`: the lock the sync UPDATE takes
+ * anyway; submit locks the profile `FOR UPDATE`, so the two are serialized, while the incident
+ * writes' `FOR KEY SHARE` does not wait), so the count and duplicate checks cannot race. Lock
+ * order: profile, items, then the incident (live view), as submit.
+ */
+@Injectable()
+export class MedicalItemsRepository {
+  /** False when the caller has no profile row. */
+  async lockProfile(tx: ProfilesExecutor, callerId: string): Promise<boolean> {
+    const result = await tx.execute(sql`
+      select 1 from public.profiles p where ${self('p', callerId)} for no key update`);
+    return result.rows.length > 0;
+  }
+
+  async count(tx: ProfilesExecutor, callerId: string, list: MedicalList): Promise<number> {
+    const result = await tx.execute<{ n: number }>(sql`
+      select count(*)::int as n from ${table(list)} item where item.user_id = ${callerId}::uuid`);
+    return result.rows[0].n;
+  }
+
+  /**
+   * True when another item of the caller's list has the same text ignoring case (`lower()`, as the
+   * unique index `*_user_text_uidx`). `exceptId` is the item being edited.
+   */
+  async hasDuplicate(
+    tx: ProfilesExecutor,
+    callerId: string,
+    list: MedicalList,
+    text: string,
+    exceptId?: string,
+  ): Promise<boolean> {
+    const except = exceptId ?? null;
+    const result = await tx.execute(sql`
+      select 1 from ${table(list)} item
+       where item.user_id = ${callerId}::uuid
+         and lower(item.text) = lower(${text}::text)
+         and (${except}::uuid is null or item.id <> ${except}::uuid)`);
+    return result.rows.length > 0;
+  }
+
+  async insert(
+    tx: ProfilesExecutor,
+    callerId: string,
+    list: MedicalList,
+    text: string,
+  ): Promise<MedicalItemRow> {
+    const result = await tx.execute<MedicalItemRow>(sql`
+      insert into ${table(list)} (user_id, text)
+      values (${callerId}::uuid, ${text}::text)
+      returning id`);
+    return result.rows[0];
+  }
+
+  /** Undefined when the id is not one of the caller's items of this list. */
+  async update(
+    tx: ProfilesExecutor,
+    callerId: string,
+    list: MedicalList,
+    itemId: string,
+    text: string,
+  ): Promise<MedicalItemRow | undefined> {
+    const result = await tx.execute<MedicalItemRow>(sql`
+      update ${table(list)} item
+         set text = ${text}::text, updated_at = now()
+       where item.id = ${itemId}::uuid and item.user_id = ${callerId}::uuid
+      returning item.id`);
+    return result.rows[0];
+  }
+
+  /** Undefined when the id is not one of the caller's items of this list. */
+  async delete(
+    tx: ProfilesExecutor,
+    callerId: string,
+    list: MedicalList,
+    itemId: string,
+  ): Promise<MedicalItemRow | undefined> {
+    const result = await tx.execute<MedicalItemRow>(sql`
+      delete from ${table(list)} item
+       where item.id = ${itemId}::uuid and item.user_id = ${callerId}::uuid
+      returning item.id`);
+    return result.rows[0];
+  }
+
+  /**
+   * After any item change: the old text column = the item texts joined with ", " (oldest first; null
+   * when the list is empty) and `medical_info_updated_at = now()`. Returns the Profile.
+   */
+  async syncProfile(
+    tx: ProfilesExecutor,
+    callerId: string,
+    list: MedicalList,
+    avatars: AvatarUrlBase,
+  ): Promise<ProfileJson> {
+    const result = await tx.execute<{ body: ProfileJson }>(sql`
+      update public.profiles as p
+         set ${sql.identifier(list.column)} = (
+               select string_agg(item.text, ', ' order by item.created_at, item.id)
+                 from ${table(list)} item
+                where item.user_id = p.id),
+             medical_info_updated_at = now()
+       where ${self('p', callerId)}
+      returning ${profileJsonSql('p', avatars)} as body`);
+    return result.rows[0].body;
+  }
+}
+
+function table(list: MedicalList): SQL {
+  return sql.raw(`public.${list.table}`);
 }
 
 /** The completion timestamps the server sets (never a client value). */
@@ -212,8 +358,6 @@ export const WRITABLE_COLUMNS: ReadonlySet<string> = new Set([
   'emergency_contact_phone',
   'emergency_contact_email',
   'blood_type',
-  'allergies',
-  'medical_conditions',
   'emergency_preferred_language',
   'emergency_notes',
   ...SHARE_FLAGS,

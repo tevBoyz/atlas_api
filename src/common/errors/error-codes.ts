@@ -44,6 +44,11 @@ export const PARITY_ERROR_CODES = {
     'file_too_large',
     'avatar_not_found',
     'avatar_storage_unavailable',
+    // SCRUM-21 (D51): the allergy / medical-condition items.
+    'invalid_medical_item',
+    'duplicate_medical_item',
+    'medical_item_limit_reached',
+    'medical_item_not_found',
   ],
 
   // §7.2 Circles and invites (owner side)

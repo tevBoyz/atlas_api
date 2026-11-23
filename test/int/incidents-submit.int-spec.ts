@@ -998,9 +998,10 @@ describe('POST /v1/incidents (API-100-15)', () => {
     );
     const res = await submitAlert(app, resident.id, 'domestic_violence');
     expect(res.statusCode).toBe(201);
-    expect(res.json<{ share_payload: Body }>().share_payload.allergies).toBe(
+    // SCRUM-21 (D52): the list is an array of strings.
+    expect(res.json<{ share_payload: Body }>().share_payload.allergies).toEqual([
       'Sentinel-Allergy-Value',
-    );
+    ]);
     expect(logs.text).not.toContain('Sentinel-Allergy-Value');
     expect(logs.text).not.toContain('domestic_violence');
   });

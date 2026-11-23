@@ -52,8 +52,12 @@ export class ResponderIncidentsRepository {
   }
 
   /**
-   * `get_incident_details`: IncidentDetails (19 keys) of one incident the caller may see as a member;
-   * `share_payload` is the stored snapshot or `{}`. Undefined for an unknown id and for every denied
+   * `get_incident_details`: IncidentDetails (the 19 keys of the SQL function, then 2 SCRUM-21 keys,
+   * D53) of one incident the caller may see as a member. `share_payload` is the LIVE shared info
+   * (`live_share_payload`, set when the resident changed it during the incident) else the activation
+   * snapshot, `{}` when none; `share_payload_at_activation` is always the snapshot (`{}` when none);
+   * `share_payload_updated_at` is `live_share_updated_at` (null = unchanged since activation).
+   * Undefined for an unknown id and for every denied
    * caller alike (the resident, `circle_id` null, a legacy status, pre-join, removed, pending,
    * outsider): all are `not_found`.
    */
@@ -82,7 +86,9 @@ export class ResponderIncidentsRepository {
                'location_sharing_ended_at', rec.location_sharing_ended_at,
                'incident_notes', rec.incident_notes,
                'incident_notes_updated_at', rec.incident_notes_updated_at,
-               'share_payload', coalesce(rec.share_payload, '{}'::jsonb)
+               'share_payload', coalesce(rec.live_share_payload, rec.share_payload, '{}'::jsonb),
+               'share_payload_at_activation', coalesce(rec.share_payload, '{}'::jsonb),
+               'share_payload_updated_at', rec.live_share_updated_at
              ) as body
         from public.incidents rec
         left join public.profiles p
