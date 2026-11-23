@@ -34,6 +34,8 @@ export interface DeliveryToSend extends Record<string, unknown> {
   push_token: string | null;
   phone: string | null;
   email: string | null;
+  /** The recipient's `profiles.timezone` (D54: the time in the push text). */
+  time_zone: string | null;
 }
 
 /**
@@ -188,11 +190,13 @@ export class DeliveriesRepository {
              case when dv.revoked_at is null then dv.push_provider end as push_provider,
              case when dv.revoked_at is null then dv.push_token end as push_token,
              nullif(btrim(${callerPhoneSql(sql`d.recipient_user_id`)}), '') as phone,
-             nullif(btrim(u.email), '') as email
+             nullif(btrim(u.email), '') as email,
+             p.timezone as time_zone
         from public.notification_deliveries d
         join public.notification_outbox o on o.id = d.outbox_id
         left join public.user_devices dv on dv.id = d.device_id
         left join auth.users u on u.id = d.recipient_user_id
+        left join public.profiles p on p.id = d.recipient_user_id
        where d.id = ${id}::uuid`);
     return result.rows[0];
   }

@@ -11,7 +11,13 @@ import type {
 } from './channel.types';
 import { failed } from './channel.types';
 import type { HttpResponse, HttpTransport } from './http-transport';
-import { pushData, pushText } from './push-content';
+import {
+  ANDROID_CHANNEL_ID,
+  isAlertTopic,
+  pushData,
+  pushText,
+  pushTtlSeconds,
+} from './push-content';
 
 /**
  * The real providers (API-100-46 AC2, D43): built only when CHANNEL_PUSH_ADAPTER=real /
@@ -52,6 +58,57 @@ function byStatus(status: number): SendErrorCode | undefined {
   return undefined;
 }
 
+/** The APNs `aps` dictionary (D55): the alert, the default sound, and `time-sensitive` for alerts. */
+export function apnsAps(target: PushTarget, message: PushMessage): Record<string, unknown> {
+  return {
+    alert: pushText(message, target.time_zone),
+    sound: 'default',
+    'interruption-level': isAlertTopic(message.topic) ? 'time-sensitive' : 'active',
+  };
+}
+
+/** APNs `apns-expiration` (seconds since the epoch): now + the topic's TTL (D55). */
+function apnsExpiration(message: PushMessage, nowMs: number): string {
+  return String(Math.floor(nowMs / 1000) + pushTtlSeconds(message.topic));
+}
+
+/**
+ * The FCM HTTP v1 `message` of one push (D55): the visible text with the time in the recipient's
+ * time zone (D54), the five data keys, and the delivery options: Android high priority on the
+ * `atlas_emergency` channel with notification priority max, the default sound, a TTL (60 s for an
+ * alert, 1 h for the closing notice). No `click_action`: the app handles the tap with
+ * firebase_messaging (getInitialMessage / onMessageOpenedApp) and opens `incident_id`. For iOS tokens issued by FCM the same as
+ * the APNs adapter (priority 10, `time-sensitive` for alerts, the default sound, expiry).
+ */
+export function fcmMessage(
+  target: PushTarget,
+  message: PushMessage,
+  nowMs: number,
+): Record<string, unknown> {
+  return {
+    token: target.token,
+    notification: pushText(message, target.time_zone),
+    data: pushData(message),
+    android: {
+      priority: 'high',
+      ttl: `${pushTtlSeconds(message.topic)}s`,
+      notification: {
+        channel_id: ANDROID_CHANNEL_ID,
+        notification_priority: 'PRIORITY_MAX',
+        sound: 'default',
+      },
+    },
+    apns: {
+      headers: {
+        'apns-priority': '10',
+        'apns-push-type': 'alert',
+        'apns-expiration': apnsExpiration(message, nowMs),
+      },
+      payload: { aps: apnsAps(target, message) },
+    },
+  };
+}
+
 export interface FcmCredentials {
   projectId: string;
   clientEmail: string;
@@ -81,22 +138,13 @@ export class FcmPushSender implements PushSender {
     } catch {
       return failed('auth_failed');
     }
-    const text = pushText(message);
     let response: HttpResponse;
     try {
       response = await this.transport.request({
         method: 'POST',
         url: `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(this.credentials.projectId)}/messages:send`,
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          message: {
-            token: target.token,
-            notification: text,
-            data: pushData(message),
-            android: { priority: 'high' },
-            apns: { headers: { 'apns-priority': '10' } },
-          },
-        }),
+        body: JSON.stringify({ message: fcmMessage(target, message, this.now()) }),
       });
     } catch (error) {
       return transportFailure(error);
@@ -166,7 +214,10 @@ const APNS_TOKEN_LIFETIME_MS = 50 * 60_000;
 /** APNs reasons that mean the device token is no longer valid for this app. */
 const APNS_UNREGISTERED = new Set(['Unregistered', 'BadDeviceToken', 'DeviceTokenNotForTopic']);
 
-/** APNs over HTTP/2 with token (ES256 `.p8`) authentication (iOS). */
+/**
+ * APNs over HTTP/2 with token (ES256 `.p8`) authentication (iOS; deferred, gap 22: built and
+ * unit-tested, not yet run against Apple). D55: `time-sensitive` alerts with the default sound.
+ */
 export class ApnsPushSender implements PushSender {
   private providerToken?: { value: string; issuedAt: number };
 
@@ -197,12 +248,10 @@ export class ApnsPushSender implements PushSender {
           'apns-topic': this.credentials.bundleId,
           'apns-push-type': 'alert',
           'apns-priority': '10',
+          'apns-expiration': apnsExpiration(message, this.now()),
           'content-type': 'application/json',
         },
-        body: JSON.stringify({
-          aps: { alert: pushText(message), sound: 'default' },
-          ...pushData(message),
-        }),
+        body: JSON.stringify({ aps: apnsAps(target, message), ...pushData(message) }),
       });
     } catch (error) {
       return transportFailure(error);

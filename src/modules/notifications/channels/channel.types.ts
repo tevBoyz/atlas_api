@@ -71,6 +71,11 @@ export type PushProviderName = 'fcm' | 'apns';
 export interface PushTarget {
   provider: PushProviderName;
   token: string;
+  /**
+   * The recipient's display time zone (`profiles.timezone`, D54): the time in the visible text is
+   * shown in it. Never sent to the provider as a value of its own.
+   */
+  time_zone?: string | null;
 }
 
 export interface PushSender {

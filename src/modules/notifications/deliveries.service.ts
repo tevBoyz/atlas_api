@@ -147,6 +147,7 @@ export class DeliverySender implements JobProcessor {
     if (status === 'sent' || status === 'delivered') {
       const providerId = result.provider_message_id;
       await this.guard(() => this.repository.markSent(id, status, providerId));
+      this.logAccepted(delivery);
       return;
     }
 
@@ -175,20 +176,47 @@ export class DeliverySender implements JobProcessor {
       case 'push':
         if (!delivery.push_token || !delivery.push_provider) return { skip: 'no_device' };
         return this.channels.push.send(
-          { provider: delivery.push_provider, token: delivery.push_token },
+          {
+            provider: delivery.push_provider,
+            token: delivery.push_token,
+            time_zone: delivery.time_zone,
+          },
           message,
         );
       case 'sms': {
         if (!delivery.phone) return { skip: 'no_address' };
-        const text = pushText(message);
+        const text = pushText(message, delivery.time_zone);
         return this.channels.sms.send(e164(delivery.phone), `${text.title}: ${text.body}`);
       }
       case 'email': {
         if (!delivery.email) return { skip: 'no_address' };
-        const text = pushText(message);
+        const text = pushText(message, delivery.time_zone);
         return this.channels.email.send(delivery.email, text.body, `${text.title}: ${text.body}`);
       }
     }
+  }
+
+  /**
+   * SCRUM-47 latency check: one line per delivery the provider accepted, with the milliseconds from
+   * the event (`occurred_at` of the outbox payload: activation, re-notify or mark safe) to the
+   * provider's acceptance. Ids, topic, channel and provider only: no token, name, phone, address,
+   * text or medical data. The network leg to the device is measured on the device.
+   */
+  private logAccepted(delivery: DeliveryToSend): void {
+    const occurredAt = delivery.payload.occurred_at;
+    const at = typeof occurredAt === 'string' ? Date.parse(occurredAt) : Number.NaN;
+    this.logger.info(
+      {
+        delivery_id: delivery.id,
+        incident_id:
+          typeof delivery.payload.incident_id === 'string' ? delivery.payload.incident_id : null,
+        topic: delivery.topic,
+        channel: delivery.channel,
+        provider: delivery.channel === 'push' ? delivery.push_provider : null,
+        latency_ms: Number.isNaN(at) ? null : Math.max(0, Date.now() - at),
+      },
+      'delivery accepted by the provider',
+    );
   }
 
   /** Database work of a delivery: a failure becomes a code-only error (retried by BullMQ). */

@@ -23,6 +23,7 @@ function delivery(overrides: Partial<DeliveryToSend> = {}): DeliveryToSend {
     push_token: TOKEN,
     phone: '12015550123',
     email: 'member@example.test',
+    time_zone: 'Africa/Banjul',
     ...overrides,
   };
 }
@@ -45,6 +46,8 @@ function setup(row: DeliveryToSend | undefined, answer: SendResult | Error, enab
     email: { send },
   };
   const logger = { info: jest.fn(), warn: jest.fn() };
+  /** The logger's info lines as `[fields, message]`. */
+  const infoLines = () => logger.info.mock.calls as [Record<string, unknown>, string][];
   const sender = new DeliverySender(
     repository as unknown as DeliveriesRepository,
     channels as unknown as ChannelSenders,
@@ -52,7 +55,7 @@ function setup(row: DeliveryToSend | undefined, answer: SendResult | Error, enab
   );
   const job = (attemptsMade = 0, attempts = 4) =>
     ({ data: { delivery_id: ID }, attemptsMade, opts: { attempts } }) as unknown as Job;
-  return { sender, repository, send, job, logger };
+  return { sender, repository, send, job, logger, infoLines };
 }
 
 const SENT: SendResult = { provider_message_id: 'fake-1', status: 'sent' };
@@ -94,6 +97,88 @@ describe('DeliverySender (API-100-47)', () => {
     const receipt = setup(delivery(), { provider_message_id: 'p', status: 'delivered' });
     await receipt.sender.process(receipt.job());
     expect(receipt.repository.markSent).toHaveBeenCalledWith(ID, 'delivered', 'p');
+  });
+
+  it('push: the recipient time zone goes with the target (D54)', async () => {
+    const { sender, send, job } = setup(delivery({ time_zone: 'America/Chicago' }), SENT);
+    await sender.process(job());
+    expect(send).toHaveBeenCalledWith(
+      { provider: 'fcm', token: TOKEN, time_zone: 'America/Chicago' },
+      expect.objectContaining({ incident_id: 'i-1' }),
+    );
+  });
+
+  it('sms text carries the time in the recipient time zone (D54)', async () => {
+    const at = '2026-11-20T22:48:00.000000+00:00';
+    const { sender, send, job } = setup(
+      delivery({
+        channel: 'sms',
+        device_id: null,
+        time_zone: 'Asia/Tokyo',
+        payload: {
+          incident_id: 'i-1',
+          emergency_type: 'fire',
+          resident_name: 'R',
+          occurred_at: at,
+        },
+      }),
+      SENT,
+    );
+    await sender.process(job());
+    expect(send).toHaveBeenCalledWith('+12015550123', 'R: Emergency alert: Fire · 07:48');
+  });
+
+  it('SCRUM-47 latency line: occurred_at to provider acceptance in ms, ids only (no personal data)', async () => {
+    const occurredAt = new Date(Date.now() - 1500).toISOString();
+    const { sender, job, logger, infoLines } = setup(
+      delivery({
+        payload: {
+          incident_id: 'i-1',
+          emergency_type: 'medical',
+          resident_name: 'Rita Resident',
+          occurred_at: occurredAt,
+        },
+      }),
+      SENT,
+    );
+    await sender.process(job());
+    const lines = infoLines().filter((call) => call[1] === 'delivery accepted by the provider');
+    expect(lines).toHaveLength(1);
+    const fields = lines[0][0];
+    expect(Object.keys(fields).sort()).toEqual([
+      'channel',
+      'delivery_id',
+      'incident_id',
+      'latency_ms',
+      'provider',
+      'topic',
+    ]);
+    expect(fields).toMatchObject({
+      delivery_id: ID,
+      incident_id: 'i-1',
+      topic: 'incident.created',
+      channel: 'push',
+      provider: 'fcm',
+    });
+    expect(fields.latency_ms).toBeGreaterThanOrEqual(1500);
+    expect(fields.latency_ms).toBeLessThan(60_000);
+    const text = JSON.stringify(logger.info.mock.calls);
+    for (const secret of [TOKEN, 'Rita Resident', '12015550123', 'member@example.test']) {
+      expect(text).not.toContain(secret);
+    }
+  });
+
+  it('no latency line for a failed or skipped delivery; an unparseable time logs latency null', async () => {
+    const failing = setup(delivery(), failedWith('timeout'));
+    await failing.sender.process(failing.job(0)).catch(() => undefined);
+    const skipped = setup(delivery({ push_token: null }), SENT);
+    await skipped.sender.process(skipped.job());
+    for (const { infoLines } of [failing, skipped]) {
+      expect(infoLines().some((c) => c[1] === 'delivery accepted by the provider')).toBe(false);
+    }
+    const odd = setup(delivery(), SENT);
+    await odd.sender.process(odd.job());
+    expect(odd.infoLines()[0][0]).toMatchObject({ latency_ms: null });
   });
 
   it('sms goes to the E.164 form of the account phone', async () => {

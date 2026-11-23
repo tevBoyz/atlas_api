@@ -9,6 +9,7 @@ import type {
   SmsSender,
 } from './channel.types';
 import { failed } from './channel.types';
+import { pushText } from './push-content';
 
 /**
  * Token prefixes the fake push adapter treats specially (tests and the manual guide; the fake is
@@ -24,6 +25,8 @@ export interface FakeSent<T> {
   provider_message_id: string;
   to: T;
   content: unknown;
+  /** Push only: the visible title and body the real adapters would send (D54). */
+  text?: { title: string; body: string };
 }
 
 const sentId = () => `fake-${randomUUID()}`;
@@ -51,7 +54,12 @@ export class FakePushSender implements PushSender {
       return Promise.resolve(failed('unregistered'));
     }
     const id = sentId();
-    remember(this.sent, { provider_message_id: id, to: target, content: message });
+    remember(this.sent, {
+      provider_message_id: id,
+      to: target,
+      content: message,
+      text: pushText(message, target.time_zone),
+    });
     return Promise.resolve({ provider_message_id: id, status: 'sent' });
   }
 }

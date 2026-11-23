@@ -31,23 +31,75 @@ const TYPE_LABELS: Readonly<Record<string, string>> = {
   unspecified: 'Emergency',
 };
 
+/** The display time zone when the recipient has none or it is not a valid IANA zone (spec §4.1). */
+export const DEFAULT_TIME_ZONE = 'Africa/Banjul';
+
+/**
+ * D54: the time of the event (`occurred_at`: activation, re-notify or mark safe) as `HH:mm`,
+ * 24-hour, in the recipient's time zone (`profiles.timezone`; {@link DEFAULT_TIME_ZONE} when
+ * missing or unknown). `null` when the payload has no valid time.
+ */
+export function pushTime(occurredAt: string | null, timeZone?: string | null): string | null {
+  if (!occurredAt) return null;
+  const at = Date.parse(occurredAt);
+  if (Number.isNaN(at)) return null;
+  const format = (zone: string) =>
+    new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+      timeZone: zone,
+    }).format(at);
+  try {
+    return format(timeZone || DEFAULT_TIME_ZONE);
+  } catch {
+    return format(DEFAULT_TIME_ZONE);
+  }
+}
+
 /**
  * The visible title and body (English; the app may show its own text from the data keys). Built
- * from the allowed values only.
+ * from the allowed values only; the body ends with the time of the event in the recipient's time
+ * zone (D54), e.g. `Emergency alert: Medical · 16:48`.
  */
-export function pushText(message: PushMessage): { title: string; body: string } {
+export function pushText(
+  message: PushMessage,
+  timeZone?: string | null,
+): { title: string; body: string } {
   const title = message.resident_name ?? 'Atlas';
   const type = message.emergency_type
     ? (TYPE_LABELS[message.emergency_type] ?? 'Emergency')
     : 'Emergency';
+  let body: string;
   switch (message.topic) {
     case 'incident.resolved':
-      return { title, body: 'Marked safe. The alert is closed.' };
+      body = 'Marked safe. The alert is closed.';
+      break;
     case 'incident.renotified':
-      return { title, body: `Alert sent again: ${type}` };
+      body = `Alert sent again: ${type}`;
+      break;
     default:
-      return { title, body: `Emergency alert: ${type}` };
+      body = `Emergency alert: ${type}`;
   }
+  const time = pushTime(message.occurred_at, timeZone);
+  return { title, body: time ? `${body} · ${time}` : body };
+}
+
+/** An emergency alert (created or sent again), as opposed to the closing notice (D55). */
+export function isAlertTopic(topic: string): boolean {
+  return topic !== 'incident.resolved';
+}
+
+/** D55: Android notification channel the app creates for every incident notice. */
+export const ANDROID_CHANNEL_ID = 'atlas_emergency';
+/** D55: an alert older than this is stale on the device (the app still lists it in Activity). */
+export const ALERT_TTL_SECONDS = 60;
+/** D55: the closing notice ("marked safe") may arrive later; it is not urgent. */
+export const RESOLVED_TTL_SECONDS = 3600;
+
+/** Seconds a notice of this topic stays deliverable (FCM `ttl`, APNs `apns-expiration`). */
+export function pushTtlSeconds(topic: string): number {
+  return isAlertTopic(topic) ? ALERT_TTL_SECONDS : RESOLVED_TTL_SECONDS;
 }
 
 /** Provider data keys (FCM data and APNs custom keys are strings). */

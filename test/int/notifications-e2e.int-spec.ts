@@ -124,8 +124,33 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
     expect(sent).toMatchObject({ status: 'sent', attempts: 1, error_code: null });
     expect(sent.provider_message_id).toMatch(/^fake-/);
     const fake = push().sent.find((s) => s.provider_message_id === sent.provider_message_id);
-    expect(fake?.to).toEqual({ provider: 'fcm', token: goodToken });
+    // The recipient's profiles.timezone goes with the target (D54); the CHECK allows Africa/Banjul only.
+    expect(fake?.to).toEqual({ provider: 'fcm', token: goodToken, time_zone: 'Africa/Banjul' });
     expect(fake?.content).toMatchObject({ incident_id: incidentId, topic: 'incident.created' });
+    // SCRUM-47 AC2 / D54: resident name, emergency type and the activation time (HH:mm, 24-hour, in
+    // the recipient's time zone; Africa/Banjul = UTC).
+    const { rows: at } = await client.query<{ hhmm: string }>(
+      `select to_char(sent_at at time zone 'Africa/Banjul', 'HH24:MI') as hhmm
+         from public.incidents where id = $1`,
+      [incidentId],
+    );
+    expect(fake?.text).toEqual({
+      title: resident.fullName,
+      body: `Emergency alert: Medical · ${at[0].hhmm}`,
+    });
+    // SCRUM-47 latency line: one per accepted delivery, ids only, pipeline part well inside the 5 s of AC1 (the guide checks < 2 s).
+    const latency = workerLogs.lines.filter(
+      (line) => line.msg === 'delivery accepted by the provider' && line.delivery_id === sent.id,
+    );
+    expect(latency).toHaveLength(1);
+    expect(latency[0]).toMatchObject({
+      incident_id: incidentId,
+      topic: 'incident.created',
+      channel: 'push',
+      provider: 'fcm',
+    });
+    expect(latency[0].latency_ms).toEqual(expect.any(Number));
+    expect(latency[0].latency_ms as number).toBeLessThan(5_000);
     // The outbox job (job id = outbox id) and the delivery job (job id = delivery id) completed.
     const queues = app.get(JobQueues);
     expect(await (await queues.queue(OUTBOX_QUEUE).getJob(sent.outbox_id))?.getState()).toBe(
@@ -171,6 +196,19 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
         ),
       );
     }, 10_000);
+    // The visible texts of the re-notify and the closing notice carry their own event time (D54).
+    const texts = push()
+      .sent.filter(
+        (s) =>
+          s.to.token === goodToken &&
+          (s.content as { incident_id: string }).incident_id === incidentId,
+      )
+      .map((s) => s.text?.body);
+    expect(texts).toEqual([
+      expect.stringMatching(/^Emergency alert: Medical · \d\d:\d\d$/),
+      expect.stringMatching(/^Alert sent again: Medical · \d\d:\d\d$/),
+      expect.stringMatching(/^Marked safe\. The alert is closed\. · \d\d:\d\d$/),
+    ]);
   });
 
   it('after sign-out (U2) that installation gets no push: the next alert records no_device', async () => {
@@ -188,8 +226,12 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
     expect(row).toMatchObject({ status: 'skipped', error_code: 'no_device', device_id: null });
   });
 
-  it('no push token appears in any API or worker log line', () => {
+  it('no push token or name appears in any API or worker log line', () => {
     expect(workerLogs.text).not.toContain(goodToken);
     expect(workerLogs.text).not.toContain(failingToken);
+    for (const user of [resident, reachable, unreachable]) {
+      expect(workerLogs.text).not.toContain(user.fullName);
+      expect(workerLogs.text).not.toContain(user.email);
+    }
   });
 });

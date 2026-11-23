@@ -15,10 +15,20 @@ import {
   FakeSmsSender,
 } from './fake-senders';
 import type { HttpRequest, HttpResponse, HttpTransport } from './http-transport';
-import { pushData, pushMessageOf, pushText } from './push-content';
+import {
+  ALERT_TTL_SECONDS,
+  ANDROID_CHANNEL_ID,
+  pushData,
+  pushMessageOf,
+  pushText,
+  pushTime,
+  pushTtlSeconds,
+} from './push-content';
 import {
   ApnsPushSender,
+  apnsAps,
   FcmPushSender,
+  fcmMessage,
   pemFromEnv,
   RoutingPushSender,
   SendGridEmailSender,
@@ -96,13 +106,100 @@ describe('push content (API-100-46 AC3)', () => {
     expect(pushMessageOf('incident.created', { emergency_type: 'fire' })).toBeUndefined();
   });
 
-  it('visible text uses the allowed values only', () => {
-    expect(pushText(MESSAGE)).toEqual({ title: 'Ada Example', body: 'Emergency alert: Medical' });
+  it('visible text uses the allowed values only, with the time (D54)', () => {
+    expect(pushText(MESSAGE)).toEqual({
+      title: 'Ada Example',
+      body: 'Emergency alert: Medical · 10:00',
+    });
     expect(pushText({ ...MESSAGE, topic: 'incident.renotified', resident_name: null })).toEqual({
       title: 'Atlas',
-      body: 'Alert sent again: Medical',
+      body: 'Alert sent again: Medical · 10:00',
     });
-    expect(pushText({ ...MESSAGE, topic: 'incident.resolved' }).body).toContain('safe');
+    expect(pushText({ ...MESSAGE, topic: 'incident.resolved' }).body).toBe(
+      'Marked safe. The alert is closed. · 10:00',
+    );
+    expect(pushText({ ...MESSAGE, occurred_at: null }).body).toBe('Emergency alert: Medical');
+  });
+
+  it('D54: the time is in the recipient time zone, 24-hour HH:mm; default Africa/Banjul', () => {
+    const at = '2026-11-20T22:05:00.123456+00:00';
+    // Two recipients of the same alert in different zones see their own local time.
+    expect(pushText({ ...MESSAGE, occurred_at: at }, 'America/Chicago').body).toBe(
+      'Emergency alert: Medical · 16:05',
+    );
+    expect(pushText({ ...MESSAGE, occurred_at: at }, 'Asia/Kolkata').body).toBe(
+      'Emergency alert: Medical · 03:35',
+    );
+    expect(pushTime(at, 'Africa/Banjul')).toBe('22:05');
+    expect(pushTime(at, null)).toBe('22:05');
+    expect(pushTime(at, 'Not/AZone')).toBe('22:05');
+    expect(pushTime('2026-11-20T00:00:00Z', 'Africa/Banjul')).toBe('00:00');
+    expect(pushTime('not a time', 'Africa/Banjul')).toBeNull();
+    expect(pushTime(null, 'Africa/Banjul')).toBeNull();
+  });
+
+  it('D55: alerts live 60 s, the closing notice 1 h', () => {
+    expect(pushTtlSeconds('incident.created')).toBe(ALERT_TTL_SECONDS);
+    expect(pushTtlSeconds('incident.renotified')).toBe(60);
+    expect(pushTtlSeconds('incident.resolved')).toBe(3600);
+  });
+});
+
+describe('D55: provider message shape', () => {
+  const NOW = Date.parse('2026-11-20T10:00:01Z');
+
+  it('FCM: emergency channel, high / max priority, default sound, TTL, five data keys, no click_action', () => {
+    const target = { provider: 'fcm' as const, token: DEVICE_TOKEN, time_zone: 'Africa/Banjul' };
+    expect(fcmMessage(target, MESSAGE, NOW)).toEqual({
+      token: DEVICE_TOKEN,
+      notification: { title: 'Ada Example', body: 'Emergency alert: Medical · 10:00' },
+      data: pushData(MESSAGE),
+      android: {
+        priority: 'high',
+        ttl: '60s',
+        notification: {
+          channel_id: ANDROID_CHANNEL_ID,
+          notification_priority: 'PRIORITY_MAX',
+          sound: 'default',
+        },
+      },
+      apns: {
+        headers: {
+          'apns-priority': '10',
+          'apns-push-type': 'alert',
+          'apns-expiration': String(Math.floor(NOW / 1000) + 60),
+        },
+        payload: {
+          aps: {
+            alert: { title: 'Ada Example', body: 'Emergency alert: Medical · 10:00' },
+            sound: 'default',
+            'interruption-level': 'time-sensitive',
+          },
+        },
+      },
+    });
+    expect(ANDROID_CHANNEL_ID).toBe('atlas_emergency');
+  });
+
+  it('FCM: the closing notice keeps the channel, lives 1 h; APNs level active', () => {
+    const resolved = { ...MESSAGE, topic: 'incident.resolved' };
+    const body = fcmMessage({ provider: 'fcm', token: DEVICE_TOKEN }, resolved, NOW) as {
+      android: { ttl: string; notification: { channel_id: string } };
+      apns: { headers: Record<string, string> };
+    };
+    expect(body.android.ttl).toBe('3600s');
+    expect(body.android.notification.channel_id).toBe('atlas_emergency');
+    expect(body.apns.headers['apns-expiration']).toBe(String(Math.floor(NOW / 1000) + 3600));
+    expect(apnsAps({ provider: 'apns', token: DEVICE_TOKEN }, resolved)).toMatchObject({
+      'interruption-level': 'active',
+    });
+  });
+
+  it('the recipient time zone never travels as a value of its own', () => {
+    const target = { provider: 'fcm' as const, token: DEVICE_TOKEN, time_zone: 'Asia/Tokyo' };
+    const text = JSON.stringify(fcmMessage(target, MESSAGE, NOW));
+    expect(text).not.toContain('Asia/Tokyo');
+    expect(text).toContain('Emergency alert: Medical · 19:00');
   });
 });
 
@@ -120,6 +217,13 @@ describe('fake adapters (AC2)', () => {
     ).toEqual({ provider_message_id: null, status: 'failed', error_code: 'unregistered' });
     expect(fake.calls).toHaveLength(3);
     expect(fake.sent).toHaveLength(1);
+    // The fake keeps the visible text the real adapters would send (D54), for tests and the guide.
+    expect(fake.sent[0].text).toEqual(pushText(MESSAGE));
+    await fake.send(
+      { provider: 'fcm', token: DEVICE_TOKEN, time_zone: 'America/Chicago' },
+      MESSAGE,
+    );
+    expect(fake.sent[1].text?.body).toBe('Emergency alert: Medical · 04:00');
   });
 
   it('sms and email: sent, kept in memory only', async () => {
@@ -234,6 +338,19 @@ describe('FCM HTTP v1 adapter against a fake transport', () => {
     expect(body.message.token).toBe(DEVICE_TOKEN);
     expect(body.message.data).toEqual(pushData(MESSAGE));
     expect(body.message.notification).toEqual(pushText(MESSAGE));
+    // D55: the whole message comes from the builder (checked field by field in its own test).
+    expect(Object.keys(body.message).sort()).toEqual([
+      'android',
+      'apns',
+      'data',
+      'notification',
+      'token',
+    ]);
+    expect(body.message.android).toMatchObject({
+      priority: 'high',
+      ttl: '60s',
+      notification: { channel_id: 'atlas_emergency', notification_priority: 'PRIORITY_MAX' },
+    });
   });
 
   it.each([
@@ -301,9 +418,35 @@ describe('APNs adapter against a fake transport', () => {
     expect(decodeJwt(jwt).iss).toBe('FAKETEAM12');
     const body = JSON.parse(request.body) as Record<string, unknown>;
     expect(body).toEqual({
-      aps: { alert: pushText(MESSAGE), sound: 'default' },
+      aps: { alert: pushText(MESSAGE), sound: 'default', 'interruption-level': 'time-sensitive' },
       ...pushData(MESSAGE),
     });
+    expect(request.headers['apns-priority']).toBe('10');
+    expect(request.headers['apns-push-type']).toBe('alert');
+    expect(Number(request.headers['apns-expiration'])).toBeGreaterThan(Date.now() / 1000);
+  });
+
+  it('D55/D54: time-sensitive alert with the time in the recipient zone; the closing notice active', async () => {
+    const transport = new FakeTransport()
+      .answer(200, {}, { 'apns-id': 'apns-2' })
+      .answer(200, {}, { 'apns-id': 'apns-3' });
+    const now = Date.parse('2026-11-20T10:00:00Z');
+    const sender = new ApnsPushSender(credentials, transport, () => now);
+    const target = { provider: 'apns' as const, token: DEVICE_TOKEN, time_zone: 'Asia/Tokyo' };
+    await sender.send(target, MESSAGE);
+    await sender.send(target, { ...MESSAGE, topic: 'incident.resolved' });
+    const [alert, closed] = transport.requests.map(
+      (r) => JSON.parse(r.body) as { aps: Record<string, unknown> },
+    );
+    expect(alert.aps).toEqual({
+      alert: { title: 'Ada Example', body: 'Emergency alert: Medical · 19:00' },
+      sound: 'default',
+      'interruption-level': 'time-sensitive',
+    });
+    expect(closed.aps['interruption-level']).toBe('active');
+    expect(transport.requests[0].headers['apns-expiration']).toBe(String(now / 1000 + 60));
+    expect(transport.requests[1].headers['apns-expiration']).toBe(String(now / 1000 + 3600));
+    expect(JSON.stringify(alert)).not.toContain('Asia/Tokyo');
   });
 
   it.each([
