@@ -5,10 +5,12 @@ import { circleOwner } from '../../common/policies';
 import type { Database } from '../../db/database.service';
 import {
   capacityJsonSql,
+  endedSql,
   holdsSlotSql,
   inviteLookupStatusSql,
   type InviteLookupStatus,
   memberAlias,
+  notEndedSql,
 } from '../circles/invite-slots';
 
 /** The open transaction of an owner invite write (SQL, savepoints and the audit row). */
@@ -137,6 +139,25 @@ export class OwnerInvitesRepository {
     return result.rows[0].available ?? 0;
   }
 
+  /**
+   * D44: before a phone invite of `phone` to the circle, the circle's ENDED rows of that phone
+   * (`removed` / `left`, history) give the phone up (`phone = null`, `updated_at = now()`; status,
+   * names, user, times stay), so the `(circle_id, phone)` unique index does not stop a removed or
+   * departed person being invited again: the new invite is a new row. The caller holds the circle
+   * row lock (D18: circle before member rows); only ended rows are touched (no other writer locks
+   * them: they are never claimed, accepted, declined, canceled or resent). Returns the count.
+   */
+  async releaseEndedPhone(tx: InviteExecutor, circleId: string, phone: string): Promise<number> {
+    const result = await tx.execute(sql`
+      update public.safety_circle_members as scm
+         set phone = null,
+             updated_at = now()
+       where scm.circle_id = ${circleId}::uuid
+         and scm.phone = ${phone}
+         and ${endedSql(sql`scm.status`)}`);
+    return result.rowCount ?? 0;
+  }
+
   /** The row of `phone` in the circle, locked (the invite functions' `select ... for update`). */
   async lockMemberByPhone(
     tx: InviteExecutor,
@@ -146,18 +167,29 @@ export class OwnerInvitesRepository {
     return this.lockOne(tx, sql`m.circle_id = ${circleId}::uuid and m.phone = ${phone}`);
   }
 
-  /** `resend_circle_invite`: the row `memberId` of the caller's circle, locked. */
+  /**
+   * `resend_circle_invite`: the row `memberId` of the caller's circle, locked. An ENDED row
+   * (`removed` / `left`, D44) is history and not found (`member_not_found`, as after the SQL's
+   * delete): rejoining needs a new invitation.
+   */
   async lockMemberInCircle(
     tx: InviteExecutor,
     memberId: string,
     circleId: string,
   ): Promise<LockedMemberRow | undefined> {
-    return this.lockOne(tx, sql`m.id = ${memberId}::uuid and m.circle_id = ${circleId}::uuid`);
+    return this.lockOne(
+      tx,
+      sql`m.id = ${memberId}::uuid and m.circle_id = ${circleId}::uuid
+          and ${notEndedSql(sql`m.status`)}`,
+    );
   }
 
-  /** `cancel_circle_invite`: the row `memberId` of any circle, locked (no circle lock first). */
+  /**
+   * `cancel_circle_invite`: the row `memberId` of any circle, locked (no circle lock first). An
+   * ENDED row (D44) is not found, as after the SQL's delete.
+   */
   async lockMember(tx: InviteExecutor, memberId: string): Promise<LockedMemberRow | undefined> {
-    return this.lockOne(tx, sql`m.id = ${memberId}::uuid`);
+    return this.lockOne(tx, sql`m.id = ${memberId}::uuid and ${notEndedSql(sql`m.status`)}`);
   }
 
   /** `circle.owner`: the caller owns the circle. */

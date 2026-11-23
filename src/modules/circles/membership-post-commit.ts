@@ -13,7 +13,7 @@ export type MembershipEndReason = 'removed' | 'left';
 export interface MembershipEndedEvent {
   reason: MembershipEndReason;
   circle_id: string;
-  /** The deleted member row. */
+  /** The member row that ended (kept as `removed` / `left`, D44; a pending or declined row is deleted). */
   member_id: string;
   /** The member's user (null for a pending or declined row nobody claimed). */
   user_id: string | null;

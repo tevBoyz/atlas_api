@@ -74,29 +74,29 @@ export interface MembershipChange {
  * revocation hooks ({@link MembershipPostCommitRunner}: the user's sockets leave the circle's incident
  * rooms on every instance, API-100-40; a failing hook never fails the committed change).
  *
- * Parity (spec rule 24): the member row is HARD-DELETED, as the SQL functions do; its
- * `incident_deliveries` go with it (`on delete cascade`). Access ends at once because every incident
- * read requires a current `active` row inside the membership window (rule 54, `incident.memberView`,
- * `incident.eventsView`, `incident.countsView`, `delivery.own`): after the change the user gets 404
- * on that circle's incidents, history included (epic §18.1 P1).
+ * D44 (SCRUM-30/31; approved by Dawit 2026-11-22; a deliberate
+ * divergence from the SQL functions, which delete the row): an ACTIVE membership that ends is kept
+ * as history with the stored status `removed` (owner remove) or `left` (member leave) and
+ * `ended_at = now()`; its invite token is cleared (the old accepted link looks up as `not_found`
+ * and can never reactivate it) and its `incident_deliveries` are deleted (what the SQL delete's
+ * cascade did, so counts, responder lists and fan-out are unchanged). Ended rows are history only:
+ * they hold no slot, pass no membership check and the API never shows them; a second remove is 404
+ * `not_found`, a second leave 403 `not_authorized` (as after the SQL delete). Rejoining needs a new
+ * invitation: a new link or phone invite of the same person releases the ended row's `user_id`
+ * (claim, D41 extended) or `phone` (phone invite). Remove of a pending or declined row (not a
+ * membership; SCRUM-30 §1.10 leaves it to cancel, SCRUM-33) stays the SQL's hard delete. Access
+ * ends at once because every incident read requires a current `active` row inside the membership
+ * window (rule 54, `incident.memberView`, `incident.eventsView`, `incident.countsView`,
+ * `delivery.own`): after the change the user gets 404 on that circle's incidents, history included
+ * (epic §18.1 P1).
  *
  * Locks: one row, the member row, `FOR UPDATE`, and no `safety_circles` lock, as the functions. The
- * delete then locks that member's delivery rows (cascade). Nothing here locks a profile or an
- * incident, so submit, re-notify, mark safe and acknowledge (profile → incident → deliveries, or the
- * caller's delivery row alone) only ever wait on this transaction or make it wait, never both; the
- * invite writes lock the circle first and then the same member row, and this holds no circle lock.
- *
- * Design note (AC5, not implemented): SCRUM-30 (remove) and SCRUM-31 (leave) replace the hard delete
- * with stored statuses, an app-visible change that belongs to those stories (spec §15.2):
- * - additive status values `removed` and `left` on `safety_circle_members.status` (with
- *   `removed_at`/`removed_by`, `left_at`), written by this method instead of the DELETE; `end` is
- *   the only place to change, its callers and the hooks stay as they are;
- * - the partial unique indexes on `(circle_id, user_id)` and `(circle_id, phone)` limited to
- *   `status in ('pending', 'active')`, so a removed or left person can be invited again (a new row,
- *   a new `activated_at`); `removed`/`left` rows hold no slot (they are not `active`/valid pending);
- * - `incident_deliveries` rows are kept (no cascade fires), so delivery history survives for the
- *   resident; members still lose every incident read, because the policies require `active`;
- * - remove/leave become idempotent (an already removed/left row answers its current state).
+ * write then locks that member's delivery rows (as the cascade did). Nothing here locks a profile or
+ * an incident, so submit, re-notify, mark safe and acknowledge (profile → incident → deliveries, or
+ * the caller's delivery row alone) only ever wait on this transaction or make it wait, never both;
+ * the invite writes lock the circle first and then the same member row, and this holds no circle
+ * lock. A submit waiting on the member row (`FOR KEY SHARE`, D14) re-checks `status = 'active'`
+ * after this commits and does not notify the ended member.
  */
 @Injectable()
 export class MembershipService {
@@ -112,8 +112,9 @@ export class MembershipService {
    * unknown id → 404 `not_found` (also a row of another circle than the path's: D15, approved
    * 2026-11-20; the function takes no circle); lock the member row; caller does not own the row's
    * circle (`circle.owner`) → 403 `not_authorized`; the owner row → 409 `cannot_remove_owner`; any
-   * other row (pending, active, declined) is deleted. 200 `{member_id, circle_id, removed: true}`.
-   * No location-sharing or profile check.
+   * an active row is ended as `removed` (D44); a pending or declined row is deleted (as the SQL);
+   * an ended row is not found. 200 `{member_id, circle_id, removed: true}` (unchanged shape). No
+   * location-sharing or profile check.
    */
   remove(
     user: AuthenticatedUser,
@@ -137,8 +138,8 @@ export class MembershipService {
   /**
    * `leave_safety_circle(circle_id)` (final: baseline 20261019160000), checks in its order: null or
    * unknown circle → 404 `not_found`; the caller owns it → 409 `is_owner`; lock the caller's active
-   * non-owner row there, none → 403 `not_authorized`; delete it. 200 `{circle_id, member_id, left:
-   * true}`.
+   * non-owner row there, none → 403 `not_authorized` (also after an earlier leave or remove); end it
+   * as `left` (D44). 200 `{circle_id, member_id, left: true}` (unchanged shape).
    */
   leave(user: AuthenticatedUser, circleId: string | null): Promise<LeftCircleJson> {
     const operation = 'leave_safety_circle';
@@ -158,8 +159,8 @@ export class MembershipService {
   }
 
   /**
-   * Ends the membership of the locked, non-owner row `row`: the parity write (hard delete, the
-   * deliveries cascade), the audit row `circle.member.<reason>` (member row id; circle, the member's
+   * Ends the membership of the locked, non-owner row `row`: the write (D44: an active row becomes
+   * `removed` / `left` and loses its deliveries; a pending or declined row is deleted), the audit row `circle.member.<reason>` (member row id; circle, the member's
    * `user_id` and the previous stored status; never a name or phone), and the revocation hooks once
    * `change` commits. The caller holds the row lock and has done the operation's checks.
    */
@@ -171,8 +172,14 @@ export class MembershipService {
   ): Promise<void> {
     // The owner row is never ended (both callers refuse it first); a programming error otherwise.
     if (row.role !== 'member') throw new Error('MembershipService.end: the owner row cannot end');
-    if (!(await this.repository.deleteMember(change.tx, row.id))) {
-      throw new Error('MembershipService.end: the locked member row was not deleted');
+    // D44: an active membership is kept as history (`removed` / `left`); remove of a pending or
+    // declined row stays the SQL's delete.
+    const written =
+      row.status === 'active'
+        ? await this.repository.endMembership(change.tx, row.id, reason)
+        : await this.repository.deleteMember(change.tx, row.id);
+    if (!written) {
+      throw new Error('MembershipService.end: the locked member row was not ended');
     }
     await this.audit.record(
       {

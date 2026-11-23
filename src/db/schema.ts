@@ -400,6 +400,7 @@ export const safetyCircleMembers = pgTable(
     inviteConsumedAt: timestamp('invite_consumed_at', { withTimezone: true, mode: 'string' }),
     inviteCanceledAt: timestamp('invite_canceled_at', { withTimezone: true, mode: 'string' }),
     activatedAt: timestamp('activated_at', { withTimezone: true, mode: 'string' }),
+    endedAt: timestamp('ended_at', { withTimezone: true, mode: 'string' }),
   },
   (table) => [
     index('safety_circle_members_circle_id_idx').using('btree', table.circleId.asc().nullsLast()),
@@ -441,7 +442,7 @@ export const safetyCircleMembers = pgTable(
     ),
     check(
       'safety_circle_members_status_allowed',
-      sql`status = ANY (ARRAY['pending'::text, 'active'::text, 'declined'::text])`,
+      sql`status = ANY (ARRAY['pending'::text, 'active'::text, 'declined'::text, 'removed'::text, 'left'::text])`,
     ),
     check(
       'safety_circle_members_display_name_nonempty',
@@ -462,6 +463,10 @@ export const safetyCircleMembers = pgTable(
     check(
       'safety_circle_members_activated_shape',
       sql`((status = 'active'::text) AND (activated_at IS NOT NULL)) OR ((status <> 'active'::text) AND (activated_at IS NULL))`,
+    ),
+    check(
+      'safety_circle_members_ended_shape',
+      sql`(status = ANY (ARRAY['removed'::text, 'left'::text])) = (ended_at IS NOT NULL)`,
     ),
   ],
 );

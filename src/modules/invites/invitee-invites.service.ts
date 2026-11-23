@@ -191,8 +191,8 @@ export class InviteeInvitesService {
         throw new DomainError(`${operation}:circle_full`);
       }
 
-      // D41: the caller's finished rows of this circle (declined, canceled, expired) no longer
-      // block the write; a live row still does (`duplicate_membership` below).
+      // D41: the caller's finished rows of this circle (declined, canceled, expired; D44: removed,
+      // left) no longer block the write; a live row still does (`duplicate_membership` below).
       const released =
         checks.mine === true
           ? 0
@@ -291,7 +291,7 @@ export class InviteeInvitesService {
         // `m.user_id is null` (`mine` is SQL `m.user_id = uid`: null exactly when unclaimed).
         if (checks.mine === null) await this.claimInSavepoint(tx, memberId, user.id);
       }
-      return this.repository.listIncoming(tx, user.id, authPhone);
+      return this.repository.listIncoming(tx, user.id, authPhone, this.avatars);
     });
   }
 
@@ -366,6 +366,9 @@ export class InviteeInvitesService {
         if (checks.mine === true) {
           claimed = true;
         } else if (row.unclaimed && !checks.other_row) {
+          // D44: the caller's only other rows here are ended memberships (history; the SQL has
+          // deleted them), so they are released first and the claim behaves as the SQL's.
+          await this.repository.releaseFinishedRows(tx, row.circle_id, user.id, row.id);
           claimed = await this.claimInSavepoint(tx, row.id, user.id);
         }
         return { status: 'circle_full', showOwner: true, includeRow: true, claimed, recipientOk };

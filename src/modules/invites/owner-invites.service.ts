@@ -164,6 +164,8 @@ export class OwnerInvitesService {
         throw new DomainError(`${operation}:invalid_relationship`);
       }
 
+      // D44: an ended membership of this phone (removed / left) is history and gives the phone up.
+      await this.repository.releaseEndedPhone(tx, circleId, phone);
       const existing = await this.repository.lockMemberByPhone(tx, circleId, phone);
       if (existing) {
         return this.refreshPhoneRow(tx, user, operation, circleId, existing, name, relationship);
@@ -234,6 +236,8 @@ export class OwnerInvitesService {
           continue;
         }
 
+        // D44: an ended membership of this phone (removed / left) gives the phone up.
+        await this.repository.releaseEndedPhone(tx, circleId, phone);
         const existing = await this.repository.lockMemberByPhone(tx, circleId, phone);
         if (existing && (existing.status === 'active' || existing.consumed)) {
           skipped(phone, 'already_active', existing.id, name);

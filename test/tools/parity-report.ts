@@ -185,6 +185,27 @@ const PHASES: Record<PhaseNumber, Phase> = {
           '`test/int/invites-lookup-preview.int-spec.ts` ("D41 divergence", SQL answer asserted), ' +
           '`test/int/invites-reinvite-d41.int-spec.ts` (SQL answer asserted; flows and races)',
       },
+      {
+        decision: 'D44 (SCRUM-30/31; approved by Dawit 2026-11-22)',
+        case:
+          'Remove (`remove_circle_member`) of an ACTIVE member, or leave (`leave_safety_circle`); ' +
+          'and rejoining afterwards by a new invite.',
+        sql:
+          'Deletes the member row (its `incident_deliveries` cascade). A later invite of the same ' +
+          'person is a new row.',
+        api:
+          'Same answer body and codes, same deliveries deleted, but keeps the row as history: ' +
+          '`status` `removed` / `left`, `ended_at = now()`, `invite_token = null` (migration 0013). ' +
+          'Every API reader ignores it (member lists, capacity, joined circles, incoming invites, ' +
+          'token lookups, resend / cancel, incident access). A new link claim / accept releases its ' +
+          '`user_id` (D41 extended); a new phone invite (or profile-setup contact) releases its ' +
+          '`phone`. Remove of a pending or declined row is still the SQL delete. The SQL-side ' +
+          'assertions are unchanged; a retired SQL reader (D42) would list the history row.',
+        provedBy:
+          '`test/int/circles-remove-leave.int-spec.ts` (SQL vs API with the recorded divergence), ' +
+          '`test/int/circles-membership-history-d44.int-spec.ts` (readers, rejoin, incidents), ' +
+          '`test/int/phase2-mixed-writers.int-spec.ts` (history rows per mode)',
+      },
     ],
   },
   3: {

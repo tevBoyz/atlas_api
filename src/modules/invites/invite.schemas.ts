@@ -198,7 +198,10 @@ export const memberIdParamsSchema = z.object({
   member_id: z.guid().describe('The invite (member row) id.'),
 });
 
-/** One element of `list_my_circle_invites` (spec §7.3): exactly these 7 keys. */
+/**
+ * One element of `list_my_circle_invites` (spec §7.3): exactly these 8 keys: the SQL function's 7
+ * plus `owner_avatar_url` (SCRUM-33, D46, additive).
+ */
 export const incomingInviteSchema = componentSchema(
   'IncomingInvite',
   z.object({
@@ -214,6 +217,12 @@ export const incomingInviteSchema = componentSchema(
       .string()
       .nullable()
       .describe('Only while `pending` (to accept or decline); null otherwise.'),
+    owner_avatar_url: z
+      .string()
+      .nullable()
+      .describe(
+        "SCRUM-33: the inviting circle owner's public avatar URL (the same rule as the preview's `owner_avatar_url`), or null when they have no photo.",
+      ),
   }),
 );
 

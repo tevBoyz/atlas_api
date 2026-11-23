@@ -60,6 +60,7 @@ function serviceWith(overrides: Partial<Record<keyof OwnerInvitesRepository, jes
     ownerSharing: jest.fn().mockResolvedValue({ sharing: true }),
     lockOwnedCircle: jest.fn().mockResolvedValue(CIRCLE),
     availableSlots: jest.fn().mockResolvedValue(1),
+    releaseEndedPhone: jest.fn().mockResolvedValue(0),
     lockMemberByPhone: jest.fn().mockResolvedValue(undefined),
     lockMemberInCircle: jest.fn().mockResolvedValue(pendingRow()),
     lockMember: jest.fn(),
@@ -222,6 +223,41 @@ describe('OwnerInvitesService: unique clash on insert (API-100-26 AC4)', () => {
       (await clash(pendingRow({ status: 'declined', lookup_status: 'canceled' }))).not_created[0]
         .reason,
     ).toBe('duplicate_membership');
+  });
+});
+
+describe('OwnerInvitesService: ended memberships (D44)', () => {
+  it('a phone invite releases the ended rows of that phone first, then looks the phone up', async () => {
+    const order: string[] = [];
+    const { service, repository } = serviceWith({
+      releaseEndedPhone: jest.fn().mockImplementation(() => {
+        order.push('release');
+        return Promise.resolve(1);
+      }),
+      lockMemberByPhone: jest.fn().mockImplementation(() => {
+        order.push('lock');
+        return Promise.resolve(undefined);
+      }),
+    });
+    const result = await service.invitePhone(USER, {
+      displayName: 'A',
+      phone: PHONE,
+      relationship: null,
+    });
+    expect(result.status).toBe(201);
+    expect(repository.releaseEndedPhone).toHaveBeenCalledWith(expect.anything(), CIRCLE, PHONE);
+    expect(order).toEqual(['release', 'lock']);
+  });
+
+  it('batch: each valid phone releases its ended rows before the lookup', async () => {
+    const { service, repository } = serviceWith({
+      batchItems: jest
+        .fn()
+        .mockResolvedValue([{ is_object: true, display_name: 'A', phone: PHONE }]),
+    });
+    const result = await service.inviteBatch(USER, [{ display_name: 'A', phone: PHONE }]);
+    expect(result.created).toHaveLength(1);
+    expect(repository.releaseEndedPhone).toHaveBeenCalledWith(expect.anything(), CIRCLE, PHONE);
   });
 });
 

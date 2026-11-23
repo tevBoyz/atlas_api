@@ -143,6 +143,16 @@ describe('remove and leave (API-100-32)', () => {
       )
     ).rows;
   const flush = () => new Promise((resolve) => setImmediate(resolve));
+  /**
+   * D44: an ended membership is kept as history: status `removed` / `left`, `ended_at` set, no
+   * token, `activated_at` null (trigger), the user and names kept.
+   */
+  const expectEnded = async (id: string, status: 'removed' | 'left', userId: string) => {
+    const row = await memberRow(client, id);
+    expect(row).toMatchObject({ status, user_id: userId, invite_token: null, activated_at: null });
+    expect(row.ended_at).toBeInstanceOf(Date);
+    expect(row.invite_consumed_at).not.toBeNull();
+  };
 
   // --- authentication and path validation ----------------------------------------------------------
 
@@ -219,7 +229,7 @@ describe('remove and leave (API-100-32)', () => {
     expect(ENDED).toEqual([]);
   });
 
-  it('remove: deletes an active row with its deliveries, audits, and announces after commit', async () => {
+  it('remove: ends an active row as removed (D44), deletes its deliveries, audits, announces after commit', async () => {
     const { owner, circle, ben, benRow, caraRow } = await circleWithMembers();
     const incident = (await submitAlert(app, owner.id, 'medical')).json<Body>();
     expect(await deliveries(benRow.id)).toBe(1);
@@ -230,7 +240,7 @@ describe('remove and leave (API-100-32)', () => {
     expect(reply.body).toBe(
       JSON.stringify({ removed: true, circle_id: circle.id, member_id: benRow.id }),
     );
-    expect(await memberRow(client, benRow.id)).toBeUndefined();
+    await expectEnded(benRow.id, 'removed', ben.id);
     expect(await deliveries(benRow.id)).toBe(0);
     expect(await deliveries(caraRow.id)).toBe(1);
     expect(
@@ -254,7 +264,7 @@ describe('remove and leave (API-100-32)', () => {
         actor_user_id: owner.id,
       },
     ]);
-    // Removing it again: gone.
+    // Removing it again: the history row is not found (as after the SQL delete).
     expectCode(
       await removeMember(app, owner.id, circle.id, benRow.id),
       404,
@@ -262,7 +272,7 @@ describe('remove and leave (API-100-32)', () => {
     );
   });
 
-  it('remove: pending (claimed or not) and declined rows are deleted too', async () => {
+  it('remove: pending (claimed or not) and declined rows are still deleted (D44: memberships only)', async () => {
     const { owner, circle } = await circleWithMembers();
     const claimer = await createUser(client);
     const pending = await insertMember(client, circle.id, { name: 'Pending One' });
@@ -313,7 +323,7 @@ describe('remove and leave (API-100-32)', () => {
     expect(ENDED).toEqual([]);
   });
 
-  it('leave: deletes the caller’s row with its deliveries, audits, announces; a second leave is 403', async () => {
+  it('leave: ends the caller’s row as left (D44), deletes its deliveries, audits, announces; a second leave is 403', async () => {
     const { owner, circle, ben, benRow, caraRow } = await circleWithMembers();
     await submitAlert(app, owner.id, 'fire');
     const reply = await leaveCircle(app, ben.id, circle.id);
@@ -321,7 +331,7 @@ describe('remove and leave (API-100-32)', () => {
     expect(reply.body).toBe(
       JSON.stringify({ left: true, circle_id: circle.id, member_id: benRow.id }),
     );
-    expect(await memberRow(client, benRow.id)).toBeUndefined();
+    await expectEnded(benRow.id, 'left', ben.id);
     expect(await deliveries(benRow.id)).toBe(0);
     expect(await deliveries(caraRow.id)).toBe(1);
     expect(await auditOf(benRow.id)).toEqual([
@@ -378,7 +388,7 @@ describe('remove and leave (API-100-32)', () => {
     const reply = await removeMember(app, owner.id, circle.id, benRow.id);
     expect(reply.statusCode).toBe(200);
     await flush();
-    expect(await memberRow(client, benRow.id)).toBeUndefined();
+    expect((await memberRow(client, benRow.id)).status).toBe('removed');
     const line = logs.lines.find(
       (l) => l.msg === 'membership post-commit hook failed' && l.member_id === benRow.id,
     );
@@ -479,7 +489,7 @@ describe('remove and leave (API-100-32)', () => {
       () => leaveCircle(app, ben.id, circle.id),
     );
     expect(onCircle).toMatchObject({ waited: false, reply: { statusCode: 200 } });
-    expect(await memberRow(client, benRow.id)).toBeUndefined();
+    expect((await memberRow(client, benRow.id)).status).toBe('left');
     const onRow = await lockAndCheck(
       'select 1 from public.safety_circle_members where id = $1 for update',
       [caraRow.id],
@@ -515,6 +525,7 @@ describe('remove and leave (API-100-32)', () => {
       params: [memberId],
       circleIds: [circle.id],
       api: () => removeMember(app, caller.id, circle.id, memberId),
+      endedHistoryDivergence: true,
     });
     const rows = deliveryRows(circle.id);
     expect((await client.query(rows.statement, rows.params)).rows).toEqual(sqlDeliveries.rows);
@@ -534,6 +545,7 @@ describe('remove and leave (API-100-32)', () => {
       params: [circle.id],
       circleIds: [circle.id],
       api: () => leaveCircle(app, caller.id, circle.id),
+      endedHistoryDivergence: true,
     });
     const rows = deliveryRows(circle.id);
     expect((await client.query(rows.statement, rows.params)).rows).toEqual(sqlDeliveries.rows);
@@ -554,20 +566,32 @@ describe('remove and leave (API-100-32)', () => {
     expect(
       (await compareRemove(owner, circle, '00000000-0000-4000-8000-0000000000fd')).sqlError,
     ).toBe('remove_circle_member:not_found');
-    for (const id of [benRow.id, pending.id, declined.id]) {
-      expect((await compareRemove(owner, circle, id)).sqlError).toBeUndefined();
+    // D44 divergence: the SQL deletes Ben's active row, the API keeps it as `removed`; the
+    // pending and declined rows are deleted by both.
+    const ended = await compareRemove(owner, circle, benRow.id);
+    expect(ended.sqlError).toBeUndefined();
+    expect(ended.endedByApi).toEqual([benRow.id]);
+    await expectEnded(benRow.id, 'removed', ben.id);
+    for (const id of [pending.id, declined.id]) {
+      const compared = await compareRemove(owner, circle, id);
+      expect(compared.sqlError).toBeUndefined();
+      expect(compared.endedByApi).toEqual([]);
+      expect(await memberRow(client, id)).toBeUndefined();
     }
   });
 
   it('leave answers and writes what leave_safety_circle does (each code and success)', async () => {
-    const { owner, circle, ben } = await circleWithMembers();
+    const { owner, circle, ben, benRow } = await circleWithMembers();
     await submitAlert(app, owner.id, 'medical');
     const outsider = await createUser(client);
     expect((await compareLeave(owner, circle)).sqlError).toBe('leave_safety_circle:is_owner');
     expect((await compareLeave(outsider, circle)).sqlError).toBe(
       'leave_safety_circle:not_authorized',
     );
-    expect((await compareLeave(ben, circle)).sqlError).toBeUndefined();
+    const left = await compareLeave(ben, circle);
+    expect(left.sqlError).toBeUndefined();
+    expect(left.endedByApi).toEqual([benRow.id]);
+    await expectEnded(benRow.id, 'left', ben.id);
     expect((await compareLeave(ben, circle)).sqlError).toBe('leave_safety_circle:not_authorized');
     const ghost: CircleFixture = { ...circle, id: '00000000-0000-4000-8000-0000000000fc' };
     expect((await compareLeave(ben, ghost)).sqlError).toBe('leave_safety_circle:not_found');
@@ -598,6 +622,6 @@ describe('remove and leave (API-100-32)', () => {
     expect((await leaveCircle(app, cara.id, circle.id)).statusCode).toBe(200);
     const sql = await sqlRolledBack(client, cara.id, 'public.leave_safety_circle($1)', [circle.id]);
     expect(sql.error).toBe('leave_safety_circle:not_authorized');
-    expect(await memberRow(client, caraRow.id)).toBeUndefined();
+    await expectEnded(caraRow.id, 'left', cara.id);
   });
 });

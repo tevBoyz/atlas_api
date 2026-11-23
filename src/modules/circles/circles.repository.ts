@@ -1,10 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { type SQL, sql } from 'drizzle-orm';
 
-import { circleActiveMember, circleOwner } from '../../common/policies';
+import {
+  circleActiveMember,
+  circleOwner,
+  incidentAlias,
+  incidentMemberView,
+  incidentResident,
+} from '../../common/policies';
 import type { ApiConfigService } from '../../config';
 import type { Database } from '../../db/database.service';
-import { capacityJsonSql, memberAlias, shownMemberStatusSql } from './invite-slots';
+import { capacityJsonSql, memberAlias, notEndedSql, shownMemberStatusSql } from './invite-slots';
 
 /** Anything that runs SQL: the pool, or an open transaction. */
 export type CirclesExecutor = Pick<Database, 'execute'>;
@@ -40,6 +46,8 @@ export type JoinedCircleJson = Record<string, unknown> & {
   owner_name: string | null;
   joined_at: string;
   active_member_count: number;
+  /** SCRUM-81 (D45): the circle's newest `active` incident the caller may open, else null. */
+  active_incident_id: string | null;
 };
 
 /** Where the caller stands towards a circle (the first checks of `list_circle_members`). */
@@ -93,6 +101,23 @@ export function circleOwnerNameSql(circleId: SQL): SQL {
                 from public.safety_circle_members om
                where om.circle_id = ${circleId}
                  and om.role = 'owner'
+               limit 1)`;
+}
+
+/**
+ * SCRUM-81 (D45): the newest `active` incident of circle `circleId` (a uuid SQL expression) that
+ * `callerId` may open (`incident.resident` or `incident.memberView`, the policy of opening it), or
+ * null. Reads `incidents` by `incidents_circle_id_idx`.
+ */
+export function activeIncidentIdSql(circleId: SQL, callerId: string): SQL {
+  const incident = incidentAlias('ai_i');
+  return sql`(select ai_i.id
+                from public.incidents ai_i
+               where ai_i.circle_id = ${circleId}
+                 and ai_i.status = 'active'
+                 and (${incidentResident.where({ callerId, incident })}
+                      or ${incidentMemberView.where({ callerId, incident })})
+               order by ai_i.activated_at desc nulls last, ai_i.created_at desc, ai_i.id desc
                limit 1)`;
 }
 
@@ -158,8 +183,9 @@ export class CirclesRepository {
   /**
    * The rows of `list_circle_members(circle_id)` (final definition: baseline migration
    * 20261117120000) as one jsonb array:
-   * - owner view: every row of the circle with 14 keys; member view: `status = 'active'` rows only,
-   *   with 8 keys (never phone, email, relationship, invite timestamps or the token);
+   * - owner view: every row of the circle with 14 keys, except ENDED rows (`removed` / `left`,
+   *   D44: history only, never shown); member view: `status = 'active'` rows only, with 8 keys
+   *   (never phone, email, relationship, invite timestamps or the token);
    * - `status`: stored status, except a stored `pending` row whose lookup status is `expired` →
    *   `expired` (fix #14);
    * - `display_name`: an `active` row with a `user_id` shows that user's `profiles.full_name`,
@@ -245,6 +271,7 @@ export class CirclesRepository {
                 left join public.profiles p
                   on p.id = scm.user_id
                where scm.circle_id = ${circleId}::uuid
+                 and ${notEndedSql(sql`scm.status`)}
                  and (${ownerView}::boolean or scm.status = 'active')
             ) r
         ) listed`);
@@ -261,6 +288,14 @@ export class CirclesRepository {
    * function's `(payload->>'joined_at') desc` (the same expression, so the same order); the SQL
    * leaves equal `joined_at` values in no defined order, the API then orders by `member_id`. No
    * phone, email, emergency or medical field. No lock (the function is `stable`).
+   *
+   * SCRUM-81 (D45, additive; not in the SQL function): `active_incident_id` = the circle's newest
+   * incident with status `active` that the caller may OPEN: `incident.memberView` (the policy of
+   * `get_incident_details`: a current `active` member row activated no later than the incident,
+   * rule 54, not the resident) or `incident.resident` (the resident's own open alert), else null. So on
+   * a `member` row it is an alert the caller received (never one that started before they joined),
+   * and on the caller's own `owner` row it is the caller's own active alert (they are its
+   * resident). Newest = latest `activated_at`, then `created_at`, then `id` (one label per circle).
    */
   async joinedCircles(tx: CirclesExecutor, callerId: string): Promise<JoinedCircleJson[]> {
     const result = await tx.execute<{ body: JoinedCircleJson[] }>(sql`
@@ -285,7 +320,8 @@ export class CirclesRepository {
                       where active_members.circle_id = c.id
                         and active_members.role = 'member'
                         and active_members.status = 'active'
-                   )
+                   ),
+                   'active_incident_id', ${activeIncidentIdSql(sql`c.id`, callerId)}
                  ) as payload
             from public.safety_circle_members scm
             join public.safety_circles c on c.id = scm.circle_id

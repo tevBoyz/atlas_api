@@ -21,7 +21,7 @@ import {
   type UserFixture,
 } from '../support/fixtures';
 import { acknowledgeIncident, markSafe, renotifyAlert, submitAlert } from '../support/incident-api';
-import { insertMember, memberRow } from '../support/invite-rows';
+import { expectMembershipGone, insertMember, memberRow } from '../support/invite-rows';
 
 /**
  * Concurrency of remove and leave (API-100-32) and of the incoming-list claim (API-100-31) against
@@ -176,7 +176,7 @@ describe('remove, leave and the incoming-list claim under concurrency (API-100-3
       }
       expect(removeOk).toBe(true);
       expect(['ok', 'acknowledge_incident:not_found']).toContain(ack);
-      expect(await memberRow(client, benRow.id)).toBeUndefined();
+      await expectMembershipGone(client, benRow.id);
       expect(
         (
           await client.query('select 1 from public.incident_deliveries where member_id = $1', [
@@ -218,7 +218,7 @@ describe('remove, leave and the incoming-list claim under concurrency (API-100-3
         noSqlDeadlock([safe]);
         expect([left.statusCode, safe.error]).toEqual([200, undefined]);
       }
-      expect(await memberRow(client, benRow.id)).toBeUndefined();
+      await expectMembershipGone(client, benRow.id);
       const status = await client.query<{ status: string }>(
         'select status from public.incidents where id = $1',
         [incident],
@@ -243,7 +243,7 @@ describe('remove, leave and the incoming-list claim under concurrency (API-100-3
       if ('statusCode' in removed) no5xx([removed]);
       else noSqlDeadlock([removed]);
       expect(renotified.statusCode).toBe(200);
-      expect(await memberRow(client, benRow.id)).toBeUndefined();
+      await expectMembershipGone(client, benRow.id);
     }
     expect(await deadlocks()).toBe(before);
   });
@@ -292,7 +292,7 @@ describe('remove, leave and the incoming-list claim under concurrency (API-100-3
       expect(['ok', 'accept_circle_invite:not_found']).toContain(outcome(accept));
       expect(['ok', 'resend_circle_invite:member_not_found']).toContain(outcome(resend));
       expect(['ok', 'cancel_circle_invite:not_found']).toContain(outcome(cancel));
-      for (const row of rows) expect(await memberRow(client, row.id)).toBeUndefined();
+      for (const row of rows) await expectMembershipGone(client, row.id);
     }
     expect(await deadlocks()).toBe(before);
   });
@@ -335,7 +335,7 @@ describe('remove, leave and the incoming-list claim under concurrency (API-100-3
         if (submitted.error) expect(submitted.sqlState).toBe('23503');
         outcomes.push(submitted.error ? 'sql:23503' : 'sql:ok');
       }
-      expect(await memberRow(client, benRow.id)).toBeUndefined();
+      await expectMembershipGone(client, benRow.id);
       // Whatever the order, no delivery of Ben survives his leave.
       expect(
         (

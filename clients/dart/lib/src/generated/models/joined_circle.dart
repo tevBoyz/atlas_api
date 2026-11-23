@@ -13,6 +13,7 @@ part 'joined_circle.g.dart';
 @JsonSerializable()
 class JoinedCircle {
   const JoinedCircle({
+    required this.activeIncidentId,
     required this.activeMemberCount,
     required this.circleId,
     required this.joinedAt,
@@ -25,6 +26,10 @@ class JoinedCircle {
 
   factory JoinedCircle.fromJson(Map<String, Object?> json) =>
       keepRawJson(_$JoinedCircleFromJson(json), json);
+
+  /// SCRUM-81: the newest active incident of this circle that the caller may open, else null. On a `member` row: an alert the caller received (started after they joined, while still a member); on the own `owner` row: the caller's own active alert (they are its resident). A member opens it with `GET /v1/incidents/{id}`; the owner with `GET /v1/me/incidents/open`.
+  @JsonKey(name: 'active_incident_id')
+  final String? activeIncidentId;
 
   /// Active members of the circle, owner excluded (pending and declined excluded).
   @JsonKey(name: 'active_member_count')

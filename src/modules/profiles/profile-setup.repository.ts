@@ -162,6 +162,29 @@ export class ProfileSetupRepository {
   }
 
   /**
+   * D44: before the contact upsert, the circle's ENDED rows (`removed` / `left`, history) of the
+   * contact's phone give the phone up (`phone = null`), so the upsert on `(circle_id, phone)` never
+   * turns a history row back into an invite: a removed or departed contact gets a new row. The
+   * caller holds the circle row lock. Returns the count.
+   */
+  async releaseEndedContactPhone(
+    tx: ProfilesExecutor,
+    circleId: string,
+    callerId: string,
+  ): Promise<number> {
+    const result = await tx.execute(sql`
+      update public.safety_circle_members as scm
+         set phone = null,
+             updated_at = now()
+        from public.profiles p
+       where ${self('p', callerId)}
+         and scm.circle_id = ${circleId}::uuid
+         and scm.phone = p.emergency_contact_phone
+         and scm.status in ('removed', 'left')`);
+    return result.rowCount ?? 0;
+  }
+
+  /**
    * Step 3b: the emergency contact's row, upsert on `(circle_id, phone)` exactly as the function
    * (spec rule 6): a new pending invite (7-day token), or on the existing row: name, relationship,
    * email refreshed; an `active` row keeps its status, token, timestamps and user; a still-pending

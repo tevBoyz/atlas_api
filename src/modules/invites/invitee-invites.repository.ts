@@ -15,10 +15,12 @@ import {
   circleOwnerNameSql,
 } from '../circles/circles.repository';
 import {
+  endedSql,
   holdsSlotSql,
   inviteLookupStatusSql,
   type InviteLookupStatus,
   memberAlias,
+  notEndedSql,
 } from '../circles/invite-slots';
 import type { InviteExecutor } from './owner-invites.repository';
 
@@ -78,7 +80,10 @@ export interface InviteChecks extends Record<string, unknown> {
   caller_owns_circle: boolean;
   /** `_circle_has_active_membership(m.circle_id, uid, m.id)`: another active row of the caller. */
   other_active: boolean;
-  /** Another row of the caller in the circle, any status (the preview `circle_full` claim guard). */
+  /**
+   * Another row of the caller in the circle, any status but an ended one (the preview
+   * `circle_full` claim guard; D44: an ended row is history, where the SQL has no row at all).
+   */
   other_row: boolean;
   /** `_circle_accept_used_after(m.circle_id, m.id)`: other slot holders + 1. */
   used_after: number;
@@ -116,11 +121,14 @@ export type IncomingInviteJson = Record<string, unknown> & {
   invited_at: string;
   invite_expires_at: string | null;
   invite_token: string | null;
+  /** SCRUM-33 (D46, additive; not in the SQL): the circle owner's public avatar URL, or null. */
+  owner_avatar_url: string | null;
 };
 
 /**
  * The rows `list_my_circle_invites` considers the caller's (final: baseline 20261019170000), over
- * the member alias `scm`: `role = 'member'` and either claimed by the caller (`user_id = uid`) or
+ * the member alias `scm`: `role = 'member'`, not an ended membership (D44: `removed` / `left` rows
+ * are history and never listed) and either claimed by the caller (`user_id = uid`) or
  * unclaimed with a phone equal, after `_normalize_e164`, to the caller's normalized Auth phone (no
  * Auth phone: claimed rows only). `authPhone` is `auth.users.phone` as stored; it is normalized
  * here (the function normalizes it in `_auth_user_phone` and again in the comparison, which changes
@@ -129,6 +137,7 @@ export type IncomingInviteJson = Record<string, unknown> & {
 function incomingInviteMatchSql(callerId: string, authPhone: string | null): SQL {
   const callerPhone = normalizeE164Sql(sql`${authPhone}::text`);
   return sql`(scm.role = 'member'
+     and ${notEndedSql(sql`scm.status`)}
      and (
        scm.user_id = ${callerId}::uuid
        or (
@@ -327,7 +336,8 @@ export class InviteeInvitesRepository {
    * D41 (approved by Dawit 2026-11-21): frees the caller's FINISHED rows of the circle before a new
    * claim, so an old decline or cancel no longer blocks a new invite with the `(circle_id, user_id)`
    * unique index. Finished = lookup status `canceled` (declined, or `invite_canceled_at` set) or
-   * `expired`. The row keeps everything else (status, names, phone, token, times) as history; only
+   * `expired`, and (D44) an ENDED membership (`removed` / `left`): rejoining after a remove or a
+   * leave needs a new invitation, and its claim releases the old history row. The row keeps everything else (status, names, phone, token, times) as history; only
    * `user_id = null, updated_at = now()` is written. Never the owner row, never an `active` or a
    * still-valid pending row, never `keepMemberId` (the row being claimed). Call it only with the
    * circle locked and {@link lockInviteForClaim} done, in the claim's transaction. Returns the number
@@ -350,7 +360,7 @@ export class InviteeInvitesRepository {
          and x.role = 'member'
          and x.status <> 'active'
          and x.id <> ${keepMemberId}::uuid
-         and ${inviteLookupStatusSql(x)} in ('canceled', 'expired')`);
+         and (${inviteLookupStatusSql(x)} in ('canceled', 'expired') or ${endedSql(x.status)})`);
     return result.rowCount ?? 0;
   }
 
@@ -387,6 +397,7 @@ export class InviteeInvitesRepository {
                 where x.circle_id = m.circle_id
                   and x.user_id = ${caller}
                   and x.id <> m.id
+                  and ${notEndedSql(x.status)}
              ) as other_row,
              (
                select (count(*) filter (where ${holdsSlotSql(x)} and x.id is distinct from m.id)
@@ -537,7 +548,10 @@ export class InviteeInvitesRepository {
    * `jsonb_build_object` (keys, key order, nulls and timestamp text): the caller's rows
    * ({@link incomingInviteMatchSql}) whose lookup status is `pending`, `expired` or `canceled`
    * (`consumed` and `not_found` excluded); `invite_token` only while `pending`; `owner_name` = the
-   * owner row's stored name. Order: the function's `(payload->>'invited_at') desc` (the same
+   * owner row's stored name. SCRUM-33 (D46, additive, not in the SQL): `owner_avatar_url` = the
+   * circle owner's `profiles.avatar_path` as a public URL ({@link avatarUrlSql}, the rule of the
+   * preview's `owner_avatar_url` and the member list's `avatar_url`), null without a profile or a
+   * path; on every listed row, like `owner_name`. Order: the function's `(payload->>'invited_at') desc` (the same
    * expression, so the same order); equal `invited_at` values are in no defined order in the SQL,
    * the API then orders by `member_id`.
    */
@@ -545,9 +559,14 @@ export class InviteeInvitesRepository {
     tx: InviteExecutor,
     callerId: string,
     authPhone: string | null,
+    avatars: AvatarUrlBase,
   ): Promise<IncomingInviteJson[]> {
     const m = memberAlias('scm');
     const status = inviteLookupStatusSql(m);
+    const ownerAvatar = sql`(select ${avatarUrlSql(sql`ow_p.avatar_path`, avatars)}
+                               from public.safety_circles ow_c
+                               join public.profiles ow_p on ow_p.id = ow_c.owner_id
+                              where ow_c.id = scm.circle_id)`;
     const result = await tx.execute<{ body: IncomingInviteJson[] }>(sql`
       select coalesce(
                jsonb_agg(listed.payload
@@ -563,7 +582,8 @@ export class InviteeInvitesRepository {
                    'owner_name', ${ownerNameSql(sql`scm.circle_id`)},
                    'invited_at', scm.invited_at,
                    'invite_expires_at', scm.invite_expires_at,
-                   'invite_token', case when ${status} = 'pending' then scm.invite_token else null end
+                   'invite_token', case when ${status} = 'pending' then scm.invite_token else null end,
+                   'owner_avatar_url', ${ownerAvatar}
                  ) as payload
             from public.safety_circle_members scm
            where ${incomingInviteMatchSql(callerId, authPhone)}

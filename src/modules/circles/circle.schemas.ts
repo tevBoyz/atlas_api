@@ -108,6 +108,12 @@ export const joinedCircleSchema = componentSchema(
       .number()
       .int()
       .describe('Active members of the circle, owner excluded (pending and declined excluded).'),
+    active_incident_id: z
+      .uuid()
+      .nullable()
+      .describe(
+        "SCRUM-81: the newest active incident of this circle that the caller may open, else null. On a `member` row: an alert the caller received (started after they joined, while still a member); on the own `owner` row: the caller's own active alert (they are its resident). A member opens it with `GET /v1/incidents/{id}`; the owner with `GET /v1/me/incidents/open`.",
+      ),
   }),
 );
 
@@ -138,7 +144,9 @@ export const leftCircleSchema = componentSchema(
   'LeftCircle',
   z.object({
     circle_id: z.uuid(),
-    member_id: z.uuid().describe("The caller's member row, now deleted."),
+    member_id: z
+      .uuid()
+      .describe("The caller's member row, now ended (kept as history, status `left`)."),
     left: z.literal(true),
   }),
 );

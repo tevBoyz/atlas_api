@@ -40,6 +40,7 @@ function setup(
     circleExists: jest.fn().mockResolvedValue(true),
     isCircleOwner: jest.fn().mockResolvedValue(true),
     lockActiveMembership: jest.fn().mockResolvedValue(ROW),
+    endMembership: jest.fn().mockResolvedValue(true),
     deleteMember: jest.fn().mockResolvedValue(true),
     ...overrides,
   };
@@ -86,7 +87,7 @@ function setup(
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 describe('MembershipService (API-100-32)', () => {
-  it('remove: parity body (jsonb key order), delete + audit inside, hook after commit', async () => {
+  it('remove: parity body (jsonb key order), D44 end as removed + audit inside, hook after commit', async () => {
     const { service, repository, audit, ended, timeline } = setup({
       lockMemberInCircle: jest.fn().mockResolvedValue({ ...ROW }),
     });
@@ -95,7 +96,8 @@ describe('MembershipService (API-100-32)', () => {
       JSON.stringify({ removed: true, circle_id: CIRCLE, member_id: ROW.id }),
     );
     expect(repository.lockMemberInCircle).toHaveBeenCalledWith({}, ROW.id, CIRCLE);
-    expect(repository.deleteMember).toHaveBeenCalledWith({}, ROW.id);
+    expect(repository.endMembership).toHaveBeenCalledWith({}, ROW.id, 'removed');
+    expect(repository.deleteMember).not.toHaveBeenCalled();
     expect(audit.record).toHaveBeenCalledWith(
       {
         action: 'circle.member.removed',
@@ -139,6 +141,7 @@ describe('MembershipService (API-100-32)', () => {
       const { service, repository, ended } = setup(overrides);
       await expect(service.remove(OWNER, CIRCLE, ROW.id)).rejects.toEqual(new DomainError(code));
       expect(repository.deleteMember).not.toHaveBeenCalled();
+      expect(repository.endMembership).not.toHaveBeenCalled();
       await flush();
       expect(ended).toEqual([]);
     }
@@ -168,12 +171,17 @@ describe('MembershipService (API-100-32)', () => {
       const { service, repository } = setup(overrides);
       await expect(service.leave(MEMBER, CIRCLE)).rejects.toEqual(new DomainError(code));
       expect(repository.deleteMember).not.toHaveBeenCalled();
+      expect(repository.endMembership).not.toHaveBeenCalled();
     }
     await expect(setup().service.leave(MEMBER, null)).rejects.toEqual(
       new DomainError('leave_safety_circle:not_found'),
     );
-    const { service, ended } = setup({ isCircleOwner: jest.fn().mockResolvedValue(false) });
+    const { service, ended, repository } = setup({
+      isCircleOwner: jest.fn().mockResolvedValue(false),
+    });
     const body = await service.leave(MEMBER, CIRCLE);
+    expect(repository.endMembership).toHaveBeenCalledWith({}, ROW.id, 'left');
+    expect(repository.deleteMember).not.toHaveBeenCalled();
     expect(JSON.stringify(body)).toBe(
       JSON.stringify({ left: true, circle_id: CIRCLE, member_id: ROW.id }),
     );
@@ -191,16 +199,38 @@ describe('MembershipService (API-100-32)', () => {
     expect(ended).toEqual([]);
   });
 
-  it('end refuses the owner row and a row that was not deleted (programming errors)', async () => {
+  it('D44: remove of a pending or declined row stays the SQL delete (no history row)', async () => {
+    for (const status of ['pending', 'declined']) {
+      const { service, repository, audit } = setup({
+        lockMemberInCircle: jest.fn().mockResolvedValue({ ...ROW, status, user_id: null }),
+      });
+      await expect(service.remove(OWNER, CIRCLE, ROW.id)).resolves.toMatchObject({
+        removed: true,
+      });
+      expect(repository.deleteMember).toHaveBeenCalledWith({}, ROW.id);
+      expect(repository.endMembership).not.toHaveBeenCalled();
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'circle.member.removed',
+          detail: { circle_id: CIRCLE, member_user_id: null, previous_status: status },
+        }),
+        {},
+      );
+    }
+  });
+
+  it('end refuses the owner row and a row that was not ended (programming errors)', async () => {
     const { service } = setup();
     const change = { tx: {} as never, ended: [] };
     await expect(service.end(change, { ...ROW, role: 'owner' }, 'removed', OWNER)).rejects.toThrow(
       'the owner row cannot end',
     );
-    const gone = setup({ deleteMember: jest.fn().mockResolvedValue(false) });
-    await expect(gone.service.end(change, ROW, 'removed', OWNER)).rejects.toThrow(
-      'was not deleted',
-    );
+    const gone = setup({ endMembership: jest.fn().mockResolvedValue(false) });
+    await expect(gone.service.end(change, ROW, 'removed', OWNER)).rejects.toThrow('was not ended');
+    const goneDeleted = setup({ deleteMember: jest.fn().mockResolvedValue(false) });
+    await expect(
+      goneDeleted.service.end(change, { ...ROW, status: 'pending' }, 'removed', OWNER),
+    ).rejects.toThrow('was not ended');
     expect(change.ended).toEqual([]);
   });
 

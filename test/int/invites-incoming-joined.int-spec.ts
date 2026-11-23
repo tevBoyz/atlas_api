@@ -22,6 +22,8 @@ import {
   insertExpiredMember,
   insertMember,
   memberRow,
+  withoutActiveIncidentId,
+  withoutOwnerAvatarUrl,
 } from '../support/invite-rows';
 
 /**
@@ -33,16 +35,20 @@ import {
  */
 type Body = Record<string, unknown>;
 
+/** The SQL function's 7 keys plus SCRUM-33's additive `owner_avatar_url` (D46). */
 const INVITE_KEYS = [
   'circle_id',
   'invite_expires_at',
   'invite_token',
   'invited_at',
   'member_id',
+  'owner_avatar_url',
   'owner_name',
   'status',
 ];
+/** The SQL function's 8 keys plus SCRUM-81's additive `active_incident_id` (D45). */
 const JOINED_KEYS = [
+  'active_incident_id',
   'active_member_count',
   'circle_id',
   'joined_at',
@@ -52,6 +58,9 @@ const JOINED_KEYS = [
   'role',
   'status',
 ];
+
+/** The hosted project origin the avatar URLs are built from (config `SUPABASE_URL`). */
+const PROJECT_HOST = 'example-project.supabase.co';
 
 let counter = 0;
 /** Ofcom's drama range (+44 7700 900000-900999): numbers reserved for fiction. */
@@ -64,7 +73,10 @@ describe('incoming invitations and joined circles (API-100-31)', () => {
   beforeAll(async () => {
     ({ app } = await createTestApp(
       {},
-      withTestConfig({ RATE_LIMIT_AUTHENTICATED_MAX: '1000000' }),
+      withTestConfig({
+        SUPABASE_URL: `https://${PROJECT_HOST}/`,
+        RATE_LIMIT_AUTHENTICATED_MAX: '1000000',
+      }),
     ));
     client = await openTestClient();
   });
@@ -112,6 +124,7 @@ describe('incoming invitations and joined circles (API-100-31)', () => {
       params: [],
       circleIds,
       api: () => listMyInvites(app, caller.id),
+      apiOnlyFields: withoutOwnerAvatarUrl,
     });
   const compareJoined = (caller: UserFixture, circleIds: string[]) =>
     compareWithSql(client, {
@@ -120,6 +133,7 @@ describe('incoming invitations and joined circles (API-100-31)', () => {
       params: [],
       circleIds,
       api: () => listJoinedCircles(app, caller.id),
+      apiOnlyFields: withoutActiveIncidentId,
     });
 
   // --- GET /v1/me/invites -----------------------------------------------------------------------
@@ -320,6 +334,50 @@ describe('incoming invitations and joined circles (API-100-31)', () => {
     const nobody = await createUser(client);
     const empty = await compareList(nobody, []);
     expect(empty.reply.body).toBe('[]');
+  });
+
+  it('SCRUM-33 (D46): owner_avatar_url is the inviting owner’s public avatar URL on every listed row; null without a photo', async () => {
+    const phone = phoneNumber();
+    const invitee = await createUser(client, { phone });
+    const withPath = await ownerWithCircle('Photo Path');
+    const withUrl = await ownerWithCircle('Photo Url');
+    const blank = await ownerWithCircle('Blank Photo');
+    const none = await ownerWithCircle('No Photo');
+    const setAvatar = (id: string, path: string | null) =>
+      client.query('update public.profiles set avatar_path = $2 where id = $1', [id, path]);
+    await setAvatar(withPath.owner.id, `${withPath.owner.id}/avatar.png`);
+    await setAvatar(withUrl.owner.id, 'HTTPS://cdn.example.test/a.png');
+    await setAvatar(blank.owner.id, '   ');
+    await setAvatar(none.owner.id, null);
+    const pending = await insertMember(client, withPath.circle.id, { phone });
+    const expired = await insertExpiredMember(client, withUrl.circle.id, { phone });
+    const canceled = await insertMember(client, blank.circle.id, {
+      phone,
+      status: 'declined',
+      canceled: true,
+    });
+    const plain = await insertMember(client, none.circle.id, { phone });
+
+    const byId: Record<string, Body> = Object.fromEntries(
+      (await invitesOf(invitee)).map((x) => [x.member_id as string, x]),
+    );
+    expect(byId[pending.id].owner_avatar_url).toBe(
+      `https://${PROJECT_HOST}/storage/v1/object/public/avatars/${withPath.owner.id}/avatar.png`,
+    );
+    // An http(s) URL is kept as is; the photo is shown on expired and canceled rows too.
+    expect(byId[expired.id]).toMatchObject({
+      status: 'expired',
+      owner_avatar_url: 'HTTPS://cdn.example.test/a.png',
+    });
+    expect(byId[canceled.id]).toMatchObject({ status: 'canceled', owner_avatar_url: null });
+    expect(byId[plain.id].owner_avatar_url).toBeNull();
+    // The rest of each element is still exactly the SQL function's answer.
+    await compareList(invitee, [
+      withPath.circle.id,
+      withUrl.circle.id,
+      blank.circle.id,
+      none.circle.id,
+    ]);
   });
 
   it('never makes a row active and never touches activated_at', async () => {

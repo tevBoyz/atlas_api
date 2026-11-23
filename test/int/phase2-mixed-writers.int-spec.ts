@@ -24,7 +24,11 @@ import {
 import { openTestClient } from '../support/database';
 import { createCircle, createUser, type UserFixture } from '../support/fixtures';
 import { sqlOutcomeAs } from '../support/incident-api';
-import { insertMember } from '../support/invite-rows';
+import {
+  insertMember,
+  withoutActiveIncidentId,
+  withoutOwnerAvatarUrl,
+} from '../support/invite-rows';
 
 /**
  * API-100-33 AC4: the SQL functions and the API are interchangeable writers of circles and invites.
@@ -73,6 +77,20 @@ describe('Phase 2 gate: SQL and API writers of circles and invites are interchan
   let app: NestFastifyApplication;
   let client: Client;
   const normalized = {} as Record<Mode, { steps: Record<string, unknown>; rows: unknown }>;
+  /**
+   * D44 (deliberate divergence): the member rows the API kept as history (`removed` / `left`) where
+   * the SQL deletes them, per mode, with the side that ran each step. They are left out of the
+   * final-row comparison and checked on their own.
+   */
+  const endedHistory = {} as Record<
+    Mode,
+    {
+      rows: Array<{ label: string; status: string; user: string; token: unknown }>;
+      sides: Record<string, Side>;
+      /** SQL-side list steps that saw (and had removed) an API history row. */
+      sqlSawHistory: string[];
+    }
+  >;
 
   beforeAll(async () => {
     ({ app } = await createTestApp(
@@ -136,8 +154,15 @@ describe('Phase 2 gate: SQL and API writers of circles and invites are interchan
     }
   }
 
-  async function run(mode: Mode): Promise<{ cast: Cast; steps: Record<string, Outcome> }> {
+  async function run(mode: Mode): Promise<{
+    cast: Cast;
+    steps: Record<string, Outcome>;
+    ended: Body[];
+    sides: Record<string, Side>;
+    sqlSawHistory: string[];
+  }> {
     const cast = await castFor();
+    const sides: Record<string, Side> = {};
     const { owner, ben, cara, dan, eve, gus, hal, circleId } = cast;
     const steps: Record<string, Outcome> = {};
     const token = (label: string) =>
@@ -167,7 +192,9 @@ describe('Phase 2 gate: SQL and API writers of circles and invites are interchan
       viaApi: () => Promise<Outcome>,
       viaSql: () => Promise<Outcome>,
     ) => {
-      const outcome = sideOf(create) === 'api' ? await viaApi() : await viaSql();
+      const side = sideOf(create);
+      sides[name] = side;
+      const outcome = side === 'api' ? await viaApi() : await viaSql();
       steps[name] = outcome;
       return outcome;
     };
@@ -283,7 +310,11 @@ describe('Phase 2 gate: SQL and API writers of circles and invites are interchan
       step(
         name,
         false,
-        async () => fromApi(await listMyInvites(app, user.id)),
+        async () => {
+          // SCRUM-33 (D46): the additive `owner_avatar_url` is not in the SQL answer.
+          const outcome = fromApi(await listMyInvites(app, user.id));
+          return outcome.ok ? { ok: true, body: withoutOwnerAvatarUrl(outcome.body) } : outcome;
+        },
         () => fromSql(user.id, 'public.list_my_circle_invites()'),
       );
 
@@ -336,7 +367,11 @@ describe('Phase 2 gate: SQL and API writers of circles and invites are interchan
       await step(
         `joined circles (${who})`,
         false,
-        async () => fromApi(await listJoinedCircles(app, user.id)),
+        async () => {
+          // SCRUM-81 (D45): the additive `active_incident_id` is not in the SQL answer.
+          const outcome = fromApi(await listJoinedCircles(app, user.id));
+          return outcome.ok ? { ok: true, body: withoutActiveIncidentId(outcome.body) } : outcome;
+        },
         () => fromSql(user.id, 'public.list_my_joined_circles()'),
       );
     }
@@ -363,8 +398,21 @@ describe('Phase 2 gate: SQL and API writers of circles and invites are interchan
     await ownerRowCall('cancel by a member', 'cancel', 'eve', ben);
     await invitee('accept removed row (gus)', gus, 'accept', 'gus');
 
-    steps['final rows'] = { ok: true, body: await rowsOf(circleId) };
-    return { cast, steps };
+    const all = await rowsOf(circleId);
+    const isEnded = (row: Body) => row.status === 'removed' || row.status === 'left';
+    steps['final rows'] = { ok: true, body: all.filter((row) => !isEnded(row)) };
+    // D44: a RETIRED SQL reader (D42) that runs after an API remove / leave sees the history row
+    // (it knows no `removed` / `left`); recorded and left out, checked below.
+    const sqlSawHistory: string[] = [];
+    for (const [name, outcome] of Object.entries(steps)) {
+      if (sides[name] !== 'sql' || !outcome.ok || !Array.isArray(outcome.body)) continue;
+      const kept = (outcome.body as Body[]).filter((entry) => !isEnded(entry));
+      if (kept.length !== outcome.body.length) {
+        sqlSawHistory.push(name);
+        outcome.body = kept;
+      }
+    }
+    return { cast, steps, ended: all.filter(isEnded), sides, sqlSawHistory };
   }
 
   // --- normalization -----------------------------------------------------------------------------
@@ -421,7 +469,20 @@ describe('Phase 2 gate: SQL and API writers of circles and invites are interchan
   const MODES: Mode[] = ['sql', 'api', 'sql→api', 'api→sql', 'mixed'];
 
   it.each(MODES)('%s: the scenario runs through', async (mode) => {
-    const { cast, steps } = await run(mode);
+    const { cast, steps, ended, sides, sqlSawHistory } = await run(mode);
+    for (const row of ended) expect(row.ended_at).not.toBeNull();
+    endedHistory[mode] = {
+      rows: ended
+        .map((row) => ({
+          label: cast.labels.get(row.id as string) ?? 'unknown',
+          status: row.status as string,
+          user: cast.labels.get(row.user_id as string) ?? String(row.user_id),
+          token: row.invite_token,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+      sides,
+      sqlSawHistory,
+    };
     const out = normalize(cast, steps) as Record<string, unknown>;
     const rows = out['final rows'];
     delete out['final rows'];
@@ -508,6 +569,28 @@ describe('Phase 2 gate: SQL and API writers of circles and invites are interchan
     '%s: the same final member rows as the SQL-only run',
     (mode) => {
       expect(normalized[mode].rows).toEqual(normalized.sql.rows);
+    },
+  );
+
+  it.each(MODES)(
+    '%s: D44 divergence — exactly the remove / leave run through the API left a history row',
+    (mode) => {
+      const { rows, sides, sqlSawHistory } = endedHistory[mode];
+      // Only a retired SQL list (D42) can see a history row, and only after an API end.
+      if (mode === 'sql' || mode === 'api') expect(sqlSawHistory).toEqual([]);
+      for (const name of sqlSawHistory) expect(sides[name]).toBe('sql');
+      if (sqlSawHistory.length > 0) expect(rows.length).toBeGreaterThan(0);
+      const expected = [
+        ...(sides['remove (gus)'] === 'api'
+          ? [{ label: 'row:gus', status: 'removed', user: 'gus', token: null }]
+          : []),
+        ...(sides['leave (hal)'] === 'api'
+          ? [{ label: 'row:hal', status: 'left', user: 'hal', token: null }]
+          : []),
+      ];
+      expect(rows).toEqual(expected);
+      if (mode === 'sql') expect(rows).toEqual([]);
+      if (mode === 'api') expect(rows).toHaveLength(2);
     },
   );
 

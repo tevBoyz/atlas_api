@@ -26,6 +26,25 @@ import { aliasColumn } from '../../common/policies';
 /** Trusted-member slots per circle, owner excluded (`_circle_member_limit()`, rule 8). */
 export const CIRCLE_MEMBER_LIMIT = 5;
 
+/**
+ * D44 (SCRUM-30/31): the stored statuses of a membership that ENDED: `removed` (the owner removed an
+ * active member) and `left` (the member left). Such a row is kept as history only: it holds no slot,
+ * passes no membership check, carries no usable invite token, and the API never shows it (member
+ * lists, joined circles, incoming invites, token lookups).
+ */
+export const ENDED_MEMBER_STATUSES = ['removed', 'left'] as const;
+export type EndedMemberStatus = (typeof ENDED_MEMBER_STATUSES)[number];
+
+/** `<status> not in ('removed', 'left')` for a status column (D44: the row is not history). */
+export function notEndedSql(status: SQLWrapper): SQL {
+  return sql`(${status} not in ('removed', 'left'))`;
+}
+
+/** `<status> in ('removed', 'left')` for a status column (D44: an ended membership). */
+export function endedSql(status: SQLWrapper): SQL {
+  return sql`(${status} in ('removed', 'left'))`;
+}
+
 /** Invite lifetime when `invite_expires_at` is null (`invited_at + interval '7 days'`, in UTC). */
 export const INVITE_DEFAULT_LIFETIME_MICROS = 7n * 86_400n * 1_000_000n;
 

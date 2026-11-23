@@ -21,7 +21,7 @@ class LeftCircle {
   final String circleId;
   final bool left;
 
-  /// The caller's member row, now deleted.
+  /// The caller's member row, now ended (kept as history, status `left`).
   @JsonKey(name: 'member_id')
   final String memberId;
 

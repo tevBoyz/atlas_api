@@ -34,7 +34,8 @@ function requireCircleMemberId(value: unknown): string {
 /**
  * Circle routes by id: the member list (API-100-25), remove and leave (API-100-32). Default
  * authenticated rate limit. Remove and leave end a membership through `MembershipService.end`
- * (parity: the member row is deleted); neither takes an `Idempotency-Key` (as the RPCs, a repeat is
+ * (D44: an active membership is kept as history, `removed` / `left`; a pending or declined row is
+ * deleted, as the SQL); neither takes an `Idempotency-Key` (as the RPCs, a repeat is
  * their own business rule: `not_found` / `not_authorized`). No route here can make a member row
  * `active`.
  */
@@ -92,7 +93,7 @@ export class CirclesController {
     responses: {
       200: {
         description:
-          'The member row is deleted (with its alert deliveries), as today. The person loses every incident of the circle at once, history included.',
+          'An active member is removed (the row is kept as history with status `removed`, its alert deliveries are deleted); a pending or declined row is deleted. The person loses every incident of the circle at once, history included. Rejoining needs a new invitation.',
         name: 'RemovedMember',
         schema: removedMemberSchema,
       },
@@ -131,7 +132,7 @@ export class CirclesController {
     responses: {
       200: {
         description:
-          "The caller's member row is deleted (with its alert deliveries), as today. The owner cannot leave.",
+          "The caller's membership ends (the row is kept as history with status `left`, its alert deliveries are deleted). Access to the circle's incidents ends at once. The owner cannot leave. Rejoining needs a new invitation.",
         name: 'LeftCircle',
         schema: leftCircleSchema,
       },

@@ -73,6 +73,7 @@ export class ProfileSetupService {
 
       const circle = await this.repository.lockOrCreateCircle(tx, user.id);
       await this.repository.upsertOwnerRow(tx, circle.id, user.id);
+      await this.repository.releaseEndedContactPhone(tx, circle.id, user.id);
       const contact = await this.upsertContact(tx, circle.id, user.id);
       await this.recordAudit(tx, user, profile.first_completion, {
         deferred: false,

@@ -17,6 +17,7 @@ Plain SQL migrations owned by the Atlas API, applied **after** the Supabase base
 | `0010_users_foreign_keys.sql` | Phase 7 (D36, D37) | the `profiles` / `safety_circle_members` / `user_devices` foreign keys repointed at `users`; compatibility trigger |
 | `0011_session_revoke_password_change.sql` | Phase 7 (D38) | `device_sessions.revoke_reason` allows `password_change` |
 | `0012_retire_supabase_app_paths.sql` | API-100-62 (D42) | **non-additive (approved):** `anon` / `authenticated` / PUBLIC table and function grants revoked, `incidents` / `incident_events` out of `supabase_realtime`, `avatars` write policies dropped; recorded in `api_retired_supabase_access`; rollback `db/rollback/0012_down.sql` |
+| `0013_membership_end_status.sql` | SCRUM-30/31 (D44) | `safety_circle_members.status` allows `removed` / `left`; nullable `ended_at` (set exactly for those two, check `safety_circle_members_ended_shape`): remove / leave keep the row as history |
 
 - File name: `<number>_<snake_case_description>.sql`, e.g. `0001_audit_log.sql`. Applied in number
   order; the id recorded is the file name without `.sql`.

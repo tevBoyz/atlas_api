@@ -18,6 +18,7 @@ class IncomingInvite {
     required this.inviteToken,
     required this.invitedAt,
     required this.memberId,
+    required this.ownerAvatarUrl,
     required this.ownerName,
     required this.status,
   });
@@ -37,6 +38,10 @@ class IncomingInvite {
   final String invitedAt;
   @JsonKey(name: 'member_id')
   final String memberId;
+
+  /// SCRUM-33: the inviting circle owner's public avatar URL (the same rule as the preview's `owner_avatar_url`), or null when they have no photo.
+  @JsonKey(name: 'owner_avatar_url')
+  final String? ownerAvatarUrl;
 
   /// The owner row's stored display name.
   @JsonKey(name: 'owner_name')

@@ -107,6 +107,47 @@ export async function memberRow(q: Queryable, id: string): Promise<Body> {
 }
 
 /**
+ * SCRUM-81 (D45): `GET /v1/me/joined-circles` adds `active_incident_id` to each element (additive,
+ * not in `list_my_joined_circles`). Returns the elements without it, after checking each had it.
+ */
+export function withoutActiveIncidentId(body: unknown): unknown {
+  if (!Array.isArray(body)) return body;
+  return body.map((element: Record<string, unknown>) => {
+    expect(element).toHaveProperty('active_incident_id');
+    const rest = { ...element };
+    delete rest.active_incident_id;
+    return rest;
+  });
+}
+
+/**
+ * SCRUM-33 (D46): `GET /v1/me/invites` adds `owner_avatar_url` to each element (additive, not in
+ * `list_my_circle_invites`). Returns the elements without it, after checking each had it.
+ */
+export function withoutOwnerAvatarUrl(body: unknown): unknown {
+  if (!Array.isArray(body)) return body;
+  return body.map((element: Record<string, unknown>) => {
+    expect(element).toHaveProperty('owner_avatar_url');
+    const rest = { ...element };
+    delete rest.owner_avatar_url;
+    return rest;
+  });
+}
+
+/**
+ * A membership that ended: gone (the SQL remove / leave deletes the row; the API deletes a pending
+ * or declined row too) or kept by the API as history (D44: status `removed` / `left`, `ended_at`
+ * set, no token, not active). Either way it is no membership any more.
+ */
+export async function expectMembershipGone(q: Queryable, id: string): Promise<void> {
+  const row = await memberRow(q, id);
+  if (row === undefined) return;
+  expect(row).toMatchObject({ invite_token: null, activated_at: null });
+  expect(['removed', 'left']).toContain(row.status);
+  expect(row.ended_at).not.toBeNull();
+}
+
+/**
  * Every row of a circle, comparable across two runs of the same call: values, and whether the call
  * wrote each timestamp (at or after `cutoff`, taken just before the call).
  */
@@ -141,6 +182,8 @@ export interface SqlComparison {
   sqlError?: string;
   sqlBody?: unknown;
   reply: ApiReply;
+  /** Ids of rows the API ended as history where the SQL deleted them (D44 option only). */
+  endedByApi?: string[];
 }
 
 /**
@@ -158,6 +201,19 @@ export async function compareWithSql(
     circleIds: string[];
     api: () => Promise<ApiReply>;
     host?: string;
+    /**
+     * D44 (deliberate divergence, SCRUM-30/31): the SQL remove / leave DELETES an active member row;
+     * the API keeps it as history (`removed` / `left`). With this set, API-side rows that are ended
+     * and absent on the SQL side are left out of the row comparison and returned in
+     * {@link SqlComparison.endedByApi} (the caller asserts their shape). Every other row, and the
+     * SQL side itself, is compared as before.
+     */
+    endedHistoryDivergence?: boolean;
+    /**
+     * Additive API-only fields (e.g. SCRUM-81's `active_incident_id`, D45) are removed from the
+     * API body by this before the text comparison; the rest must match the SQL exactly.
+     */
+    apiOnlyFields?: (body: unknown) => unknown;
   },
 ): Promise<SqlComparison> {
   const cutoff = (await client.query<{ t: string }>('select clock_timestamp()::text as t')).rows[0]
@@ -183,12 +239,26 @@ export async function compareWithSql(
     }
   } else if (reply.statusCode >= 300) {
     throw new Error(`SQL answered; the API answered ${reply.statusCode} ${reply.body}`);
-  } else if (reply.body !== JSON.stringify(sqlSide.body)) {
-    throw new Error(`Bodies differ:\n  api ${reply.body}\n  sql ${JSON.stringify(sqlSide.body)}`);
+  } else {
+    const apiText = options.apiOnlyFields
+      ? JSON.stringify(options.apiOnlyFields(JSON.parse(reply.body)))
+      : reply.body;
+    if (apiText !== JSON.stringify(sqlSide.body)) {
+      throw new Error(`Bodies differ:\n  api ${apiText}\n  sql ${JSON.stringify(sqlSide.body)}`);
+    }
   }
-  const after = (await client.query<Body>(rows.statement, rows.params)).rows;
+  let after = (await client.query<Body>(rows.statement, rows.params)).rows;
+  const endedByApi: string[] = [];
+  if (options.endedHistoryDivergence) {
+    const sqlIds = new Set((sqlSide.rows ?? []).map((row) => row.id));
+    after = after.filter((row) => {
+      const divergent = (row.status === 'removed' || row.status === 'left') && !sqlIds.has(row.id);
+      if (divergent) endedByApi.push(row.id as string);
+      return !divergent;
+    });
+  }
   expectSameRows(after, sqlSide.rows ?? []);
-  return { sqlError: sqlSide.error, sqlBody: sqlSide.body, reply };
+  return { sqlError: sqlSide.error, sqlBody: sqlSide.body, reply, endedByApi };
 }
 
 function expectSameRows(api: Body[], sql: Body[]): void {
