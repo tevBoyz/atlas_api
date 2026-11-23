@@ -15,6 +15,7 @@ class JoinedCircle {
   const JoinedCircle({
     required this.activeIncidentId,
     required this.activeMemberCount,
+    required this.capacityUsed,
     required this.circleId,
     required this.joinedAt,
     required this.memberId,
@@ -34,6 +35,10 @@ class JoinedCircle {
   /// Active members of the circle, owner excluded (pending and declined excluded).
   @JsonKey(name: 'active_member_count')
   final int activeMemberCount;
+
+  /// Gap 20 (D50): slots used in this circle, owner excluded: active members + valid pending invitations (not canceled, not consumed, not expired); the same number as Capacity `used` on the owner screen. For "Members (n of 5)" in the Member View. A count only.
+  @JsonKey(name: 'capacity_used')
+  final int capacityUsed;
   @JsonKey(name: 'circle_id')
   final String circleId;
 

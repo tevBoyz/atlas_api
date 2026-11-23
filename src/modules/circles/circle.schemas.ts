@@ -114,6 +114,12 @@ export const joinedCircleSchema = componentSchema(
       .describe(
         "SCRUM-81: the newest active incident of this circle that the caller may open, else null. On a `member` row: an alert the caller received (started after they joined, while still a member); on the own `owner` row: the caller's own active alert (they are its resident). A member opens it with `GET /v1/incidents/{id}`; the owner with `GET /v1/me/incidents/open`.",
       ),
+    capacity_used: z
+      .number()
+      .int()
+      .describe(
+        'Gap 20 (D50): slots used in this circle, owner excluded: active members + valid pending invitations (not canceled, not consumed, not expired); the same number as Capacity `used` on the owner screen. For "Members (n of 5)" in the Member View. A count only.',
+      ),
   }),
 );
 

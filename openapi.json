@@ -1948,6 +1948,12 @@
             "minimum": -9007199254740991,
             "type": "integer"
           },
+          "capacity_used": {
+            "description": "Gap 20 (D50): slots used in this circle, owner excluded: active members + valid pending invitations (not canceled, not consumed, not expired); the same number as Capacity `used` on the owner screen. For \"Members (n of 5)\" in the Member View. A count only.",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
           "circle_id": {
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -1995,7 +2001,8 @@
           "owner_name",
           "joined_at",
           "active_member_count",
-          "active_incident_id"
+          "active_incident_id",
+          "capacity_used"
         ],
         "type": "object"
       },
@@ -13168,6 +13175,14 @@
     "path": "/socket.io",
     "reconnect": "Events are never replayed and rooms are not restored: after any (re)connect the client re-fetches over REST (open incident, delivery counts, details) and joins its incidents again.",
     "server_events": {
+      "circle.membership_ended": {
+        "note": "Sent after the commit, right after the sockets left the incident rooms of that circle (D20). No reason and no names: screens of that circle show the neutral \"no longer available\" state.",
+        "payload": [
+          "circle_id",
+          "occurred_at"
+        ],
+        "room": "user:{id} of the member who was removed or left (all their sockets; D49)"
+      },
       "incident.delivery_counts": {
         "payload": [
           "incident_id",
@@ -13248,7 +13263,7 @@
           "updated_at",
           "occurred_at"
         ],
-        "room": "incident:{id}"
+        "room": "incident:{id}, user:{id} of each delivery recipient and user:{resident_id} (D48; once per socket)"
       },
       "incident.updated": {
         "incident_keys": [

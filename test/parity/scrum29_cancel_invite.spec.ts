@@ -352,12 +352,14 @@ describe('scrum29_cancel_invite.sql', () => {
       active_member_count: 1,
     });
     expect(ownerJoined?.joined_at).not.toBeNull();
-    // SCRUM-81 (D45): the API adds `active_incident_id` (additive, not in the SQL function; null
-    // here, no active incident). The SQL function's keys are otherwise exactly these.
+    // SCRUM-81 (D45) and gap 20 (D50): the API adds `active_incident_id` (null here, no active
+    // incident) and `capacity_used` (additive, not in the SQL function). The SQL function's keys are
+    // otherwise exactly these.
     expect(ownerJoined?.active_incident_id).toBeNull();
+    expect(typeof ownerJoined?.capacity_used).toBe('number');
     expect(
       Object.keys(ownerJoined ?? {})
-        .filter((key) => key !== 'active_incident_id')
+        .filter((key) => key !== 'active_incident_id' && key !== 'capacity_used')
         .sort(),
     ).toEqual(
       [

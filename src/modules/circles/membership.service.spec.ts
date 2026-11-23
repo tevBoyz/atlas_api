@@ -29,6 +29,9 @@ const ROW: LockedMembershipRow = {
   user_id: MEMBER.id,
 };
 
+/** The stored `ended_at` the repository returns for an ended active membership (D49). */
+const ENDED_AT = '2026-11-23T10:00:00.123456+00:00';
+
 const logger = () => ({ warn: jest.fn() }) as unknown as Logger & { warn: jest.Mock };
 
 function setup(
@@ -40,7 +43,7 @@ function setup(
     circleExists: jest.fn().mockResolvedValue(true),
     isCircleOwner: jest.fn().mockResolvedValue(true),
     lockActiveMembership: jest.fn().mockResolvedValue(ROW),
-    endMembership: jest.fn().mockResolvedValue(true),
+    endMembership: jest.fn().mockResolvedValue(ENDED_AT),
     deleteMember: jest.fn().mockResolvedValue(true),
     ...overrides,
   };
@@ -118,6 +121,7 @@ describe('MembershipService (API-100-32)', () => {
         member_id: ROW.id,
         user_id: MEMBER.id,
         actor_user_id: OWNER.id,
+        ended_at: ENDED_AT,
       },
     ]);
   });
@@ -186,7 +190,18 @@ describe('MembershipService (API-100-32)', () => {
       JSON.stringify({ left: true, circle_id: CIRCLE, member_id: ROW.id }),
     );
     await flush();
-    expect(ended.map((e) => [e.reason, e.actor_user_id])).toEqual([['left', MEMBER.id]]);
+    expect(ended.map((e) => [e.reason, e.actor_user_id, e.ended_at])).toEqual([
+      ['left', MEMBER.id, ENDED_AT],
+    ]);
+  });
+
+  it('D49: a deleted pending row (claimed) is announced with ended_at null', async () => {
+    const { service, ended } = setup({
+      lockMemberInCircle: jest.fn().mockResolvedValue({ ...ROW, status: 'pending' }),
+    });
+    await service.remove(OWNER, CIRCLE, ROW.id);
+    await flush();
+    expect(ended.map((e) => [e.user_id, e.ended_at])).toEqual([[MEMBER.id, null]]);
   });
 
   it('a rollback (audit fails) announces nothing and is a 500 error without personal data', async () => {
@@ -225,7 +240,7 @@ describe('MembershipService (API-100-32)', () => {
     await expect(service.end(change, { ...ROW, role: 'owner' }, 'removed', OWNER)).rejects.toThrow(
       'the owner row cannot end',
     );
-    const gone = setup({ endMembership: jest.fn().mockResolvedValue(false) });
+    const gone = setup({ endMembership: jest.fn().mockResolvedValue(undefined) });
     await expect(gone.service.end(change, ROW, 'removed', OWNER)).rejects.toThrow('was not ended');
     const goneDeleted = setup({ deleteMember: jest.fn().mockResolvedValue(false) });
     await expect(

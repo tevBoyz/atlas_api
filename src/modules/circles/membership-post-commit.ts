@@ -19,12 +19,19 @@ export interface MembershipEndedEvent {
   user_id: string | null;
   /** Who ended it: the circle owner (`removed`) or the member themself (`left`). */
   actor_user_id: string;
+  /**
+   * The stored `ended_at` (UTC JSON text) of an ended ACTIVE membership (D44); null when a pending
+   * or declined row was deleted (no membership ended, so no `circle.membership_ended`, D49).
+   */
+  ended_at: string | null;
 }
 
 /**
  * Work that follows a committed membership end: the revocation of live access. API-100-40 makes the
- * user's sockets leave that circle's incident rooms on every instance (`MembershipRevocationHook`).
- * User rooms need nothing: API-100-42 sends to a user room only while its user passes the window.
+ * user's sockets leave that circle's incident rooms on every instance (`MembershipRevocationHook`),
+ * then (D49) `circle.membership_ended` goes to the ended member's user room so their open screens
+ * of that circle switch to "no longer available". API-100-42 sends to a user room only while its
+ * user passes the window, so nothing else changes there.
  */
 export interface MembershipPostCommitHook {
   afterMembershipEnded?(event: MembershipEndedEvent): void | Promise<void>;

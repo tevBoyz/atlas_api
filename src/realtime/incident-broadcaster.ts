@@ -144,7 +144,8 @@ export function eventPayload(
  *   `incident.renotified` / `incident.resolved` for that write;
  * - `incident.incoming` (created/promoted submit) and `incident.renotified` (re-notify, also a submit
  *   on an active incident) to `user:{id}` of each delivery recipient still inside the window
- *   (API-100-42), so members with the app open learn of the alert without joining anything;
+ *   (API-100-42), so members with the app open learn of the alert without joining anything; and
+ *   `incident.resolved` to those user rooms and the resident's (D48), so they learn it ended;
  * - `incident.delivery_counts` to the resident's own sockets (`user:{resident_id}`) on submit,
  *   re-notify, the first acknowledge and the close;
  * - `incident.event` per inserted event, per receiver role: the resident (`incident:{id}:resident`)
@@ -195,11 +196,20 @@ export class IncidentBroadcaster implements IncidentPostCommitHook {
     this.sendCounts(state);
   }
 
+  /**
+   * `incident.resolved` to the incident room AND (gap 17, D48) to `user:{id}` of every delivery
+   * recipient still inside the window and of the resident, in ONE broadcast (a socket in several of
+   * these rooms gets it once): a member who is not watching the alert (only `incident.incoming`
+   * reached them) learns it ended, so "Active incident" clears live. Same payload as in the room (no
+   * recipient ids, no actor, D3/D11); ordered by `occurred_at` (D21).
+   */
   async afterResolved(event: IncidentResolvedEvent): Promise<void> {
     const state = await this.state(event.incident_id);
     if (!state) return;
+    const recipients = await this.reads.recipientUserIds(state.incident_id);
+    const userRooms = [...new Set([...recipients, state.resident_id])].map(userRoom);
     this.gateway.emit(
-      [incidentRoom(state.incident_id)],
+      [incidentRoom(state.incident_id), ...userRooms],
       SERVER_EVENTS.resolved,
       resolvedPayload(state),
     );

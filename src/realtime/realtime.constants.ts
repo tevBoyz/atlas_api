@@ -39,6 +39,8 @@ export const SERVER_EVENTS = {
   deliveryCounts: 'incident.delivery_counts',
   event: 'incident.event',
   incoming: 'incident.incoming',
+  /** To `user:{id}` of a member whose membership was removed or who left (D49). */
+  membershipEnded: 'circle.membership_ended',
   /** Sent just before the server disconnects a socket whose token reached `exp` (API-100-39 AC4). */
   sessionExpired: 'session.expired',
 } as const;

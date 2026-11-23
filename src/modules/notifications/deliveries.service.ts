@@ -93,7 +93,7 @@ export class DeliveryPlanner {
   }
 }
 
-/** `+` and digits: `auth.users.phone` is stored without the `+`. */
+/** `+` and digits: `auth.users.phone` is stored without the `+` (an API phone has it, D47). */
 function e164(phone: string): string {
   const digits = phone.replace(/\D/g, '');
   return `+${digits}`;

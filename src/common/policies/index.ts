@@ -46,6 +46,7 @@ export {
   inviteRecipient,
   type InviteRecipientArgs,
   type InviteRecipientPolicy,
+  callerPhoneSql,
   isInviteRecipient,
   normalizeE164,
   normalizeE164Sql,

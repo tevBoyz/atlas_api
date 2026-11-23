@@ -87,7 +87,7 @@ export const REALTIME_CONTRACT = {
       payload: ['incident_id', 'renotified_at', ...TIMES],
     },
     [SERVER_EVENTS.resolved]: {
-      room: 'incident:{id}',
+      room: 'incident:{id}, user:{id} of each delivery recipient and user:{resident_id} (D48; once per socket)',
       payload: [
         'incident_id',
         'status',
@@ -116,6 +116,13 @@ export const REALTIME_CONTRACT = {
         'sent_at',
         ...TIMES,
       ],
+    },
+    [SERVER_EVENTS.membershipEnded]: {
+      room: 'user:{id} of the member who was removed or left (all their sockets; D49)',
+      payload: ['circle_id', 'occurred_at'],
+      note:
+        'Sent after the commit, right after the sockets left the incident rooms of that circle (D20). ' +
+        'No reason and no names: screens of that circle show the neutral "no longer available" state.',
     },
     [SERVER_EVENTS.sessionExpired]: { room: 'the socket', payload: ['code'] },
   },

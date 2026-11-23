@@ -81,26 +81,52 @@ describe('incidentIdOf (join/leave payload)', () => {
   });
 });
 
-describe('MembershipRevocationHook (API-100-40 AC3)', () => {
-  const event = (user_id: string | null): MembershipEndedEvent => ({
+describe('MembershipRevocationHook (API-100-40 AC3, D49)', () => {
+  const ENDED_AT = '2026-11-23T10:00:00.123456+00:00';
+  const event = (
+    user_id: string | null,
+    ended_at: string | null = ENDED_AT,
+  ): MembershipEndedEvent => ({
     reason: 'removed',
     circle_id: C1,
     member_id: C2,
     user_id,
     actor_user_id: U2,
+    ended_at,
   });
+  const gateway = () => {
+    const order: string[] = [];
+    const revokeMembership = jest.fn(() => order.push('revoke'));
+    const emit = jest.fn(() => order.push('emit'));
+    const hook = new MembershipRevocationHook({
+      revokeMembership,
+      emit,
+    } as unknown as RealtimeGateway);
+    return { hook, revokeMembership, emit, order };
+  };
 
-  it('revokes the user of the ended row from that circle', () => {
-    const revokeMembership = jest.fn();
-    const hook = new MembershipRevocationHook({ revokeMembership } as unknown as RealtimeGateway);
+  it('revokes the user of the ended row from that circle, then sends circle.membership_ended', () => {
+    const { hook, revokeMembership, emit, order } = gateway();
     hook.afterMembershipEnded(event(U1));
     expect(revokeMembership).toHaveBeenCalledWith(U1, C1);
+    expect(emit).toHaveBeenCalledWith([`user:${U1}`], 'circle.membership_ended', {
+      circle_id: C1,
+      occurred_at: ENDED_AT,
+    });
+    expect(order).toEqual(['revoke', 'emit']);
+  });
+
+  it('a deleted pending / declined row (no ended_at) revokes but announces nothing', () => {
+    const { hook, revokeMembership, emit } = gateway();
+    hook.afterMembershipEnded(event(U1, null));
+    expect(revokeMembership).toHaveBeenCalledWith(U1, C1);
+    expect(emit).not.toHaveBeenCalled();
   });
 
   it('does nothing for a row nobody claimed', () => {
-    const revokeMembership = jest.fn();
-    const hook = new MembershipRevocationHook({ revokeMembership } as unknown as RealtimeGateway);
+    const { hook, revokeMembership, emit } = gateway();
     hook.afterMembershipEnded(event(null));
     expect(revokeMembership).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
   });
 });

@@ -108,14 +108,16 @@ export class MembershipRepository {
    * D41/D44) or `phone` (phone invite) later. The member's `incident_deliveries` rows are deleted,
    * exactly what the SQL delete's `on delete cascade` did, so counts, responder lists and fan-out
    * are as before. Touches the locked member row and its delivery rows only (the same rows, in the
-   * same order, as the delete and its cascade). True when the row was ended.
+   * same order, as the delete and its cascade). Returns the stored `ended_at` as UTC JSON text
+   * (`2026-11-23T10:00:00.123456+00:00`, the `occurred_at` of `circle.membership_ended`, D49) when
+   * the row was ended, undefined otherwise.
    */
   async endMembership(
     tx: MembershipExecutor,
     memberId: string,
     status: 'removed' | 'left',
-  ): Promise<boolean> {
-    const result = await tx.execute(sql`
+  ): Promise<string | undefined> {
+    const result = await tx.execute<{ ended_at: string }>(sql`
       update public.safety_circle_members
          set status = ${status},
              ended_at = now(),
@@ -124,12 +126,13 @@ export class MembershipRepository {
              updated_at = now()
        where id = ${memberId}::uuid
          and status = 'active'
-         and role = 'member'`);
-    if ((result.rowCount ?? 0) !== 1) return false;
+         and role = 'member'
+      returning (to_jsonb(ended_at at time zone 'UTC') #>> '{}') || '+00:00' as ended_at`);
+    if (result.rows.length !== 1) return undefined;
     await tx.execute(sql`
       delete from public.incident_deliveries
        where member_id = ${memberId}::uuid`);
-    return true;
+    return result.rows[0].ended_at;
   }
 
   /**

@@ -49,6 +49,16 @@ import { compareWithSql, insertMember, memberRow } from '../support/invite-rows'
  */
 type Body = Record<string, unknown>;
 
+/** UTC JSON timestamp text, as `occurred_at` everywhere (D21). */
+const UTC_TEXT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?\+00:00$/;
+/** The event's `ended_at` text is the stored `ended_at` (same instant, microseconds included). */
+async function sameAsStoredEndedAt(q: Client, memberId: string, text: string | null) {
+  const { rows } = await q.query<{ same: boolean }>(
+    'select ended_at = $2::timestamptz as same from public.safety_circle_members where id = $1',
+    [memberId, text],
+  );
+  return rows[0]?.same === true;
+}
 const ENDED: MembershipEndedEvent[] = [];
 let failHook = false;
 const recordingHook: MembershipPostCommitHook = {
@@ -262,8 +272,11 @@ describe('remove and leave (API-100-32)', () => {
         member_id: benRow.id,
         user_id: ben.id,
         actor_user_id: owner.id,
+        ended_at: expect.stringMatching(UTC_TEXT) as unknown,
       },
     ]);
+    // D49: the event carries the stored ended_at (the occurred_at of circle.membership_ended).
+    expect(await sameAsStoredEndedAt(client, benRow.id, ENDED[0].ended_at)).toBe(true);
     // Removing it again: the history row is not found (as after the SQL delete).
     expectCode(
       await removeMember(app, owner.id, circle.id, benRow.id),
@@ -350,8 +363,11 @@ describe('remove and leave (API-100-32)', () => {
         member_id: benRow.id,
         user_id: ben.id,
         actor_user_id: ben.id,
+        ended_at: expect.stringMatching(UTC_TEXT) as unknown,
       },
     ]);
+    // D49: the event carries the stored ended_at (the occurred_at of circle.membership_ended).
+    expect(await sameAsStoredEndedAt(client, benRow.id, ENDED[0].ended_at)).toBe(true);
     expectCode(
       await leaveCircle(app, ben.id, circle.id),
       403,

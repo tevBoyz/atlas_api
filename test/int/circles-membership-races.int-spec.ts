@@ -305,6 +305,16 @@ describe('remove, leave and the incoming-list claim under concurrency (API-100-3
    * (2026-11-20) the API reads the member rows `FOR KEY SHARE` before its insert, so the API submit
    * always succeeds (the leaver is simply not notified); only the SQL side may still fail with 23503.
    * The full D14 proof is incidents-submit-membership-race.int-spec.ts.
+   *
+   * Since D44 (2026-11-22) the API leave keeps the member row (`status = 'left'`, `ended_at` set)
+   * and deletes the member's `incident_deliveries` instead of deleting the row. The API submit
+   * waits behind the leave's row lock and then skips Ben (no longer active), so it never keeps a
+   * delivery of him. The old SQL `submit_emergency_alert` reads the active members without a lock:
+   * when it read Ben as active before the API leave committed and inserts after it, the insert now
+   * succeeds (the row still exists, so no 23503) and that one delivery survives. The app no longer
+   * calls that SQL function (D13; its grants are revoked by 0012), so this is a deliberate
+   * consequence of D44, not an app bug: in the API-leave + SQL-submit rounds 0 or 1 surviving
+   * delivery is accepted (1 only with `sql:ok`); every other round still requires 0.
    */
   it('leave racing the resident’s submit (API and SQL mixed): no deadlock; the API submit always succeeds (D14), the SQL one fails only with 23503', async () => {
     const before = await deadlocks();
@@ -336,14 +346,21 @@ describe('remove, leave and the incoming-list claim under concurrency (API-100-3
         outcomes.push(submitted.error ? 'sql:23503' : 'sql:ok');
       }
       await expectMembershipGone(client, benRow.id);
-      // Whatever the order, no delivery of Ben survives his leave.
-      expect(
-        (
-          await client.query('select 1 from public.incident_deliveries where member_id = $1', [
-            benRow.id,
-          ])
-        ).rowCount,
-      ).toBe(0);
+      const survivors = (
+        await client.query('select 1 from public.incident_deliveries where member_id = $1', [
+          benRow.id,
+        ])
+      ).rowCount;
+      if (mode === 2) {
+        // API leave (D44: the row stays as `left`) racing the old SQL submit (no lock on its read):
+        // at most one delivery of Ben may survive, and only when that submit went through.
+        expect([0, 1]).toContain(survivors);
+        if (survivors === 1) expect(outcomes[outcomes.length - 1]).toBe('sql:ok');
+      } else {
+        // The API submit (D14) never keeps a delivery of the leaver; the SQL leave deletes the row,
+        // so its cascade (or the 23503) leaves none either.
+        expect(survivors).toBe(0);
+      }
     }
     expect(outcomes.every((o) => ['api:201', 'sql:ok', 'sql:23503'].includes(o))).toBe(true);
     expect(

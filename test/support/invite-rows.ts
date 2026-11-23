@@ -107,15 +107,18 @@ export async function memberRow(q: Queryable, id: string): Promise<Body> {
 }
 
 /**
- * SCRUM-81 (D45): `GET /v1/me/joined-circles` adds `active_incident_id` to each element (additive,
- * not in `list_my_joined_circles`). Returns the elements without it, after checking each had it.
+ * `GET /v1/me/joined-circles` adds two keys to each element that `list_my_joined_circles` does not
+ * return (both additive): SCRUM-81's `active_incident_id` (D45) and gap 20's `capacity_used` (D50).
+ * Returns the elements without them, after checking each had both.
  */
-export function withoutActiveIncidentId(body: unknown): unknown {
+export function withoutJoinedApiFields(body: unknown): unknown {
   if (!Array.isArray(body)) return body;
   return body.map((element: Record<string, unknown>) => {
     expect(element).toHaveProperty('active_incident_id');
+    expect(element).toHaveProperty('capacity_used');
     const rest = { ...element };
     delete rest.active_incident_id;
+    delete rest.capacity_used;
     return rest;
   });
 }
@@ -210,7 +213,7 @@ export async function compareWithSql(
      */
     endedHistoryDivergence?: boolean;
     /**
-     * Additive API-only fields (e.g. SCRUM-81's `active_incident_id`, D45) are removed from the
+     * Additive API-only fields (e.g. `active_incident_id`, D45, and `capacity_used`, D50) are removed from the
      * API body by this before the text comparison; the rest must match the SQL exactly.
      */
     apiOnlyFields?: (body: unknown) => unknown;

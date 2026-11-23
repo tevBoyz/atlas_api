@@ -22,7 +22,7 @@ import {
   insertExpiredMember,
   insertMember,
   memberRow,
-  withoutActiveIncidentId,
+  withoutJoinedApiFields,
   withoutOwnerAvatarUrl,
 } from '../support/invite-rows';
 
@@ -46,10 +46,11 @@ const INVITE_KEYS = [
   'owner_name',
   'status',
 ];
-/** The SQL function's 8 keys plus SCRUM-81's additive `active_incident_id` (D45). */
+/** The SQL function's 8 keys plus the additive `active_incident_id` (D45) and `capacity_used` (D50). */
 const JOINED_KEYS = [
   'active_incident_id',
   'active_member_count',
+  'capacity_used',
   'circle_id',
   'joined_at',
   'member_id',
@@ -133,7 +134,7 @@ describe('incoming invitations and joined circles (API-100-31)', () => {
       params: [],
       circleIds,
       api: () => listJoinedCircles(app, caller.id),
-      apiOnlyFields: withoutActiveIncidentId,
+      apiOnlyFields: withoutJoinedApiFields,
     });
 
   // --- GET /v1/me/invites -----------------------------------------------------------------------

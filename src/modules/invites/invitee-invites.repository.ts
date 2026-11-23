@@ -4,6 +4,7 @@ import { type SQL, sql } from 'drizzle-orm';
 import {
   aliasColumn,
   assertNoActivatedAt,
+  callerPhoneSql,
   circleOwner,
   inviteRecipient,
   membershipActivate,
@@ -130,7 +131,8 @@ export type IncomingInviteJson = Record<string, unknown> & {
  * the member alias `scm`: `role = 'member'`, not an ended membership (D44: `removed` / `left` rows
  * are history and never listed) and either claimed by the caller (`user_id = uid`) or
  * unclaimed with a phone equal, after `_normalize_e164`, to the caller's normalized Auth phone (no
- * Auth phone: claimed rows only). `authPhone` is `auth.users.phone` as stored; it is normalized
+ * Auth phone: claimed rows only). `authPhone` is the caller's phone as stored (D47,
+ * {@link callerPhoneSql}); it is normalized
  * here (the function normalizes it in `_auth_user_phone` and again in the comparison, which changes
  * nothing).
  */
@@ -224,10 +226,13 @@ export class InviteeInvitesRepository {
                                    hashtext(${callerId}::text))`);
   }
 
-  /** `_auth_user_phone(uid)` before normalization: `auth.users.phone` of the caller (null if none). */
+  /**
+   * The caller's phone before normalization (null if none), D47 ({@link callerPhoneSql}): the API
+   * account's confirmed `public.users.phone`, else `_auth_user_phone(uid)`'s `auth.users.phone`.
+   */
   async authPhone(tx: InviteExecutor, callerId: string): Promise<string | null> {
     const result = await tx.execute<{ phone: string | null }>(sql`
-      select u.phone from auth.users u where u.id = ${callerId}::uuid`);
+      select ${callerPhoneSql(sql`${callerId}::uuid`)} as phone`);
     return result.rows[0]?.phone ?? null;
   }
 

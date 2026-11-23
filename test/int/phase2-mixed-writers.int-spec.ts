@@ -26,7 +26,7 @@ import { createCircle, createUser, type UserFixture } from '../support/fixtures'
 import { sqlOutcomeAs } from '../support/incident-api';
 import {
   insertMember,
-  withoutActiveIncidentId,
+  withoutJoinedApiFields,
   withoutOwnerAvatarUrl,
 } from '../support/invite-rows';
 
@@ -368,9 +368,9 @@ describe('Phase 2 gate: SQL and API writers of circles and invites are interchan
         `joined circles (${who})`,
         false,
         async () => {
-          // SCRUM-81 (D45): the additive `active_incident_id` is not in the SQL answer.
+          // D45 / D50: the additive `active_incident_id` and `capacity_used` are not in the SQL answer.
           const outcome = fromApi(await listJoinedCircles(app, user.id));
-          return outcome.ok ? { ok: true, body: withoutActiveIncidentId(outcome.body) } : outcome;
+          return outcome.ok ? { ok: true, body: withoutJoinedApiFields(outcome.body) } : outcome;
         },
         () => fromSql(user.id, 'public.list_my_joined_circles()'),
       );

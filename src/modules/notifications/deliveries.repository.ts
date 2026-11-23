@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { type SQL, sql } from 'drizzle-orm';
 
+import { callerPhoneSql } from '../../common/policies';
 import { DatabaseService } from '../../db/database.service';
 import type { Channel, SendErrorCode } from './channels/channel.types';
 
@@ -62,6 +63,8 @@ export class DeliveriesRepository {
    * - push: one row per device of the recipient with a push token (not revoked); none → one
    *   `skipped` row `no_device`.
    * - sms / email: one row per recipient; no phone / email on the account → `skipped` `no_address`.
+   *   The phone is the account's confirmed API phone, else `auth.users.phone` (D47); the email is
+   *   still `auth.users.email`.
    * - a disabled channel → every row of it `skipped` `channel_disabled` (no adapter is called).
    * - a recipient who is no longer eligible → one `skipped` row `not_eligible` per channel.
    * `preferences` records the recipient's `alert_*_enabled` flags (recorded, not enforced, D4).
@@ -102,7 +105,7 @@ export class DeliveriesRepository {
                  ),
                  '{}'::jsonb
                ) as preferences,
-               nullif(btrim(u.phone), '') is not null as has_phone,
+               nullif(btrim(${callerPhoneSql(sql`r.user_id`)}), '') is not null as has_phone,
                nullif(btrim(u.email), '') is not null as has_email
           from recipients r
           left join public.profiles p on p.id = r.user_id
@@ -184,7 +187,7 @@ export class DeliveriesRepository {
              o.topic, o.payload,
              case when dv.revoked_at is null then dv.push_provider end as push_provider,
              case when dv.revoked_at is null then dv.push_token end as push_token,
-             nullif(btrim(u.phone), '') as phone,
+             nullif(btrim(${callerPhoneSql(sql`d.recipient_user_id`)}), '') as phone,
              nullif(btrim(u.email), '') as email
         from public.notification_deliveries d
         join public.notification_outbox o on o.id = d.outbox_id

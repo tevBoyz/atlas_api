@@ -10,7 +10,13 @@ import {
 } from '../../common/policies';
 import type { ApiConfigService } from '../../config';
 import type { Database } from '../../db/database.service';
-import { capacityJsonSql, memberAlias, notEndedSql, shownMemberStatusSql } from './invite-slots';
+import {
+  capacityJsonSql,
+  holdsSlotSql,
+  memberAlias,
+  notEndedSql,
+  shownMemberStatusSql,
+} from './invite-slots';
 
 /** Anything that runs SQL: the pool, or an open transaction. */
 export type CirclesExecutor = Pick<Database, 'execute'>;
@@ -48,6 +54,11 @@ export type JoinedCircleJson = Record<string, unknown> & {
   active_member_count: number;
   /** SCRUM-81 (D45): the circle's newest `active` incident the caller may open, else null. */
   active_incident_id: string | null;
+  /**
+   * Gap 20 (D50): slots used in the circle, owner excluded: active members + valid pending
+   * invitations (Capacity `used`, rule 8). A count only, never who is pending.
+   */
+  capacity_used: number;
 };
 
 /** Where the caller stands towards a circle (the first checks of `list_circle_members`). */
@@ -296,6 +307,11 @@ export class CirclesRepository {
    * a `member` row it is an alert the caller received (never one that started before they joined),
    * and on the caller's own `owner` row it is the caller's own active alert (they are its
    * resident). Newest = latest `activated_at`, then `created_at`, then `id` (one label per circle).
+   *
+   * Gap 20 (D50, additive; not in the SQL function): `capacity_used` = the circle's rows holding a
+   * slot ({@link holdsSlotSql}: `active` members + valid pending invitations, owner excluded), the
+   * Capacity `used` of `GET /v1/me/circle/capacity`, so the Member View shows "Members (n of 5)" as
+   * the owner screen does. A count only.
    */
   async joinedCircles(tx: CirclesExecutor, callerId: string): Promise<JoinedCircleJson[]> {
     const result = await tx.execute<{ body: JoinedCircleJson[] }>(sql`
@@ -321,7 +337,13 @@ export class CirclesRepository {
                         and active_members.role = 'member'
                         and active_members.status = 'active'
                    ),
-                   'active_incident_id', ${activeIncidentIdSql(sql`c.id`, callerId)}
+                   'active_incident_id', ${activeIncidentIdSql(sql`c.id`, callerId)},
+                   'capacity_used', (
+                     select count(*)::integer
+                       from public.safety_circle_members cap_u
+                      where cap_u.circle_id = c.id
+                        and ${holdsSlotSql(memberAlias('cap_u'))}
+                   )
                  ) as payload
             from public.safety_circle_members scm
             join public.safety_circles c on c.id = scm.circle_id

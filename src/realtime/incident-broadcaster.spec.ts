@@ -147,6 +147,28 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
     ]);
   });
 
+  it('resolved (D48): one broadcast to the incident room, each recipient and the resident user room', async () => {
+    const { broadcaster, calls, payload } = setup();
+    await broadcaster.afterResolved({ ...ref, recipient_count: 1 });
+    expect(calls()[0]).toEqual([
+      [`incident:${INCIDENT}`, `user:${MEMBER}`, `user:${RESIDENT}`],
+      'incident.resolved',
+      [],
+    ]);
+    expect(Object.keys(payload(0))).not.toContain('recipient_ids');
+  });
+
+  it('resolved (D48): no recipients still reaches the room and the resident', async () => {
+    const { broadcaster, calls, reads } = setup();
+    reads.recipientUserIds.mockResolvedValue([]);
+    await broadcaster.afterResolved({ ...ref, recipient_count: 0 });
+    expect(calls()[0]).toEqual([
+      [`incident:${INCIDENT}`, `user:${RESIDENT}`],
+      'incident.resolved',
+      [],
+    ]);
+  });
+
   it('an event by the resident: full to the resident room, masked to the rest', async () => {
     const { broadcaster, calls, payload } = setup(eventRow(RESIDENT, { recipient_ids: [MEMBER] }));
     await broadcaster.afterEvent({ ...ref, event_id: 'x', event_type: 'closure_notified' });

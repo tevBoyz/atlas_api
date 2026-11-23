@@ -174,9 +174,13 @@ export class MembershipService {
     if (row.role !== 'member') throw new Error('MembershipService.end: the owner row cannot end');
     // D44: an active membership is kept as history (`removed` / `left`); remove of a pending or
     // declined row stays the SQL's delete.
-    const written =
+    const endedAt =
       row.status === 'active'
         ? await this.repository.endMembership(change.tx, row.id, reason)
+        : undefined;
+    const written =
+      row.status === 'active'
+        ? endedAt !== undefined
         : await this.repository.deleteMember(change.tx, row.id);
     if (!written) {
       throw new Error('MembershipService.end: the locked member row was not ended');
@@ -202,6 +206,7 @@ export class MembershipService {
       member_id: row.id,
       user_id: row.user_id,
       actor_user_id: actor.id,
+      ended_at: endedAt ?? null,
     });
   }
 

@@ -19,8 +19,9 @@ import {
  * - a phone invite (`phone` set) needs the caller's Auth phone, normalized, to be non-null and equal
  *   to the row phone normalized;
  * - a link invite (`phone` null) accepts any holder of the current token.
- * The caller's Auth phone is read from `auth.users.phone` (as `_auth_user_phone` does), never from
- * the token. Lookup status (pending/expired/...) is the operation's job, not this rule's.
+ * The caller's phone is {@link callerPhoneSql} (D47: the API account's CONFIRMED phone, else
+ * `auth.users.phone` as `_auth_user_phone` reads it), never from the token. Lookup status
+ * (pending/expired/...) is the operation's job, not this rule's.
  */
 
 const E164 = /^\+[1-9][0-9]{7,14}$/;
@@ -69,6 +70,21 @@ export function isInviteRecipient(
   return true;
 }
 
+/**
+ * D47 (gap 16): the caller's phone for invite matching and SMS, as stored (not normalized):
+ * `public.users.phone` when `phone_confirmed_at` is set (accounts made or changed by the API's own
+ * auth, Phase 6), else `auth.users.phone` (migrated / Supabase accounts, exactly what the SQL
+ * `_auth_user_phone` reads). An unconfirmed API phone never matches; a user with neither gets null.
+ * The SQL functions read `auth.users` only (a deliberate divergence, D47). `uid` is a uuid SQL
+ * expression.
+ */
+export function callerPhoneSql(uid: SQL): SQL {
+  return sql`coalesce(
+    (select nullif(btrim(cp_u.phone), '') from public.users cp_u
+      where cp_u.id = ${uid} and cp_u.phone_confirmed_at is not null),
+    (select cp_a.phone from auth.users cp_a where cp_a.id = ${uid}))`;
+}
+
 export interface InviteMemberRef {
   userId: SQLWrapper;
   phone: SQLWrapper;
@@ -83,7 +99,7 @@ export interface InviteRecipientArgs {
   callerId: UuidOperand;
   /** Defaults to {@link SAFETY_CIRCLE_MEMBERS_TABLE}. */
   member?: InviteMemberRef;
-  /** The caller's Auth phone; defaults to `auth.users.phone` of the caller. */
+  /** The caller's phone; defaults to {@link callerPhoneSql} of the caller (D47). */
   authPhone?: TextOperand;
 }
 
@@ -98,10 +114,7 @@ const where = ({
   authPhone,
 }: InviteRecipientArgs) => {
   const caller = uuidSql(callerId);
-  const phone =
-    authPhone === undefined
-      ? sql`(select pv_u.phone from auth.users pv_u where pv_u.id = ${caller})`
-      : textSql(authPhone);
+  const phone = authPhone === undefined ? callerPhoneSql(caller) : textSql(authPhone);
   const callerPhone = normalizeE164Sql(phone);
   return sql`((${member.userId} is null or ${member.userId} = ${caller})
     and (${member.phone} is null

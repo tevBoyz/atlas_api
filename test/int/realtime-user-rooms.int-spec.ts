@@ -16,7 +16,13 @@ import {
   type MemberFixture,
   type UserFixture,
 } from '../support/fixtures';
-import { listResponderIncidents, renotifyAlert, submitAlert } from '../support/incident-api';
+import {
+  getIncidentDetails,
+  listResponderIncidents,
+  markSafe,
+  renotifyAlert,
+  submitAlert,
+} from '../support/incident-api';
 import { connectSocket, eventually, sleep, type TestSocket } from '../support/realtime-client';
 
 /**
@@ -195,6 +201,63 @@ describe('user rooms: incoming incidents (API-100-42)', () => {
     expect(s.sockets.m2.of('incident.renotified')).toEqual([]);
     expect(s.sockets.m2b.of('incident.renotified')).toEqual([]);
     expect(lateSocket.received).toEqual([]);
+  });
+
+  it('mark safe sends incident.resolved to every recipient user room, joined or not (gap 17, D48)', async () => {
+    const s = await scene();
+    const id = (await submitAlert(appA, s.resident.id, 'medical')).json<Body>().id as string;
+    await s.sockets.m1.next('incident.incoming');
+    await s.sockets.m2.next('incident.incoming');
+    // m1 watches the alert (incident room + user room): still one resolved per socket.
+    await expect(s.sockets.m1.join(id)).resolves.toEqual({ ok: true });
+    // m2 is removed after the alert: no longer a recipient.
+    const late = await createUser(client);
+    await addActiveMember(client, s.circle, late);
+    const lateSocket = await connect(urlB, late);
+    expect((await removeMember(appB, s.resident.id, s.circle.id, s.m2Row.id)).statusCode).toBe(200);
+    await sleep(200);
+    const m2Before = s.sockets.m2.of('incident.resolved').length;
+
+    expect((await markSafe(appB, s.resident.id, id)).statusCode).toBe(200);
+    // m1 (joined) and the resident's socket (not joined to the room) get it; m2 (both sockets)
+    // was removed and the late member is not a recipient.
+    const resolved = await s.sockets.m1.next<Body>('incident.resolved');
+    const details = (await getIncidentDetails(appA, s.m1.id, id)).json<Body>();
+    expect(resolved).toEqual({
+      incident_id: id,
+      status: 'resolved',
+      resolved_at: details.resolved_at,
+      resolved_reason: 'safe',
+      location_sharing_ended_at: details.location_sharing_ended_at,
+      updated_at: expect.any(String) as unknown,
+      occurred_at: expect.any(String) as unknown,
+    });
+    await expect(s.sockets.resident.next<Body>('incident.resolved')).resolves.toEqual(resolved);
+    await sleep(300);
+    expect(s.sockets.m1.of('incident.resolved')).toHaveLength(1);
+    expect(s.sockets.resident.of('incident.resolved')).toHaveLength(1);
+    expect(s.sockets.m2.of('incident.resolved')).toHaveLength(m2Before);
+    expect(s.sockets.m2b.of('incident.resolved')).toEqual([]);
+    for (const socket of [s.sockets.pending, s.sockets.outsider, lateSocket]) {
+      expect(socket.of('incident.resolved')).toEqual([]);
+    }
+  });
+
+  it('a member who never opened the alert learns it ended on their user room only (D48)', async () => {
+    const s = await scene();
+    const id = (await submitAlert(appA, s.resident.id, 'fire')).json<Body>().id as string;
+    await s.sockets.m2.next('incident.incoming');
+    await s.sockets.m2b.next('incident.incoming');
+    expect((await markSafe(appA, s.resident.id, id)).statusCode).toBe(200);
+    // m2 has two sockets on two instances, none in the incident room: each gets it once.
+    const onB = await s.sockets.m2.next<Body>('incident.resolved');
+    await expect(s.sockets.m2b.next<Body>('incident.resolved')).resolves.toEqual(onB);
+    expect(onB).toMatchObject({ incident_id: id, status: 'resolved', resolved_reason: 'safe' });
+    expect(Object.keys(onB)).not.toContain('recipient_ids');
+    // The incident-room-only events (updated) never reached a socket that did not join.
+    await sleep(300);
+    expect(s.sockets.m2.of('incident.updated')).toEqual([]);
+    expect(s.sockets.m2.of('incident.resolved')).toHaveLength(1);
   });
 
   it('an SOS of a circle without members sends no incoming to anyone', async () => {

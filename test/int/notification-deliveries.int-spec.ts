@@ -15,6 +15,7 @@ import {
   FAKE_FAIL_TOKEN_PREFIX,
   FAKE_UNREGISTERED_TOKEN_PREFIX,
   FakePushSender,
+  type FakeSmsSender,
 } from '../../src/modules/notifications/channels/fake-senders';
 import type { DeliveryRecipient } from '../../src/modules/notifications/deliveries.repository';
 import { DeliveryPlanner } from '../../src/modules/notifications/deliveries.service';
@@ -223,6 +224,46 @@ describe('notification deliveries and retries (API-100-47)', () => {
         'topic',
       ]);
     }
+  });
+
+  it('SMS uses the confirmed API phone, else the auth.users phone; an unconfirmed API phone is no_address (gap 16, D47)', async () => {
+    const sms = () => worker.get(ChannelSenders).sms as FakeSmsSender;
+    const apiAccount = async (phone: string, confirmed: boolean): Promise<string> => {
+      const id = randomUUID();
+      await client.query(
+        `insert into public.users (id, email, email_confirmed_at, phone, phone_confirmed_at, metadata)
+         values ($1, $2, now(), $3, case when $4::boolean then now() end, '{}'::jsonb)`,
+        [id, `api-${id}@example.test`, phone, confirmed],
+      );
+      return id;
+    };
+    const confirmedPhone = '+447700900951';
+    const unconfirmedPhone = '+447700900952';
+    const confirmed = await apiAccount(confirmedPhone, true);
+    const unconfirmed = await apiAccount(unconfirmedPhone, false);
+    const migrated = await createUser(client, { phone: true });
+    secrets.push(confirmedPhone, unconfirmedPhone);
+    const sentBefore = sms().sent.length;
+
+    const outboxId = await notify(
+      [
+        { user_id: confirmed, eligible: true },
+        { user_id: unconfirmed, eligible: true },
+        { user_id: migrated.id, eligible: true },
+      ],
+      ['sms'],
+    );
+    const rows = await settled(outboxId, 3);
+    const of = (id: string) => rows.find((row) => row.recipient_user_id === id);
+    expect(of(confirmed)).toMatchObject({ status: 'sent', error_code: null });
+    expect(of(unconfirmed)).toMatchObject({ status: 'skipped', error_code: 'no_address' });
+    expect(of(migrated.id)).toMatchObject({ status: 'sent' });
+    expect(
+      sms()
+        .sent.slice(sentBefore)
+        .map((m) => m.to)
+        .sort(),
+    ).toEqual([confirmedPhone, migrated.phone].sort());
   });
 
   it('idempotent by outbox id: a second fan-out of the same row adds no row and sends nothing', async () => {

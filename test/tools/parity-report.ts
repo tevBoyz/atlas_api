@@ -206,6 +206,20 @@ const PHASES: Record<PhaseNumber, Phase> = {
           '`test/int/circles-membership-history-d44.int-spec.ts` (readers, rejoin, incidents), ' +
           '`test/int/phase2-mixed-writers.int-spec.ts` (history rows per mode)',
       },
+      {
+        decision: 'D47 (gap 16; approved by Dawit 2026-11-23, gap plan)',
+        case:
+          'Phone invite (incoming list and its claim, preview, accept, decline) for a caller whose ' +
+          'phone is only in `public.users` (an API-signup account), or whose confirmed API phone ' +
+          'differs from `auth.users.phone`.',
+        sql: 'Reads `auth.users.phone` only: an API-signup account (no `auth.users` row) never matches.',
+        api:
+          'The confirmed `public.users` phone (`phone_confirmed_at` set), else `auth.users.phone`; an ' +
+          'unconfirmed API phone never matches. Same normalization; no shape or code change. The ' +
+          'parity fixtures hold the same confirmed phone in both tables, so no assertion changed.',
+        provedBy:
+          '`test/int/invites-api-phone-d47.int-spec.ts`, `test/int/notification-deliveries.int-spec.ts` (SMS address)',
+      },
     ],
   },
   3: {
