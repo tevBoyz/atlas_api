@@ -18,6 +18,7 @@ class SharingFlagsRequest {
     this.shareEmergencyContactRelationship,
     this.shareEmergencyPreferredLanguage,
     this.shareMedicalConditions,
+    this.sharePhone,
   });
 
   factory SharingFlagsRequest.fromJson(Map<String, Object?> json) =>
@@ -41,6 +42,8 @@ class SharingFlagsRequest {
   final bool? shareEmergencyPreferredLanguage;
   @JsonKey(name: 'share_medical_conditions')
   final bool? shareMedicalConditions;
+  @JsonKey(name: 'share_phone')
+  final bool? sharePhone;
 
   Map<String, Object?> toJson() => _$SharingFlagsRequestToJson(this);
 }

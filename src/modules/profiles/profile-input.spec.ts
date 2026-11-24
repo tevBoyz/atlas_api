@@ -249,6 +249,25 @@ describe('profile request parsing (API-100-35)', () => {
     });
   });
 
+  describe('share_phone in emergency info (SCRUM-52, D59)', () => {
+    it('is optional: left out keeps the stored value (not in the values written)', () => {
+      expect(emergencyInfoFromBody(emergency())).not.toHaveProperty('share_phone');
+    });
+
+    it('when sent it must be a JSON boolean, checked after the 9 flags', () => {
+      expect(emergencyInfoFromBody(emergency({ share_phone: false })).share_phone).toBe(false);
+      expect(emergencyInfoFromBody(emergency({ share_phone: true })).share_phone).toBe(true);
+      expect(failure(() => emergencyInfoFromBody(emergency({ share_phone: 'yes' })))).toEqual({
+        code: 'validation:invalid_request',
+        field: 'share_phone',
+      });
+      expect(failure(() => emergencyInfoFromBody(emergency({ share_phone: null })))).toEqual({
+        code: 'validation:invalid_request',
+        field: 'share_phone',
+      });
+    });
+  });
+
   describe('preferences (P4)', () => {
     it('accepts the fixed language and time zone and the 4 preferred languages', () => {
       for (const lang of ['en', 'wo', 'mnk', 'ff']) {
@@ -288,6 +307,18 @@ describe('profile request parsing (API-100-35)', () => {
         }),
       ).toEqual({ share_allergies: true, emergency_notes_shareable: false });
       expect(sharingFlagsFromBody({})).toEqual({});
+    });
+
+    it('accepts share_phone (SCRUM-52, D59) alone or with the 9 flags', () => {
+      expect(sharingFlagsFromBody({ share_phone: false })).toEqual({ share_phone: false });
+      expect(sharingFlagsFromBody({ share_phone: true, share_blood_type: false })).toEqual({
+        share_phone: true,
+        share_blood_type: false,
+      });
+      expect(failure(() => sharingFlagsFromBody({ share_phone: 1 }))).toEqual({
+        code: 'validation:invalid_request',
+        field: 'share_phone',
+      });
     });
 
     it('a flag that is not a JSON boolean → validation on that flag', () => {

@@ -27,6 +27,7 @@ const USER: AuthenticatedUser = {
   phone: null,
 };
 const INCIDENT_ID = '22222222-2222-4222-8222-222222222222';
+const SERVICES = [{ service: 'ambulance', label: 'Ambulance', number: '116' }];
 const EVENT: IncidentSubmittedEvent = {
   incident_id: INCIDENT_ID,
   resident_id: USER.id,
@@ -60,6 +61,7 @@ function serviceWith(
     closeSafe: jest.fn().mockResolvedValue({ circle_id: null }),
     closureRecipientIds: jest.fn().mockResolvedValue(['a', 'b']),
     recordClosureEvents: jest.fn().mockResolvedValue(undefined),
+    emergencyServices: jest.fn().mockResolvedValue(SERVICES),
     ...overrides,
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
@@ -258,7 +260,9 @@ describe('IncidentsService.renotify (API-100-18)', () => {
     await expect(service.renotify(USER, INCIDENT_ID)).resolves.toEqual({
       circle_id: null,
       delivered_count: 3,
+      emergency_services: SERVICES,
     });
+    expect(repository.emergencyServices).toHaveBeenCalledWith({});
     expect(repository.applyRenotify).toHaveBeenCalledWith({}, INCIDENT_ID, USER.id);
     expect(repository.submitResult).not.toHaveBeenCalled();
     expect(audit.record).toHaveBeenCalledWith(

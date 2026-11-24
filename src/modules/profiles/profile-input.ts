@@ -1,6 +1,11 @@
 import { DomainError, type ErrorCode } from '../../common/errors';
 import { invalidRequest, isPostgresText, requireJsonObject } from '../incidents/incident-input';
-import { SHARE_FLAGS, type ShareFlag } from './profile.schemas';
+import {
+  ALL_SHARE_FLAGS,
+  OPTIONAL_SHARE_FLAGS,
+  SHARE_FLAGS,
+  type ShareFlag,
+} from './profile.schemas';
 
 /**
  * Request bodies of the profile writes (API-100-35, spec §11.3 P2-P6), checked in the body's field
@@ -173,7 +178,8 @@ export type EmergencyInfoInput = Record<string, string | boolean | null>;
  * phone (trimmed, strict E.164; no country code is added), email (optional, the app's rule), blood
  * type (optional, one of 9), preferred language (optional text; `allergies` / `medical_conditions`
  * are ignored since SCRUM-21, D51),
- * `location_sharing_enabled`, notes (optional, at most 500 characters), then the 9 share flags.
+ * `location_sharing_enabled`, notes (optional, at most 500 characters), then the 9 share flags, then
+ * `share_phone` (SCRUM-52, D59): optional, left out keeps the stored value, else a JSON boolean.
  */
 export function emergencyInfoFromBody(raw: unknown): EmergencyInfoInput {
   const body = requireJsonObject(raw);
@@ -219,6 +225,9 @@ export function emergencyInfoFromBody(raw: unknown): EmergencyInfoInput {
   values.emergency_notes = notes;
 
   for (const name of SHARE_FLAGS) values[name] = flag(body, name);
+  for (const name of OPTIONAL_SHARE_FLAGS) {
+    if (body[name] !== undefined) values[name] = flag(body, name);
+  }
   return values;
 }
 
@@ -257,13 +266,13 @@ export function preferencesFromBody(raw: unknown): PreferencesInput {
 }
 
 /**
- * `PATCH /v1/me/profile/sharing-flags` (P5): the flags present in the body (any subset of the 9),
- * each a JSON boolean. Other keys are ignored; nothing else is written.
+ * `PATCH /v1/me/profile/sharing-flags` (P5): the flags present in the body (any subset of the 9
+ * plus `share_phone`, D59), each a JSON boolean. Other keys are ignored; nothing else is written.
  */
 export function sharingFlagsFromBody(raw: unknown): Partial<Record<ShareFlag, boolean>> {
   const body = requireJsonObject(raw);
   const values: Partial<Record<ShareFlag, boolean>> = {};
-  for (const name of SHARE_FLAGS) {
+  for (const name of ALL_SHARE_FLAGS) {
     if (body[name] !== undefined) values[name] = flag(body, name);
   }
   return values;

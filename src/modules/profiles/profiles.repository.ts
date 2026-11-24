@@ -6,7 +6,7 @@ import type { Database } from '../../db/database.service';
 import { type AvatarUrlBase, avatarUrlSql } from '../circles/circles.repository';
 import { MEDICAL_LISTS, type MedicalList } from './medical-items';
 import type { PersonalInfoInput } from './profile-input';
-import { SHARE_FLAGS } from './profile.schemas';
+import { ALL_SHARE_FLAGS } from './profile.schemas';
 
 /** Anything that runs SQL: the pool, an open transaction or one of its savepoints. */
 export type ProfilesExecutor = Pick<Database, 'execute'>;
@@ -66,6 +66,8 @@ export const PROFILE_COLUMNS = [
   'share_emergency_preferred_language',
   // SCRUM-21 (D51), migration 0014.
   'medical_info_updated_at',
+  // SCRUM-52 (D59), migration 0016.
+  'share_phone',
 ] as const;
 
 /**
@@ -360,7 +362,7 @@ export const WRITABLE_COLUMNS: ReadonlySet<string> = new Set([
   'blood_type',
   'emergency_preferred_language',
   'emergency_notes',
-  ...SHARE_FLAGS,
+  ...ALL_SHARE_FLAGS,
 ]);
 
 /** `profile.self` on the alias `alias`: the row is the caller's own. */

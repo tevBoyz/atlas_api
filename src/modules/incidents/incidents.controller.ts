@@ -10,6 +10,7 @@ import { ApiContract } from '../../openapi/api-contract.decorator';
 import { notesFromBody, requireIncidentId } from './incident-input';
 import {
   incidentIdParamsSchema,
+  incidentLiveSchema,
   incidentSendSchema,
   incidentSharedSchema,
   incidentSubmitResultSchema,
@@ -117,9 +118,10 @@ export class IncidentsController {
     params: incidentIdParamsSchema,
     responses: {
       200: {
-        description: 'The members were re-notified',
-        name: 'IncidentSend',
-        schema: incidentSendSchema,
+        description:
+          'The members were re-notified. Carries `emergency_services` (SCRUM-54, D60) for the live alert screen.',
+        name: 'IncidentLive',
+        schema: incidentLiveSchema,
       },
     },
     errors: [

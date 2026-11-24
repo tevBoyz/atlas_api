@@ -17,9 +17,15 @@ export class IncidentReadsService {
     private readonly repository: IncidentsRepository,
   ) {}
 
-  /** `GET /v1/me/incidents/open` (epic §18 D2: always the wrapper). */
+  /**
+   * `GET /v1/me/incidents/open` (epic §18 D2: always the wrapper). An open incident also carries
+   * `emergency_services` (SCRUM-54, D60), read in the same transaction.
+   */
   async openIncident(user: AuthenticatedUser): Promise<{ open_incident: unknown }> {
-    const body = await this.read((tx) => this.repository.openIncident(tx, user.id));
+    const body = await this.read(async (tx) => {
+      const open = await this.repository.openIncident(tx, user.id);
+      return open && { ...open, emergency_services: await this.repository.emergencyServices(tx) };
+    });
     return { open_incident: body };
   }
 

@@ -6,6 +6,7 @@ import 'package:json_annotation/json_annotation.dart';
 
 import 'package:atlas_api_client/src/unknown_enum_values.dart';
 
+import 'emergency_service.dart';
 import 'incident_details_emergency_type.dart';
 import 'incident_details_location_source.dart';
 import 'incident_details_status.dart';
@@ -17,6 +18,7 @@ class IncidentDetails {
   const IncidentDetails({
     required this.activatedAt,
     required this.autoClosed,
+    required this.emergencyServices,
     required this.emergencyType,
     required this.id,
     required this.incidentNotes,
@@ -45,6 +47,10 @@ class IncidentDetails {
   final String activatedAt;
   @JsonKey(name: 'auto_closed')
   final bool autoClosed;
+
+  /// The local emergency numbers of the incident's region (SCRUM-54, D60), always in the order ambulance, police, fire_rescue; a service without a number is left out; `[]` when the region has none configured.
+  @JsonKey(name: 'emergency_services')
+  final List<EmergencyService> emergencyServices;
   @JsonKey(name: 'emergency_type')
   final IncidentDetailsEmergencyType emergencyType;
   final String id;

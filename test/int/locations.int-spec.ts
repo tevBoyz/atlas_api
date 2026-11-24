@@ -32,6 +32,7 @@ import {
   type SqlOutcome,
   submitAlert,
 } from '../support/incident-api';
+import { withoutEmergencyServicesText } from '../support/share-payload-shape';
 
 /**
  * `POST /v1/incidents/{id}/locations` (API-100-17) beyond the SQL script: argument conversion and
@@ -1294,7 +1295,7 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
       );
       expect(sqlOlder).toMatchObject({ location_lat: 6 });
       const open = await callSqlAs<Body>(client, resident.id, 'public.get_my_open_incident()');
-      expect((await getOpenIncident(app, resident.id)).body).toBe(
+      expect(withoutEmergencyServicesText((await getOpenIncident(app, resident.id)).body)).toBe(
         `{"open_incident":${JSON.stringify(open)}}`,
       );
     });

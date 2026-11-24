@@ -33,6 +33,7 @@ class EmergencyInfoRequest {
     this.emergencyNotes,
     this.emergencyPreferredLanguage,
     this.medicalConditions,
+    this.sharePhone,
   });
 
   factory EmergencyInfoRequest.fromJson(Map<String, Object?> json) =>
@@ -90,6 +91,10 @@ class EmergencyInfoRequest {
   final bool shareEmergencyPreferredLanguage;
   @JsonKey(name: 'share_medical_conditions')
   final bool shareMedicalConditions;
+
+  /// Share the account's confirmed phone with the members of an alert (SCRUM-52, D59). Left out keeps the stored value (on by default).
+  @JsonKey(name: 'share_phone')
+  final bool? sharePhone;
 
   Map<String, Object?> toJson() =>
       enumValuesAsStrings(this, _$EmergencyInfoRequestToJson(this));

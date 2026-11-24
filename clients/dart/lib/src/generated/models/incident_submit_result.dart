@@ -6,6 +6,7 @@ import 'package:json_annotation/json_annotation.dart';
 
 import 'package:atlas_api_client/src/unknown_enum_values.dart';
 
+import 'emergency_service.dart';
 import 'incident_submit_result_emergency_type.dart';
 import 'incident_submit_result_location_source.dart';
 import 'incident_submit_result_status.dart';
@@ -23,6 +24,7 @@ class IncidentSubmitResult {
     required this.cancelledAt,
     required this.circleId,
     required this.deliveredCount,
+    required this.emergencyServices,
     required this.emergencyType,
     required this.id,
     required this.incidentNotes,
@@ -60,6 +62,10 @@ class IncidentSubmitResult {
   final String? circleId;
   @JsonKey(name: 'delivered_count')
   final int deliveredCount;
+
+  /// The local emergency numbers of the incident's region (SCRUM-54, D60), always in the order ambulance, police, fire_rescue; a service without a number is left out; `[]` when the region has none configured.
+  @JsonKey(name: 'emergency_services')
+  final List<EmergencyService> emergencyServices;
   @JsonKey(name: 'emergency_type')
   final IncidentSubmitResultEmergencyType emergencyType;
   final String id;
@@ -90,7 +96,7 @@ class IncidentSubmitResult {
   @JsonKey(name: 'sent_at')
   final String? sentAt;
 
-  /// Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. Keys not shared are left out.
+  /// Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59): the resident's confirmed phone (E.164) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.
   @JsonKey(name: 'share_payload')
   final Map<String, dynamic>? sharePayload;
   final IncidentSubmitResultStatus status;

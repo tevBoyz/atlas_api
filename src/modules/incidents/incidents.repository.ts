@@ -3,6 +3,8 @@ import { sql } from 'drizzle-orm';
 
 import { incidentAlias, incidentResident } from '../../common/policies';
 import type { Database } from '../../db';
+import { readEmergencyServices } from '../config/emergency-numbers';
+import { type EmergencyService, INCIDENT_REGION } from '../config/emergency-numbers.schemas';
 import { IncidentEventService } from './incident-events.service';
 import { INCIDENT_SEND_JSON, INCIDENT_SHARED_JSON } from './incident-json';
 import type { SubmitOutcome, SubmittableEmergencyType } from './incident.schemas';
@@ -302,6 +304,15 @@ export class IncidentsRepository {
          and coalesce(i.live_share_payload, i.share_payload, '{}'::jsonb) is distinct from s.payload
       returning i.id, i.circle_id`);
     return result.rows;
+  }
+
+  /**
+   * SCRUM-54 (D60): the local emergency numbers of an incident's region, read from `app_config`
+   * `emergency_numbers` now (no restart needed after a change). V1 region rule: every incident is in
+   * The Gambia (`GM`); the lookup is by country so another region is configuration only.
+   */
+  emergencyServices(tx: IncidentTransaction): Promise<EmergencyService[]> {
+    return readEmergencyServices(tx, INCIDENT_REGION);
   }
 
   /** `_incident_send_json(rec)` of one incident (IncidentSend). */

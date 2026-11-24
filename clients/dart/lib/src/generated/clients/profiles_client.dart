@@ -97,7 +97,7 @@ abstract class ProfilesClient {
   @PUT('/v1/me/profile/preferences')
   Future<Profile> updatePreferences({@Body() required PreferencesRequest body});
 
-  /// Change any of the 9 incident share flags
+  /// Change any of the incident share flags (the 9 flags and share_phone)
   @PATCH('/v1/me/profile/sharing-flags')
   Future<Profile> updateIncidentSharingFlags({
     @Body() required SharingFlagsRequest body,

@@ -30,6 +30,10 @@ import {
   type SqlOutcome,
   submitAlert,
 } from '../support/incident-api';
+import {
+  withoutEmergencyServices,
+  withoutEmergencyServicesText,
+} from '../support/share-payload-shape';
 
 /**
  * `PUT /v1/incidents/{id}/notes` and `POST /v1/incidents/{id}/renotify` (API-100-18) beyond the SQL
@@ -478,7 +482,10 @@ describe('live note and explicit re-notify (API-100-18)', () => {
       });
       expect(body.renotified_at).toEqual(expect.any(String));
       expect(body).not.toHaveProperty('submit_outcome');
-      expect(res.body).toBe(JSON.stringify(await viaSql(incidentId, '_incident_send_json')));
+      // SCRUM-54 (D60): IncidentLive = the SQL helper bytes + emergency_services.
+      expect(withoutEmergencyServicesText(res.body)).toBe(
+        JSON.stringify(await viaSql(incidentId, '_incident_send_json')),
+      );
 
       const after = (
         await client.query<Body>(
@@ -609,7 +616,7 @@ describe('live note and explicit re-notify (API-100-18)', () => {
       );
 
       const resubmit = await submitAlert(app, resident.id, 'fire');
-      const { submit_outcome: outcome, ...send } = resubmit.json<Body>();
+      const { submit_outcome: outcome, ...send } = withoutEmergencyServices(resubmit.json<Body>());
       expect(outcome).toBe('renotified');
       const sendViaSql = await viaSql(incidentId, '_incident_send_json');
       expect(JSON.stringify(send)).toBe(JSON.stringify(sendViaSql));
@@ -619,13 +626,15 @@ describe('live note and explicit re-notify (API-100-18)', () => {
            from public.incidents i where i.id = $1`,
         [incidentId],
       );
-      expect(resubmit.body).toBe(JSON.stringify(rows[0].body));
-      expect((await getOpenIncident(app, resident.id)).body).toBe(
+      expect(withoutEmergencyServicesText(resubmit.body)).toBe(JSON.stringify(rows[0].body));
+      expect(withoutEmergencyServicesText((await getOpenIncident(app, resident.id)).body)).toBe(
         `{"open_incident":${JSON.stringify(sendViaSql)}}`,
       );
 
       const renotified = await renotifyAlert(app, resident.id, incidentId);
-      expect(renotified.body).toBe(JSON.stringify(await viaSql(incidentId, '_incident_send_json')));
+      expect(withoutEmergencyServicesText(renotified.body)).toBe(
+        JSON.stringify(await viaSql(incidentId, '_incident_send_json')),
+      );
     });
   });
 
@@ -848,7 +857,9 @@ describe('live note and explicit re-notify (API-100-18)', () => {
 
     it('renotify: same rows and events written by the API and by the SQL function', async () => {
       const [a, b] = await twins();
-      const api = (await renotifyAlert(app, a.resident.id, a.incidentId)).json<Body>();
+      const api = withoutEmergencyServices(
+        (await renotifyAlert(app, a.resident.id, a.incidentId)).json<Body>(),
+      );
       const sql = await callSqlAs<Body>(
         client,
         b.resident.id,

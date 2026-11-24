@@ -10,7 +10,7 @@ OpenIncidentResult _$OpenIncidentResultFromJson(Map<String, dynamic> json) =>
     OpenIncidentResult(
       openIncident: json['open_incident'] == null
           ? null
-          : IncidentSend.fromJson(
+          : IncidentLive.fromJson(
               json['open_incident'] as Map<String, dynamic>,
             ),
     );

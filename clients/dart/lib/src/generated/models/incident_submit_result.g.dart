@@ -16,6 +16,9 @@ IncidentSubmitResult _$IncidentSubmitResultFromJson(
   cancelledAt: json['cancelled_at'] as String?,
   circleId: json['circle_id'] as String?,
   deliveredCount: (json['delivered_count'] as num).toInt(),
+  emergencyServices: (json['emergency_services'] as List<dynamic>)
+      .map((e) => EmergencyService.fromJson(e as Map<String, dynamic>))
+      .toList(),
   emergencyType: IncidentSubmitResultEmergencyType.fromJson(
     json['emergency_type'] as String,
   ),
@@ -54,6 +57,7 @@ Map<String, dynamic> _$IncidentSubmitResultToJson(
   'cancelled_at': instance.cancelledAt,
   'circle_id': instance.circleId,
   'delivered_count': instance.deliveredCount,
+  'emergency_services': instance.emergencyServices,
   'emergency_type': instance.emergencyType,
   'id': instance.id,
   'incident_notes': instance.incidentNotes,

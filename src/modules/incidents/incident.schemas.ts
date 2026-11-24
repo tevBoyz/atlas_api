@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { componentSchema } from '../../openapi/component-schema';
+import { emergencyServicesSchema } from '../config/emergency-numbers.schemas';
 import {
   emergencyTypeSchema,
   incidentStatusSchema,
@@ -32,7 +33,7 @@ const sharePayloadSchema = () =>
   z
     .record(z.string(), z.unknown())
     .describe(
-      'Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. Keys not shared are left out.',
+      "Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59): the resident's confirmed phone (E.164) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.",
     );
 
 export const SUBMIT_OUTCOMES = ['created', 'promoted', 'renotified'] as const;
@@ -82,6 +83,17 @@ export const incidentSendSchema = componentSchema(
 );
 
 /**
+ * IncidentLive: IncidentSend plus `emergency_services` (SCRUM-54, D60), what the resident's live alert
+ * screen reads: the open read and re-notify. Mark safe keeps IncidentSend.
+ */
+export const incidentLiveSchema = componentSchema(
+  'IncidentLive',
+  incidentSendSchema.extend({
+    emergency_services: emergencyServicesSchema,
+  }),
+);
+
+/**
  * `{id}` of the incident routes (documentation). The route accepts what Postgres accepts as uuid input
  * (any case, with or without hyphens, optionally in braces); anything else is 422
  * `validation:invalid_request` on field `id`.
@@ -107,9 +119,13 @@ export const setIncidentNotesRequestSchema = z.object({
     ),
 });
 
-/** The body of `POST /v1/incidents`: IncidentSend plus `submit_outcome`. */
+/**
+ * The body of `POST /v1/incidents`: IncidentSend plus `submit_outcome` and `emergency_services`
+ * (SCRUM-54, D60).
+ */
 export const incidentSubmitResultSchema = incidentSendSchema.extend({
   submit_outcome: z.enum(SUBMIT_OUTCOMES),
+  emergency_services: emergencyServicesSchema,
 });
 
 /**
@@ -117,7 +133,7 @@ export const incidentSubmitResultSchema = incidentSendSchema.extend({
  * has no active incident. `get_my_open_incident` itself returned IncidentSend or bare JSON `null`.
  */
 export const openIncidentResultSchema = z.object({
-  open_incident: incidentSendSchema.nullable(),
+  open_incident: incidentLiveSchema.nullable(),
 });
 
 /** One entry of `list_my_recent_incidents`: exactly these 7 keys. */
@@ -174,7 +190,8 @@ export const responderIncidentListSchema = z.array(responderIncidentSchema);
 
 /**
  * IncidentDetails (spec §7.4, `get_incident_details`): the 19 keys of the SQL function plus
- * `share_payload_at_activation` and `share_payload_updated_at` (SCRUM-21, D53). `share_payload` is the
+ * `share_payload_at_activation` and `share_payload_updated_at` (SCRUM-21, D53) and
+ * `emergency_services` (SCRUM-54, D60). `share_payload` is the
  * live shared info (else the activation snapshot), `{}` when none. Never `resident_id` or `circle_id` (API-100-21 AC3).
  */
 export const incidentDetailsSchema = componentSchema(
@@ -200,6 +217,7 @@ export const incidentDetailsSchema = componentSchema(
       .describe(
         'When the resident last changed the shared info during the incident; null = unchanged since activation.',
       ),
+    emergency_services: emergencyServicesSchema,
   }),
 );
 

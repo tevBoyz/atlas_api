@@ -154,18 +154,21 @@ export class MeProfileController {
     return this.profiles.updatePreferences(user, body);
   }
 
-  /** P5. Replaces the app's `profiles` UPDATE of the 9 flags (`updateIncidentSharingFlags`). */
+  /**
+   * P5. Replaces the app's `profiles` UPDATE of the 9 flags (`updateIncidentSharingFlags`), plus
+   * `share_phone` (SCRUM-52, D59).
+   */
   @Patch('sharing-flags')
   @Operation('profiles')
   @ApiContract({
     operationId: 'updateIncidentSharingFlags',
-    summary: 'Change any of the 9 incident share flags',
+    summary: 'Change any of the incident share flags (the 9 flags and share_phone)',
     tag: 'profiles',
     body: { name: 'SharingFlagsRequest', schema: sharingFlagsRequestSchema },
     responses: {
       200: {
         ...PROFILE_RESPONSE,
-        description: `${PROFILE_RESPONSE.description} Only the flags sent change; nothing else is written.`,
+        description: `${PROFILE_RESPONSE.description} Only the flags sent change; nothing else is written. During an active incident the live shared info is updated and \`incident.shared_info_updated\` is sent to the incident room (D53); \`share_phone\` adds or removes \`resident_phone\` there (D59).`,
       },
     },
     errors: ['validation:invalid_request', 'profiles:profile_not_found'],

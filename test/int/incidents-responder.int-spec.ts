@@ -4,7 +4,7 @@ import type { Client } from 'pg';
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
 import { authHeader } from '../../src/testing/test-tokens';
 import { openTestClient } from '../support/database';
-import { asSqlSharePayloadShape } from '../support/share-payload-shape';
+import { asSqlSharePayloadShape, GM_EMERGENCY_SERVICES } from '../support/share-payload-shape';
 import {
   addActiveMember,
   type CircleFixture,
@@ -64,6 +64,8 @@ const DETAIL_KEYS = [
   // SCRUM-21 (D53): the activation snapshot and when the live view last changed.
   'share_payload_at_activation',
   'share_payload_updated_at',
+  // SCRUM-54 (D60): the local emergency numbers.
+  'emergency_services',
 ].sort();
 
 describe('responder incident list and details (API-100-21)', () => {
@@ -300,7 +302,7 @@ describe('responder incident list and details (API-100-21)', () => {
       expect(errorOf(bad).details).toEqual({ field: 'id' });
     });
 
-    it('AC2, AC3: the 19 SQL keys + 2 SCRUM-21 keys, share_payload stored or {}, no resident_id/circle_id', async () => {
+    it('AC2, AC3: the 19 SQL keys + 2 SCRUM-21 keys + emergency_services (D60), share_payload stored or {}, no resident_id/circle_id', async () => {
       const s = await scene(1, 'Resident Details');
       await client.query(
         `update public.profiles set blood_type = 'O+', share_blood_type = true where id = $1`,
@@ -321,6 +323,7 @@ describe('responder incident list and details (API-100-21)', () => {
         share_payload: { blood_type: 'O+' },
         share_payload_at_activation: { blood_type: 'O+' },
         share_payload_updated_at: null,
+        emergency_services: GM_EMERGENCY_SERVICES,
       });
       expect(reply.body).not.toContain(s.resident.id);
       expect(reply.body).not.toContain(s.circle.id);

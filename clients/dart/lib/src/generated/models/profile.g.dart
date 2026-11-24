@@ -7,9 +7,7 @@ part of 'profile.dart';
 // **************************************************************************
 
 Profile _$ProfileFromJson(Map<String, dynamic> json) => Profile(
-  emergencyContactRelationship: json['emergency_contact_relationship'] == null
-      ? null
-      : Relationship.fromJson(json['emergency_contact_relationship'] as String),
+  emergencyContactPhone: json['emergency_contact_phone'] as String?,
   alertPushEnabled: json['alert_push_enabled'] as bool,
   alertSmsEnabled: json['alert_sms_enabled'] as bool,
   allergies: json['allergies'] as String?,
@@ -26,8 +24,10 @@ Profile _$ProfileFromJson(Map<String, dynamic> json) => Profile(
   dateOfBirth: json['date_of_birth'] as String,
   emergencyContactEmail: json['emergency_contact_email'] as String?,
   emergencyContactFullName: json['emergency_contact_full_name'] as String?,
-  emergencyContactPhone: json['emergency_contact_phone'] as String?,
   alertEmailEnabled: json['alert_email_enabled'] as bool,
+  emergencyContactRelationship: json['emergency_contact_relationship'] == null
+      ? null
+      : Relationship.fromJson(json['emergency_contact_relationship'] as String),
   emergencyInfoCompletedAt: json['emergency_info_completed_at'] as String?,
   emergencyNotes: json['emergency_notes'] as String?,
   emergencyNotesShareable: json['emergency_notes_shareable'] as bool,
@@ -43,8 +43,8 @@ Profile _$ProfileFromJson(Map<String, dynamic> json) => Profile(
       .map((e) => MedicalItem.fromJson(e as Map<String, dynamic>))
       .toList(),
   medicalConditions: json['medical_conditions'] as String?,
+  medicalInfoUpdatedAt: json['medical_info_updated_at'] as String?,
   updatedAt: json['updated_at'] as String,
-  personalInfoCompletedAt: json['personal_info_completed_at'] as String?,
   preferencesCompletedAt: json['preferences_completed_at'] as String?,
   preferredLanguage: PreferredLanguage.fromJson(
     json['preferred_language'] as String,
@@ -61,8 +61,9 @@ Profile _$ProfileFromJson(Map<String, dynamic> json) => Profile(
   shareEmergencyPreferredLanguage:
       json['share_emergency_preferred_language'] as bool,
   shareMedicalConditions: json['share_medical_conditions'] as bool,
+  sharePhone: json['share_phone'] as bool,
   timezone: json['timezone'] as String,
-  medicalInfoUpdatedAt: json['medical_info_updated_at'] as String?,
+  personalInfoCompletedAt: json['personal_info_completed_at'] as String?,
 );
 
 Map<String, dynamic> _$ProfileToJson(Profile instance) => <String, dynamic>{
@@ -107,6 +108,7 @@ Map<String, dynamic> _$ProfileToJson(Profile instance) => <String, dynamic>{
   'share_emergency_preferred_language':
       instance.shareEmergencyPreferredLanguage,
   'share_medical_conditions': instance.shareMedicalConditions,
+  'share_phone': instance.sharePhone,
   'timezone': instance.timezone,
   'updated_at': instance.updatedAt,
 };

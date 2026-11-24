@@ -63,6 +63,8 @@ describe('sanitizeAuditDetail (API-100-14 AC4)', () => {
     ['date_of_birth', '1990-01-15'],
     ['share_payload', { blood_type: 'O+' }],
     ['share_blood_type', true],
+    ['share_phone', true],
+    ['resident_phone', '+2207000001'],
     ['sharedFields', ['blood_type']],
     // Tokens and secrets
     ['invite_token', 'abc'],

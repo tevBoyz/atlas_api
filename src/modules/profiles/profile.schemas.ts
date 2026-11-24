@@ -106,6 +106,11 @@ export const profileSchema = componentSchema(
     medical_info_updated_at: timestamp().describe(
       'When the medical info last changed: an allergy or condition added, edited or deleted, or the blood type changed (SCRUM-21). Null before the first change.',
     ),
+    share_phone: z
+      .boolean()
+      .describe(
+        "Share my phone number (SCRUM-52, D59): when on, members of an alert get the account's confirmed phone as `resident_phone` in the shared info. On by default.",
+      ),
     avatar_url: z
       .string()
       .nullable()
@@ -142,7 +147,10 @@ export const personalInfoRequestSchema = z.object({
     ),
 });
 
-/** The 8 `share_*` flags plus `emergency_notes_shareable` (SCRUM-24/25). */
+/**
+ * The 8 `share_*` flags plus `emergency_notes_shareable` (SCRUM-24/25): each REQUIRED in the
+ * Emergency Info PUT (P3).
+ */
 export const SHARE_FLAGS = [
   'emergency_notes_shareable',
   'share_emergency_contact_full_name',
@@ -155,7 +163,16 @@ export const SHARE_FLAGS = [
   'share_emergency_preferred_language',
 ] as const;
 
-export type ShareFlag = (typeof SHARE_FLAGS)[number];
+/**
+ * Flags added later (SCRUM-52, D59: `share_phone`): OPTIONAL in the Emergency Info PUT (left out
+ * keeps the stored value, so an app that does not send them keeps working) and in the PATCH (P5).
+ */
+export const OPTIONAL_SHARE_FLAGS = ['share_phone'] as const;
+
+/** Every flag the PATCH (P5) accepts. */
+export const ALL_SHARE_FLAGS = [...SHARE_FLAGS, ...OPTIONAL_SHARE_FLAGS] as const;
+
+export type ShareFlag = (typeof ALL_SHARE_FLAGS)[number];
 
 const optionalText = (what: string) =>
   z
@@ -207,6 +224,12 @@ export const emergencyInfoRequestSchema = z.object({
   share_allergies: z.boolean(),
   share_medical_conditions: z.boolean(),
   share_emergency_preferred_language: z.boolean(),
+  share_phone: z
+    .boolean()
+    .optional()
+    .describe(
+      "Share the account's confirmed phone with the members of an alert (SCRUM-52, D59). Left out keeps the stored value (on by default).",
+    ),
 });
 
 /** `POST` / `PATCH` of an allergy or medical condition (SCRUM-21, D51). */
@@ -240,9 +263,9 @@ export const preferencesRequestSchema = z.object({
   preferred_language: preferredLanguageSchema,
 });
 
-/** `PATCH /v1/me/profile/sharing-flags` (P5): any subset of the 9 flags. */
+/** `PATCH /v1/me/profile/sharing-flags` (P5): any subset of the 10 flags (9 + `share_phone`, D59). */
 export const sharingFlagsRequestSchema = z.object(
-  Object.fromEntries(SHARE_FLAGS.map((flag) => [flag, z.boolean().optional()])) as Record<
+  Object.fromEntries(ALL_SHARE_FLAGS.map((flag) => [flag, z.boolean().optional()])) as Record<
     ShareFlag,
     z.ZodOptional<z.ZodBoolean>
   >,

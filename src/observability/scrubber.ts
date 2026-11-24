@@ -46,6 +46,8 @@ const REDACT_KEYS = new Set([
   'share_payload_at_activation',
   'allergy_items',
   'medical_condition_items',
+  // SCRUM-52 (D59): the resident's own phone in a share payload: redacted in full, not masked.
+  'resident_phone',
   'invite_url',
   // Medical / emergency information (spec §4.2, §6.5)
   'blood_type',

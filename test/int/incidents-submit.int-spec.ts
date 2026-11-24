@@ -20,6 +20,7 @@ import {
   type UserFixture,
 } from '../support/fixtures';
 import { countRows, submitAlert, submitAlertViaSql } from '../support/incident-api';
+import { GM_EMERGENCY_SERVICES, withoutEmergencyServices } from '../support/share-payload-shape';
 
 /**
  * `POST /v1/incidents` (API-100-15) beyond the SQL script: check order, status codes, re-notify and
@@ -503,7 +504,11 @@ describe('POST /v1/incidents (API-100-15)', () => {
       const { resident } = await residentWithCircle(1);
       const body = (await submitAlert(app, resident.id, 'fire')).json<Body>();
 
-      expect(Object.keys(body).sort()).toEqual([...INCIDENT_SEND_KEYS, 'submit_outcome'].sort());
+      // SCRUM-54 (D60): plus emergency_services (the seeded numbers, fixed order).
+      expect(Object.keys(body).sort()).toEqual(
+        [...INCIDENT_SEND_KEYS, 'submit_outcome', 'emergency_services'].sort(),
+      );
+      expect(body.emergency_services).toEqual(GM_EMERGENCY_SERVICES);
       expect(body.activated_at).toMatch(POSTGRES_UTC_TIMESTAMP);
       expect(body.sent_at).toBe(body.activated_at);
     });
@@ -918,12 +923,17 @@ describe('POST /v1/incidents (API-100-15)', () => {
       return { incident: incidents[0], deliveries, events };
     }
 
-    /** JSON type of every value: the shape a client parses. */
-    const shapeOf = (body: Body) =>
-      Object.keys(body).map((key) => {
+    /**
+     * JSON type of every value: the shape a client parses. An API body is compared without
+     * `emergency_services` (SCRUM-54, D60: checked to be the seeded list; the SQL has no such key).
+     */
+    const shapeOf = (raw: Body) => {
+      const body = 'emergency_services' in raw ? withoutEmergencyServices(raw) : raw;
+      return Object.keys(body).map((key) => {
         const value = body[key];
         return [key, value === null ? 'null' : typeof value];
       });
+    };
 
     it('create: same rows, same response keys, key order and value types', async () => {
       const { viaApi, viaSql } = await twins();

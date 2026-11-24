@@ -19,6 +19,7 @@ import {
   markSafe,
   submitAlert,
 } from '../support/incident-api';
+import { withoutEmergencyServicesText } from '../support/share-payload-shape';
 
 /**
  * `GET /v1/me/incidents/open` and `GET /v1/me/incidents` (API-100-16) beyond the SQL script: the
@@ -410,7 +411,10 @@ describe('resident incident reads (API-100-16)', () => {
       );
       const viaSql = await callSqlAs<Body>(client, resident.id, 'public.get_my_open_incident()');
       const res = await getOpenIncident(app, resident.id);
-      expect(res.body).toBe(`{"open_incident":${JSON.stringify(viaSql)}}`);
+      // SCRUM-54 (D60): the open incident also carries emergency_services, after the SQL keys.
+      expect(withoutEmergencyServicesText(res.body)).toBe(
+        `{"open_incident":${JSON.stringify(viaSql)}}`,
+      );
     });
 
     it('same state: identical lists from list_my_recent_incidents and the endpoint', async () => {
@@ -452,7 +456,7 @@ describe('resident incident reads (API-100-16)', () => {
       for (const user of [viaApi, viaSql]) {
         const sqlOpen = await callSqlAs<Body>(client, user.id, 'public.get_my_open_incident()');
         const sqlList = await callSqlAs(client, user.id, 'public.list_my_recent_incidents()');
-        expect((await getOpenIncident(app, user.id)).body).toBe(
+        expect(withoutEmergencyServicesText((await getOpenIncident(app, user.id)).body)).toBe(
           `{"open_incident":${JSON.stringify(sqlOpen)}}`,
         );
         expect((await listRecentIncidents(app, user.id)).body).toBe(JSON.stringify(sqlList));

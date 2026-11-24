@@ -17,7 +17,7 @@ part 'profile.g.dart';
 @JsonSerializable()
 class Profile {
   const Profile({
-    required this.emergencyContactRelationship,
+    required this.emergencyContactPhone,
     required this.alertPushEnabled,
     required this.alertSmsEnabled,
     required this.allergies,
@@ -30,8 +30,8 @@ class Profile {
     required this.dateOfBirth,
     required this.emergencyContactEmail,
     required this.emergencyContactFullName,
-    required this.emergencyContactPhone,
     required this.alertEmailEnabled,
+    required this.emergencyContactRelationship,
     required this.emergencyInfoCompletedAt,
     required this.emergencyNotes,
     required this.emergencyNotesShareable,
@@ -43,8 +43,8 @@ class Profile {
     required this.locationSharingEnabled,
     required this.medicalConditionItems,
     required this.medicalConditions,
+    required this.medicalInfoUpdatedAt,
     required this.updatedAt,
-    required this.personalInfoCompletedAt,
     required this.preferencesCompletedAt,
     required this.preferredLanguage,
     required this.profileSetupCompletedAt,
@@ -56,8 +56,9 @@ class Profile {
     required this.shareEmergencyContactRelationship,
     required this.shareEmergencyPreferredLanguage,
     required this.shareMedicalConditions,
+    required this.sharePhone,
     required this.timezone,
-    required this.medicalInfoUpdatedAt,
+    required this.personalInfoCompletedAt,
   });
 
   factory Profile.fromJson(Map<String, Object?> json) =>
@@ -162,6 +163,10 @@ class Profile {
   final bool shareEmergencyPreferredLanguage;
   @JsonKey(name: 'share_medical_conditions')
   final bool shareMedicalConditions;
+
+  /// Share my phone number (SCRUM-52, D59): when on, members of an alert get the account's confirmed phone as `resident_phone` in the shared info. On by default.
+  @JsonKey(name: 'share_phone')
+  final bool sharePhone;
   final String timezone;
   @JsonKey(name: 'updated_at')
   final String updatedAt;

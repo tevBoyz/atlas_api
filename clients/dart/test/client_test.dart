@@ -66,6 +66,9 @@ void main() {
       'delivered_count': 0,
       'acknowledged_count': 0,
       'submit_outcome': 'created',
+      'emergency_services': [
+        {'service': 'ambulance', 'label': 'Ambulance', 'number': '116'},
+      ],
     });
     // Assembled at runtime so the secret scan does not read a test value as a credential.
     final requestKey = [
@@ -85,6 +88,7 @@ void main() {
     expect(response.residentId, '3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b');
     expect(response.submitOutcome, IncidentSubmitResultSubmitOutcome.created);
     expect(response.sharePayload, {'blood_type': 'O+'});
+    expect(response.emergencyServices.single.number, '116');
     expect(adapter.last?.path, '/v1/incidents');
     expect(adapter.last?.headers['Idempotency-Key'], requestKey);
   });
@@ -121,11 +125,13 @@ void main() {
         'location_sharing_ended_at': null,
         'delivered_count': 2,
         'acknowledged_count': 1,
+        'emergency_services': <Object>[],
       },
     });
     final result = await clientWith(open).incidents.getMyOpenIncident();
     expect(result.openIncident?.id, '7a1c9e52-4b3d-4f6a-9c8e-2d1b0a3f4e5c');
-    expect(result.openIncident?.status, IncidentSendStatus.active);
+    expect(result.openIncident?.status, IncidentLiveStatus.active);
+    expect(result.openIncident?.emergencyServices, isEmpty);
     expect(result.openIncident?.deliveredCount, 2);
   });
 

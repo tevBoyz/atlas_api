@@ -34,8 +34,17 @@ Map<String, Object?> incidentDetailsJson({
   // SCRUM-21 (D53): the activation snapshot and when the live view last changed.
   'share_payload_at_activation': {'blood_type': 'O+', 'allergies': 'Peanuts'},
   'share_payload_updated_at': '2026-11-18T10:05:00+00:00',
+  // SCRUM-54 (D60): the local emergency numbers, fixed order.
+  'emergency_services': [
+    {'label': 'Ambulance', 'number': '116', 'service': 'ambulance'},
+    {'label': 'Police', 'number': '117', 'service': 'police'},
+    {'label': 'Fire and Rescue', 'number': '119', 'service': 'fire_rescue'},
+  ],
   'status': status,
 };
+
+/// A model's toJson() keeps nested models as objects (`emergency_services`): compare as plain JSON.
+Object? plain(Object? value) => jsonDecode(jsonEncode(value));
 
 void main() {
   group('unknown enum values', () {
@@ -57,7 +66,7 @@ void main() {
         expect(out['status'], 'paused');
         expect(out['emergency_type'], 'earthquake');
         expect(out['location_source'], 'satellite');
-        expect(out, json);
+        expect(plain(out), json);
         expect(jsonDecode(jsonEncode(model)), json);
       },
     );
@@ -73,8 +82,14 @@ void main() {
       expect(model.status, IncidentDetailsStatus.active);
       expect(model.emergencyType, IncidentDetailsEmergencyType.medical);
       expect(model.locationSource, IncidentDetailsLocationSource.lastKnown);
-      expect(model.toJson(), json);
+      expect(plain(model.toJson()), json);
       expect(model.toJson()['status'], isA<String>());
+      expect(model.emergencyServices.map((s) => s.service).toList(), [
+        EmergencyServiceService.ambulance,
+        EmergencyServiceService.police,
+        EmergencyServiceService.fireRescue,
+      ]);
+      expect(model.emergencyServices.first.toJson()['service'], 'ambulance');
     });
 
     test('a hand-made request serializes its enum as the stored string', () {
@@ -93,7 +108,7 @@ void main() {
       );
       final model = IncidentDetails.fromJson(json);
       expect(model.locationSource, isNull);
-      expect(model.toJson(), json);
+      expect(plain(model.toJson()), json);
     });
 
     test('other models round-trip unknown values too', () {

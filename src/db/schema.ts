@@ -136,6 +136,7 @@ export const profiles = pgTable(
       withTimezone: true,
       mode: 'string',
     }),
+    sharePhone: boolean('share_phone').default(true).notNull(),
   },
   (table) => [
     index('profiles_emergency_info_completed_at_idx').using(

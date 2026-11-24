@@ -35,6 +35,7 @@ EmergencyInfoRequest _$EmergencyInfoRequestFromJson(
   emergencyNotes: json['emergency_notes'] as String?,
   emergencyPreferredLanguage: json['emergency_preferred_language'] as String?,
   medicalConditions: json['medical_conditions'] as String?,
+  sharePhone: json['share_phone'] as bool?,
 );
 
 Map<String, dynamic> _$EmergencyInfoRequestToJson(
@@ -61,4 +62,5 @@ Map<String, dynamic> _$EmergencyInfoRequestToJson(
   'share_emergency_preferred_language':
       instance.shareEmergencyPreferredLanguage,
   'share_medical_conditions': instance.shareMedicalConditions,
+  'share_phone': instance.sharePhone,
 };

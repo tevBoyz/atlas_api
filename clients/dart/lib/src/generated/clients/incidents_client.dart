@@ -8,6 +8,7 @@ import 'package:retrofit/retrofit.dart';
 import '../models/delivery_counts.dart';
 import '../models/incident_details.dart';
 import '../models/incident_event.dart';
+import '../models/incident_live.dart';
 import '../models/incident_response_request.dart';
 import '../models/incident_send.dart';
 import '../models/incident_shared.dart';
@@ -72,7 +73,7 @@ abstract class IncidentsClient {
 
   /// Re-notify the members of the caller's active alert
   @POST('/v1/incidents/{id}/renotify')
-  Future<IncidentSend> renotifyEmergencyAlert({@Path('id') required String id});
+  Future<IncidentLive> renotifyEmergencyAlert({@Path('id') required String id});
 
   /// Every notified member with their response status, responding first
   @GET('/v1/incidents/{id}/responders')

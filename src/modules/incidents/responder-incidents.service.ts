@@ -24,9 +24,15 @@ export class ResponderIncidentsService {
     return this.read((tx) => this.repository.list(tx, user.id));
   }
 
-  /** Hidden existence: every denied read is `get_incident_details:not_found`, as an unknown id. */
+  /**
+   * Hidden existence: every denied read is `get_incident_details:not_found`, as an unknown id. An
+   * allowed read also carries `emergency_services` (SCRUM-54, D60), read in the same transaction.
+   */
   async details(user: AuthenticatedUser, incidentId: string): Promise<Record<string, unknown>> {
-    const body = await this.read((tx) => this.repository.details(tx, incidentId, user.id));
+    const body = await this.read(async (tx) => {
+      const found = await this.repository.details(tx, incidentId, user.id);
+      return found && { ...found, emergency_services: await this.incidents.emergencyServices(tx) };
+    });
     if (!body) throw new DomainError('get_incident_details:not_found');
     return body;
   }

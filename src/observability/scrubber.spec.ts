@@ -72,6 +72,7 @@ describe('scrubber (API-100-06 AC2)', () => {
         emergency_contact_email: EMAIL,
         incident_notes: 'gate code 1234',
         date_of_birth: '1990-01-01',
+        resident_phone: PHONE,
         full_name: 'Ada Lovelace',
         display_name: 'Ada',
         resident_name: 'Ada',
@@ -82,9 +83,12 @@ describe('scrubber (API-100-06 AC2)', () => {
     });
 
     it('keeps boolean share flags', () => {
-      expect(scrub({ share_blood_type: true, share_emergency_contact_phone: false })).toEqual({
+      expect(
+        scrub({ share_blood_type: true, share_emergency_contact_phone: false, share_phone: true }),
+      ).toEqual({
         share_blood_type: true,
         share_emergency_contact_phone: false,
+        share_phone: true,
       });
     });
 

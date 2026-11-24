@@ -146,6 +146,8 @@ export const PARITY_ERROR_CODES = {
     'not_open',
   ],
   get_live_location_config: ['not_authenticated'],
+  // SCRUM-54 (D60): `GET /v1/config/emergency-numbers`. New code, no SQL function behind it.
+  get_emergency_numbers: ['not_authenticated'],
   renotify_emergency_alert: ['not_authenticated', 'not_found', 'not_open'],
   set_incident_notes: ['not_authenticated', 'not_found', 'not_open', 'too_long'],
   mark_incident_safe: ['not_authenticated', 'not_found', 'not_open'],

@@ -142,7 +142,10 @@ export class IncidentsService {
         }
         const recipientCount = await this.applyRenotify(tx, user, incident.id);
         await this.notifications.renotified(tx, incident.id);
-        const body = await this.repository.sendResult(tx, incident.id);
+        const body = await this.withEmergencyServices(
+          tx,
+          await this.repository.sendResult(tx, incident.id),
+        );
         await this.recordAudit(tx, user, 'incident.renotified', incident.id, {
           recipient_count: recipientCount,
         });
@@ -259,7 +262,10 @@ export class IncidentsService {
     await this.repository.recordLocationSharingStarted(tx, incident.id, residentId);
     await this.notifications.created(tx, incident.id);
 
-    const body = await this.repository.submitResult(tx, incident.id, outcome);
+    const body = await this.withEmergencyServices(
+      tx,
+      await this.repository.submitResult(tx, incident.id, outcome),
+    );
     return this.finishSubmit(tx, user, {
       action: 'incident.created',
       status: 201,
@@ -291,7 +297,10 @@ export class IncidentsService {
   ): Promise<CommittedSubmit> {
     const refreshed = await this.applyRenotify(tx, user, incidentId);
     await this.notifications.renotified(tx, incidentId);
-    const body = await this.repository.submitResult(tx, incidentId, 'renotified');
+    const body = await this.withEmergencyServices(
+      tx,
+      await this.repository.submitResult(tx, incidentId, 'renotified'),
+    );
     return this.finishSubmit(tx, user, {
       action: 'incident.renotified',
       status: 200,
@@ -330,6 +339,18 @@ export class IncidentsService {
         recipient_count: recipientCount,
       },
     };
+  }
+
+  /**
+   * SCRUM-54 (D60): the body plus `emergency_services` (the local emergency numbers, fixed order
+   * ambulance, police, fire_rescue) for the resident's live alert screen: submit (every outcome) and
+   * re-notify. Mark safe (the alert is over), notes and location keep the SQL shapes.
+   */
+  private async withEmergencyServices(
+    tx: IncidentWriteTransaction,
+    body: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return { ...body, emergency_services: await this.repository.emergencyServices(tx) };
   }
 
   /** Realtime `incident.event` for the events a committed write inserted. Not awaited. */

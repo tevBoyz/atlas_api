@@ -124,7 +124,8 @@ export const REALTIME_CONTRACT = {
         'SCRUM-21 (D53): sent after the resident changed their shared emergency info during an active ' +
         'incident. share_payload is the live view (only what is shared now; allergies and ' +
         'medical_conditions are arrays of strings); updated_at = when it last changed ' +
-        '(live_share_updated_at). The activation snapshot never changes.',
+        '(live_share_updated_at). The activation snapshot never changes. SCRUM-52 (D59): ' +
+        'turning share_phone on or off adds or removes resident_phone here.',
     },
     [SERVER_EVENTS.responders]: {
       room: 'incident:{id} (per receiver: user_id in full for the resident and for the member whose row it is, masked as incident.event actor_id for other members)',

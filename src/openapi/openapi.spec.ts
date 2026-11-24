@@ -249,6 +249,7 @@ describe('OpenAPI document (API-100-12)', () => {
         '/v1/circles/{circle_id}/leave',
         '/v1/circles/{circle_id}/members',
         '/v1/circles/{circle_id}/members/{member_id}',
+        '/v1/config/emergency-numbers',
         '/v1/config/live-location',
         '/v1/incidents',
         '/v1/incidents/{id}',
@@ -417,9 +418,19 @@ describe('OpenAPI document (API-100-12)', () => {
     it('the app publishes IncidentSend and RecentIncident as components', () => {
       const doc = appDocument();
       expect(doc.components.schemas.OpenIncidentResult.properties.open_incident).toEqual({
-        anyOf: [{ $ref: '#/components/schemas/IncidentSend' }, { type: 'null' }],
+        anyOf: [{ $ref: '#/components/schemas/IncidentLive' }, { type: 'null' }],
       });
       expect(Object.keys(doc.components.schemas.IncidentSend.properties)).toHaveLength(24);
+      // SCRUM-54 (D60): IncidentLive = IncidentSend + emergency_services.
+      expect(Object.keys(doc.components.schemas.IncidentLive.properties).sort()).toEqual(
+        [
+          ...Object.keys(doc.components.schemas.IncidentSend.properties),
+          'emergency_services',
+        ].sort(),
+      );
+      expect(doc.components.schemas.IncidentDetails.properties.emergency_services).toEqual(
+        doc.components.schemas.IncidentLive.properties.emergency_services,
+      );
       expect(
         doc.paths['/v1/me/incidents'].get.responses['200'].content['application/json'].schema,
       ).toEqual({ type: 'array', items: { $ref: '#/components/schemas/RecentIncident' } });
@@ -463,6 +474,7 @@ describe('OpenAPI document (API-100-12)', () => {
         'forgotPassword',
         'getAuthJwks',
         'getCurrentUser',
+        'getEmergencyNumbers',
         'getHealth',
         'getIncidentDetails',
         'getLiveLocationConfig',

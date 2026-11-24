@@ -4,7 +4,7 @@
 
 import 'package:json_annotation/json_annotation.dart';
 
-import 'incident_send.dart';
+import 'incident_live.dart';
 
 part 'open_incident_result.g.dart';
 
@@ -16,7 +16,7 @@ class OpenIncidentResult {
       _$OpenIncidentResultFromJson(json);
 
   @JsonKey(name: 'open_incident')
-  final IncidentSend? openIncident;
+  final IncidentLive? openIncident;
 
   Map<String, Object?> toJson() => _$OpenIncidentResultToJson(this);
 }

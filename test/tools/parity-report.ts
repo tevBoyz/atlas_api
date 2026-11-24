@@ -165,6 +165,35 @@ const PHASES: Record<PhaseNumber, Phase> = {
           'and `test/int/phase1-mixed-writers.int-spec.ts` (SQL vs API in the SQL shape, ' +
           '`test/support/share-payload-shape.ts`)',
       },
+      {
+        decision: 'D59 (SCRUM-52; approved by Dawit 2026-11-24, plan `scrum-52-53-54-plan.md`)',
+        case:
+          'The share payload of a new incident (`submit_emergency_alert`) and the member incident ' +
+          'details (`get_incident_details`) when the resident has a confirmed account phone.',
+        sql: 'No phone of the resident in the payload (the SQL function knows no `share_phone`).',
+        api:
+          '`resident_phone` (the confirmed `users.phone`) while `profiles.share_phone` is on ' +
+          '(migration 0016, default true); absent when off or unconfirmed; the live view follows ' +
+          'a change during the alert. SQL fixtures have no confirmed phone, so the SQL-side ' +
+          'assertions are unchanged.',
+        provedBy: '`test/int/incidents-call-emergency-scrum52-54.int-spec.ts`',
+      },
+      {
+        decision: 'D60 (SCRUM-54; approved by Dawit 2026-11-24, plan `scrum-52-53-54-plan.md`)',
+        case:
+          'The submit body, `get_my_open_incident`, `renotify_emergency_alert` and ' +
+          '`get_incident_details`.',
+        sql: 'No emergency numbers.',
+        api:
+          'The same JSON plus `emergency_services` (from `app_config.emergency_numbers`, fixed ' +
+          'order ambulance, police, fire_rescue), appended after the SQL keys; mark safe, notes ' +
+          'and location are unchanged. The comparisons remove it after checking it.',
+        provedBy:
+          '`test/int/incidents-call-emergency-scrum52-54.int-spec.ts`, ' +
+          '`test/int/incidents-reads.int-spec.ts`, `test/int/incidents-submit.int-spec.ts`, ' +
+          '`test/int/incidents-notes-renotify.int-spec.ts`, `test/int/incidents-responder.int-spec.ts` ' +
+          '(`test/support/share-payload-shape.ts`)',
+      },
     ],
   },
   2: {
@@ -272,6 +301,18 @@ const PHASES: Record<PhaseNumber, Phase> = {
         provedBy:
           '`test/int/profiles-medical-items-scrum21.int-spec.ts`, `test/int/profiles-write.int-spec.ts`, ' +
           '`test/int/phase3-mixed-writers.int-spec.ts` (app vs API end state with the items)',
+      },
+      {
+        decision: 'D59 (SCRUM-52; approved by Dawit 2026-11-24, plan `scrum-52-53-54-plan.md`)',
+        case: 'The profile read and the share-flag writes.',
+        sql: 'Nine share flags; no `share_phone`.',
+        api:
+          '`profiles.share_phone` (migration 0016, not null, default true: on for new and existing ' +
+          'profiles), in the Profile after `medical_info_updated_at`; `PATCH sharing-flags` accepts ' +
+          'it, the Emergency Info PUT accepts it optionally (left out keeps it).',
+        provedBy:
+          '`test/int/incidents-call-emergency-scrum52-54.int-spec.ts`, ' +
+          '`src/modules/profiles/profile-input.spec.ts`',
       },
     ],
   },

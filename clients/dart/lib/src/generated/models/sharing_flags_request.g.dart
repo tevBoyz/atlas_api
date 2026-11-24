@@ -21,6 +21,7 @@ SharingFlagsRequest _$SharingFlagsRequestFromJson(
   shareEmergencyPreferredLanguage:
       json['share_emergency_preferred_language'] as bool?,
   shareMedicalConditions: json['share_medical_conditions'] as bool?,
+  sharePhone: json['share_phone'] as bool?,
 );
 
 Map<String, dynamic> _$SharingFlagsRequestToJson(
@@ -37,4 +38,5 @@ Map<String, dynamic> _$SharingFlagsRequestToJson(
   'share_emergency_preferred_language':
       instance.shareEmergencyPreferredLanguage,
   'share_medical_conditions': instance.shareMedicalConditions,
+  'share_phone': instance.sharePhone,
 };
