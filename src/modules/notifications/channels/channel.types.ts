@@ -80,8 +80,34 @@ export interface TestAlertPushMessage {
   occurred_at: string | null;
 }
 
-/** Any push the adapters send: an incident notice or a test alert. */
-export type PushNotice = PushMessage | TestAlertPushMessage;
+/** SCRUM-44/59 (D70): the outbox / push topic of a resident's status update. */
+export const STATUS_UPDATE_TOPIC = 'incident.status_update';
+
+/** SCRUM-44/59 (D70): the quick presets of a status update. */
+export const STATUS_UPDATE_PRESETS = ['situation_worsening', 'help_is_here'] as const;
+export type StatusUpdatePreset = (typeof STATUS_UPDATE_PRESETS)[number];
+
+/**
+ * The content of a status-update push (SCRUM-44/59, D70): the incident id, the resident's display
+ * name, the time of the update, and either the preset or the free text (only for the visible body;
+ * the text is never a data key).
+ */
+export interface StatusUpdatePushMessage {
+  topic: typeof STATUS_UPDATE_TOPIC;
+  incident_id: string;
+  resident_name: string | null;
+  occurred_at: string | null;
+  preset: StatusUpdatePreset | null;
+  text: string | null;
+}
+
+/** Any push the adapters send: an incident notice, a status update or a test alert. */
+export type PushNotice = PushMessage | StatusUpdatePushMessage | TestAlertPushMessage;
+
+/** True for a resident's status update (SCRUM-44/59, D70). */
+export function isStatusUpdateMessage(message: PushNotice): message is StatusUpdatePushMessage {
+  return message.topic === STATUS_UPDATE_TOPIC && 'preset' in message;
+}
 
 /** True for a test alert (SCRUM-35). */
 export function isTestAlertMessage(message: PushNotice): message is TestAlertPushMessage {

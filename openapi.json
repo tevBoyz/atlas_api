@@ -2068,6 +2068,50 @@
         ],
         "type": "object"
       },
+      "IncidentUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "description": "When the server stored the update.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The update (its incident event id).",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "enum": [
+                  "situation_worsening",
+                  "help_is_here"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The quick update, or null for a free-text update."
+          },
+          "text": {
+            "description": "The free text (trimmed), or null for a quick update.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "preset",
+          "text",
+          "created_at"
+        ],
+        "type": "object"
+      },
       "IncomingInvite": {
         "additionalProperties": false,
         "properties": {
@@ -3881,6 +3925,33 @@
           "created_at",
           "updated_at"
         ],
+        "type": "object"
+      },
+      "SendIncidentUpdateRequest": {
+        "properties": {
+          "preset": {
+            "anyOf": [
+              {
+                "enum": [
+                  "situation_worsening",
+                  "help_is_here"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A quick update: \"situation_worsening\" (Situation worsening) or \"help_is_here\" (Help is here). Give exactly one of preset or text (null counts as not given); else 422 incident_updates:invalid_update."
+          },
+          "text": {
+            "description": "A free-text update: trimmed of white space, then 1 to 250 characters. Give exactly one of preset or text; else 422 incident_updates:invalid_update.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "Session": {
@@ -9584,6 +9655,377 @@
           }
         ],
         "summary": "Set the caller's response to the alert: responding or unable to respond",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/v1/incidents/{id}/updates": {
+      "get": {
+        "operationId": "listIncidentUpdates",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "The incident id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/IncidentUpdate"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Ordered `created_at`, then `id`, newest first."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "incident_updates:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "incident_updates:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "incident_updates:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "incident_updates:not_found"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The alert's status updates, newest first",
+        "tags": [
+          "incidents"
+        ]
+      },
+      "post": {
+        "operationId": "sendIncidentUpdate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "The incident id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "UUID chosen by the client. A retry with the same key replays the first result.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendIncidentUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentUpdate"
+                }
+              }
+            },
+            "description": "The update was stored. The alert's members get it live (incident.update) and by push."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:key_required",
+                    "details": {},
+                    "message": "An Idempotency-Key header is required."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad request",
+            "x-error-codes": [
+              "idempotency:key_required"
+            ]
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "incident_updates:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "incident_updates:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "incident_updates:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "incident_updates:not_found"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:in_progress",
+                    "details": {},
+                    "message": "A request with this Idempotency-Key is still being processed."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "idempotency:in_progress",
+              "incident_updates:not_open"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:invalid_key",
+                    "details": {},
+                    "message": "The Idempotency-Key header must be a UUID."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "idempotency:invalid_key",
+              "idempotency:key_mismatch",
+              "incident_updates:invalid_update",
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "incident_updates:rate_limited",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "incident_updates:rate_limited",
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Send a status update (a quick preset or free text) on the caller's active alert",
         "tags": [
           "incidents"
         ]
@@ -16167,6 +16609,21 @@
           "occurred_at"
         ],
         "room": "incident:{id}"
+      },
+      "incident.update": {
+        "note": "SCRUM-44/59 (D70): sent after the resident sent a status update (POST /v1/incidents/{id}/updates), right after its incident.event (event_type \"status_update\"). update is the entry exactly as GET /v1/incidents/{id}/updates shows it: preset \"situation_worsening\" or \"help_is_here\" with text null, or text with preset null; created_at = occurred_at. No id of a person. Members also get a push (topic incident.status_update). After a reconnect, re-fetch the list over REST.",
+        "payload": [
+          "incident_id",
+          "update",
+          "occurred_at"
+        ],
+        "room": "incident:{id}",
+        "update_keys": [
+          "id",
+          "preset",
+          "text",
+          "created_at"
+        ]
       },
       "incident.updated": {
         "incident_keys": [

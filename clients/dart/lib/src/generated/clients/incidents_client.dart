@@ -13,10 +13,12 @@ import '../models/incident_response_request.dart';
 import '../models/incident_send.dart';
 import '../models/incident_shared.dart';
 import '../models/incident_submit_result.dart';
+import '../models/incident_update.dart';
 import '../models/open_incident_result.dart';
 import '../models/recent_incident.dart';
 import '../models/responder.dart';
 import '../models/responder_incident.dart';
+import '../models/send_incident_update_request.dart';
 import '../models/set_incident_notes_request.dart';
 import '../models/submit_emergency_alert_request.dart';
 
@@ -86,6 +88,22 @@ abstract class IncidentsClient {
   Future<Responder> setIncidentResponse({
     @Path('id') required String id,
     @Body() required IncidentResponseRequest body,
+  });
+
+  /// The alert's status updates, newest first
+  @GET('/v1/incidents/{id}/updates')
+  Future<List<IncidentUpdate>> listIncidentUpdates({
+    @Path('id') required String id,
+  });
+
+  /// Send a status update (a quick preset or free text) on the caller's active alert.
+  ///
+  /// [idempotencyKey] - UUID chosen by the client. A retry with the same key replays the first result.
+  @POST('/v1/incidents/{id}/updates')
+  Future<IncidentUpdate> sendIncidentUpdate({
+    @Path('id') required String id,
+    @Header('Idempotency-Key') required String idempotencyKey,
+    @Body() required SendIncidentUpdateRequest body,
   });
 
   /// The active and resolved incidents of the caller, newest first

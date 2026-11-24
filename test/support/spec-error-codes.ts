@@ -64,10 +64,31 @@ export function specIncidentEventsCodes(markdown: string): string[] {
   return [...withoutRemarks(cells[5]).matchAll(/`(incident_events:\w+)`/g)].map((m) => m[1]);
 }
 
-/** Every incident error code the spec names (§7.4 plus E11), deduplicated, in spec order. */
+/** `incident_updates:*` strings of spec §11.3 rows E14 and E15 (SCRUM-44/59, D70). */
+export function specIncidentUpdatesCodes(markdown: string): string[] {
+  const codes: string[] = [];
+  for (const id of ['E14', 'E15']) {
+    const row = markdown.split(/\r?\n/).find((line) => line.startsWith(`| ${id} |`));
+    if (!row) throw new Error(`spec §11.3 row ${id} not found`);
+    const cells = cellsOf(row);
+    // Columns: # | Method + path | Replaces | Request | Response | Errors | Authorization | Tag
+    codes.push(
+      ...[...withoutRemarks(cells[5]).matchAll(/`(incident_updates:\w+)`/g)].map((m) => m[1]),
+    );
+  }
+  return codes;
+}
+
+/** Every incident error code the spec names (§7.4 plus E11, E14, E15), deduplicated, in spec order. */
 export function specIncidentErrorCodes(file: string = SPEC_FILE): string[] {
   const markdown = readFileSync(file, 'utf8');
-  return [...new Set([...specIncidentRpcCodes(markdown), ...specIncidentEventsCodes(markdown)])];
+  return [
+    ...new Set([
+      ...specIncidentRpcCodes(markdown),
+      ...specIncidentEventsCodes(markdown),
+      ...specIncidentUpdatesCodes(markdown),
+    ]),
+  ];
 }
 
 /**

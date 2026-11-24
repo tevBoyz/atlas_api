@@ -15,7 +15,7 @@ import type { IncidentTransaction } from './incidents.repository';
  *
  * Adding a type: add it here (and to `ONCE_PER_INCIDENT` if it is a once-only lifecycle step). NOTE:
  * the baseline schema also has a CHECK constraint (`incident_events_type_allowed`, migration
- * 20261023140000) listing exactly these seven types, so a new type also needs an additive migration
+ * 20261023140000, widened by 0020 for `status_update`) listing exactly these types, so a new type also needs an additive migration
  * that widens that constraint (and, if once-only, a new partial unique index); see the story report.
  */
 export const INCIDENT_EVENT_TYPES = {
@@ -37,6 +37,12 @@ export const INCIDENT_EVENT_TYPES = {
   location_sharing_ended: { oncePerIncident: true },
   /** Mark safe. `{recipient_count, recipient_ids}`: members inside the window (rule 54), sorted. */
   closure_notified: { oncePerIncident: true },
+  /**
+   * SCRUM-44/59 (D70): the resident's status update (`POST /v1/incidents/{id}/updates`), actor = the
+   * resident. `{preset: "situation_worsening"|"help_is_here"}` or `{text}` (1-250 characters). May
+   * repeat. Migration 0020 widened `incident_events_type_allowed` for it.
+   */
+  status_update: { oncePerIncident: false },
 } as const;
 
 export type IncidentEventType = keyof typeof INCIDENT_EVENT_TYPES;

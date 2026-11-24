@@ -362,3 +362,39 @@ export async function getIncidentEvents(
     headers: await authHeader(userId),
   });
 }
+
+/**
+ * `POST /v1/incidents/{id}/updates` as `userId` (SCRUM-44/59, D70), with a fresh Idempotency-Key
+ * unless one is given.
+ */
+export async function sendIncidentUpdate(
+  app: NestFastifyApplication,
+  userId: string,
+  incidentId: string,
+  body: unknown,
+  key: string = randomUUID(),
+) {
+  return app.inject({
+    method: 'POST',
+    url: `/v1/incidents/${incidentId}/updates`,
+    headers: {
+      ...(await authHeader(userId)),
+      'idempotency-key': key,
+      'content-type': 'application/json',
+    },
+    payload: JSON.stringify(body),
+  });
+}
+
+/** `GET /v1/incidents/{id}/updates` as `userId` (SCRUM-44/59, D70). */
+export async function listIncidentUpdates(
+  app: NestFastifyApplication,
+  userId: string,
+  incidentId: string,
+) {
+  return app.inject({
+    method: 'GET',
+    url: `/v1/incidents/${incidentId}/updates`,
+    headers: await authHeader(userId),
+  });
+}

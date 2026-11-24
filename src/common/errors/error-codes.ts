@@ -162,6 +162,16 @@ export const PARITY_ERROR_CODES = {
   // function behind them.
   incident_response: ['not_authenticated', 'invalid_status', 'not_found', 'not_open'],
   incident_responders: ['not_authenticated', 'not_found'],
+  // SCRUM-44/59 (D70): `POST /v1/incidents/{id}/updates` (the resident sends a status update) and
+  // `GET /v1/incidents/{id}/updates` (the updates, newest first). New codes, no SQL function behind
+  // them. `invalid_update` = the body is not exactly one valid preset or 1-250 characters of text.
+  incident_updates: [
+    'not_authenticated',
+    'invalid_update',
+    'not_found',
+    'not_open',
+    'rate_limited',
+  ],
   // SCRUM-63 (D61): the one incident state service refuses any status change that is not a defined
   // transition (active -> resolved, resolved -> closed, active -> closed). New code, no SQL function
   // behind it; every route checks the status first and answers its own `not_open`, so this is the

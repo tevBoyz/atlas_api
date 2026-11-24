@@ -278,7 +278,7 @@ export const incidentEvents = pgTable(
     }).onDelete('set null'),
     check(
       'incident_events_type_allowed',
-      sql`event_type = ANY (ARRAY['alert_sent'::text, 'renotified'::text, 'location_sharing_started'::text, 'location_sharing_ended'::text, 'safe_recorded'::text, 'incident_closed'::text, 'closure_notified'::text])`,
+      sql`event_type = ANY (ARRAY['alert_sent'::text, 'renotified'::text, 'location_sharing_started'::text, 'location_sharing_ended'::text, 'safe_recorded'::text, 'incident_closed'::text, 'closure_notified'::text, 'status_update'::text])`,
     ),
     check('incident_events_detail_object', sql`jsonb_typeof(detail) = 'object'::text`),
   ],

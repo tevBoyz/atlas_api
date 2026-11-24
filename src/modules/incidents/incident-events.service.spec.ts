@@ -42,6 +42,8 @@ describe('IncidentEventService (API-100-22)', () => {
       'location_sharing_started',
       'renotified',
       'safe_recorded',
+      // SCRUM-44/59 (D70): may repeat; migration 0020 widened incident_events_type_allowed.
+      'status_update',
     ]);
     expect(
       Object.entries(INCIDENT_EVENT_TYPES)

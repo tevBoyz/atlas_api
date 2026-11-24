@@ -1,7 +1,12 @@
 import {
+  isStatusUpdateMessage,
   isTestAlertMessage,
   type PushMessage,
   type PushNotice,
+  STATUS_UPDATE_PRESETS,
+  STATUS_UPDATE_TOPIC,
+  type StatusUpdatePreset,
+  type StatusUpdatePushMessage,
   TEST_ALERT_TOPIC,
   type TestAlertPushMessage,
 } from './channel.types';
@@ -9,8 +14,9 @@ import {
 /**
  * The push message of an outbox payload (API-100-46 AC3). Only the allowed values are copied,
  * whatever else the payload holds, and only when they have the expected type: for an incident the
- * five incident values; for a test alert (SCRUM-35, D67) the test alert id, the owner's name and the
- * time.
+ * five incident values; for a status update (SCRUM-44/59, D70) the incident id, the resident's name,
+ * the time and the preset or the text; for a test alert (SCRUM-35, D67) the test alert id, the
+ * owner's name and the time.
  */
 export function pushMessageOf(
   topic: string,
@@ -30,6 +36,22 @@ export function pushMessageOf(
   }
   const incidentId = text(payload.incident_id);
   if (!incidentId) return undefined;
+  if (topic === STATUS_UPDATE_TOPIC) {
+    // D70: exactly one of a known preset or the free text.
+    const preset = (STATUS_UPDATE_PRESETS as readonly unknown[]).includes(payload.preset)
+      ? (payload.preset as StatusUpdatePreset)
+      : null;
+    const updateText = preset ? null : text(payload.text);
+    if (!preset && !updateText) return undefined;
+    return {
+      topic: STATUS_UPDATE_TOPIC,
+      incident_id: incidentId,
+      resident_name: text(payload.resident_name),
+      occurred_at: text(payload.occurred_at),
+      preset,
+      text: updateText,
+    };
+  }
   return {
     topic,
     incident_id: incidentId,
@@ -85,6 +107,7 @@ export function pushText(
   timeZone?: string | null,
 ): { title: string; body: string } {
   if (isTestAlertMessage(message)) return testAlertText(message, timeZone);
+  if (isStatusUpdateMessage(message)) return statusUpdateText(message, timeZone);
   const title = message.resident_name ?? 'Atlas';
   const type = message.emergency_type
     ? (TYPE_LABELS[message.emergency_type] ?? 'Emergency')
@@ -102,6 +125,46 @@ export function pushText(
   }
   const time = pushTime(message.occurred_at, timeZone);
   return { title, body: time ? `${body} · ${time}` : body };
+}
+
+/** SCRUM-44/59 (D70): the visible text of each preset. */
+export const STATUS_UPDATE_PRESET_TEXT: Readonly<Record<StatusUpdatePreset, string>> = {
+  situation_worsening: 'Situation worsening',
+  help_is_here: 'Help is here',
+};
+
+/** SCRUM-44/59 (D70): the free text of a status update is shortened to this many characters. */
+export const STATUS_UPDATE_PUSH_TEXT_MAX = 100;
+
+/**
+ * D70: the free text as one line (every run of white space becomes one space), at most
+ * {@link STATUS_UPDATE_PUSH_TEXT_MAX} characters (Unicode code points): a longer text keeps its first
+ * 99 characters (trailing space removed) and ends with `…`.
+ */
+export function shortenUpdateText(value: string): string {
+  const line = value.replace(/\s+/g, ' ').trim();
+  const chars = [...line];
+  if (chars.length <= STATUS_UPDATE_PUSH_TEXT_MAX) return line;
+  return `${chars
+    .slice(0, STATUS_UPDATE_PUSH_TEXT_MAX - 1)
+    .join('')
+    .trimEnd()}…`;
+}
+
+/**
+ * SCRUM-44/59 (D70): title = the resident's display name (`Atlas` when blank, as D54); body =
+ * `Situation worsening · 16:48`, `Help is here · 16:48` or the free text shortened plus the time of
+ * the update in the recipient's time zone (D54).
+ */
+function statusUpdateText(
+  message: StatusUpdatePushMessage,
+  timeZone?: string | null,
+): { title: string; body: string } {
+  const body = message.preset
+    ? STATUS_UPDATE_PRESET_TEXT[message.preset]
+    : shortenUpdateText(message.text ?? '');
+  const time = pushTime(message.occurred_at, timeZone);
+  return { title: message.resident_name ?? 'Atlas', body: time ? `${body} · ${time}` : body };
 }
 
 /** SCRUM-35 (D67): the title of every test-alert notice. */
@@ -123,8 +186,9 @@ function testAlertText(
 }
 
 /**
- * An emergency alert (created or sent again), as opposed to the closing notice (D55) and the test
- * alert (D67).
+ * An emergency alert (created or sent again) or a resident's status update during the alert (D70:
+ * the same urgency, channel and TTL as an alert), as opposed to the closing notice (D55) and the
+ * test alert (D67).
  */
 export function isAlertTopic(topic: string): boolean {
   return topic !== 'incident.resolved' && topic !== TEST_ALERT_TOPIC;
@@ -157,7 +221,8 @@ export function pushTtlSeconds(topic: string): number {
 
 /**
  * Provider data keys (FCM data and APNs custom keys are strings). Incident notices: the five keys
- * (D54). Test alerts (D67): exactly `topic`, `test_alert_id` and `owner_name`.
+ * (D54). Status updates (D70): exactly `topic` and `incident_id`. Test alerts (D67): exactly
+ * `topic`, `test_alert_id` and `owner_name`.
  */
 export function pushData(message: PushNotice): Record<string, string> {
   if (isTestAlertMessage(message)) {
@@ -166,6 +231,10 @@ export function pushData(message: PushNotice): Record<string, string> {
       test_alert_id: message.test_alert_id,
       owner_name: message.owner_name ?? '',
     };
+  }
+  // D70: exactly `topic` and `incident_id` (a tap opens the incident); never the text.
+  if (isStatusUpdateMessage(message)) {
+    return { topic: message.topic, incident_id: message.incident_id };
   }
   return incidentData(message);
 }

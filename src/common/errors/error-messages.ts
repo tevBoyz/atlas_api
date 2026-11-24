@@ -43,6 +43,7 @@ const SUFFIX_MESSAGES: Record<ErrorSuffix, string> = {
   medical_item_limit_reached: 'A list can have at most 20 items.',
   medical_item_not_found: 'Item not found.',
   invalid_status: 'Choose responding or unable.',
+  invalid_update: 'Choose a quick update or enter 1 to 250 characters.',
   invalid_installation_id: 'The app installation id is missing or not valid.',
   invalid_platform: 'The device platform is not valid.',
   invalid_app_version: 'The app version is not valid.',

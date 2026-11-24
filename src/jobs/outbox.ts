@@ -4,13 +4,15 @@ import { type SQL, sql } from 'drizzle-orm';
 import type { Database } from '../db';
 
 /**
- * Topics of `notification_outbox` (spec §11.7). Phase 5 raises the three incident topics; SCRUM-35
- * (D67) the test alert `circle.test_alert` (aggregate = the test alert, never an incident).
+ * Topics of `notification_outbox` (spec §11.7). Phase 5 raises the three incident topics; SCRUM-44/59
+ * (D70) the resident's status update `incident.status_update`; SCRUM-35 (D67) the test alert
+ * `circle.test_alert` (aggregate = the test alert, never an incident).
  */
 export const OUTBOX_TOPICS = [
   'incident.created',
   'incident.renotified',
   'incident.resolved',
+  'incident.status_update',
   'circle.test_alert',
 ] as const;
 export type OutboxTopic = (typeof OUTBOX_TOPICS)[number];

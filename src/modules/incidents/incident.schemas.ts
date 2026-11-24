@@ -375,3 +375,44 @@ export const recentIncidentsQuerySchema = z.object({
       `How many incidents to return. Default ${RECENT_INCIDENTS_DEFAULT_LIMIT}; any integer is clamped to ${RECENT_INCIDENTS_MIN_LIMIT}-${RECENT_INCIDENTS_MAX_LIMIT}.`,
     ),
 });
+
+/**
+ * `POST /v1/incidents/{id}/updates` (SCRUM-44/59, D70; documentation: the route validates as
+ * `statusUpdateFromBody` describes). Exactly one of `preset` or `text`.
+ */
+export const sendIncidentUpdateRequestSchema = z.object({
+  preset: z
+    .enum(['situation_worsening', 'help_is_here'])
+    .nullable()
+    .optional()
+    .describe(
+      'A quick update: "situation_worsening" (Situation worsening) or "help_is_here" (Help is here). Give exactly one of preset or text (null counts as not given); else 422 incident_updates:invalid_update.',
+    ),
+  text: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      'A free-text update: trimmed of white space, then 1 to 250 characters. Give exactly one of preset or text; else 422 incident_updates:invalid_update.',
+    ),
+});
+
+/**
+ * One resident status update (SCRUM-44/59, D70): the body of `POST /v1/incidents/{id}/updates`, one
+ * entry of `GET /v1/incidents/{id}/updates` and of the realtime `incident.update`. Exactly these 4
+ * keys: never an id of a person.
+ */
+export const incidentUpdateSchema = componentSchema(
+  'IncidentUpdate',
+  z.object({
+    id: z.uuid().describe('The update (its incident event id).'),
+    preset: z
+      .enum(['situation_worsening', 'help_is_here'])
+      .nullable()
+      .describe('The quick update, or null for a free-text update.'),
+    text: z.string().nullable().describe('The free text (trimmed), or null for a quick update.'),
+    created_at: z.string().describe('When the server stored the update.'),
+  }),
+);
+
+export const incidentUpdateListSchema = z.array(incidentUpdateSchema);

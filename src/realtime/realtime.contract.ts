@@ -98,6 +98,18 @@ export const REALTIME_CONTRACT = {
         ...TIMES,
       ],
     },
+    [SERVER_EVENTS.update]: {
+      room: 'incident:{id}',
+      payload: ['incident_id', 'update', 'occurred_at'],
+      update_keys: ['id', 'preset', 'text', 'created_at'],
+      note:
+        'SCRUM-44/59 (D70): sent after the resident sent a status update ' +
+        '(POST /v1/incidents/{id}/updates), right after its incident.event (event_type ' +
+        '"status_update"). update is the entry exactly as GET /v1/incidents/{id}/updates shows it: ' +
+        'preset "situation_worsening" or "help_is_here" with text null, or text with preset null; ' +
+        'created_at = occurred_at. No id of a person. Members also get a push (topic ' +
+        'incident.status_update). After a reconnect, re-fetch the list over REST.',
+    },
     [SERVER_EVENTS.closed]: {
       room: 'incident:{id}, user:{id} of each delivery recipient and user:{resident_id} (as incident.resolved; once per socket)',
       payload: [

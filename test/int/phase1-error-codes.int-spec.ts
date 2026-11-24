@@ -20,8 +20,10 @@ import {
   getDeliveryCounts,
   getIncidentDetails,
   getIncidentEvents,
+  listIncidentUpdates,
   markSafe,
   renotifyAlert,
+  sendIncidentUpdate,
   setIncidentNotes,
   submitAlert,
 } from '../support/incident-api';
@@ -29,7 +31,8 @@ import { specIncidentErrorCodes } from '../support/spec-error-codes';
 
 /**
  * API-100-23 AC2: every incident error code of the specification is produced by at least one real
- * response. The codes are read from `docs/api_doc.md` (§7.4 and §11.3 E11), not typed here; each one
+ * response. The codes are read from `docs/api_doc.md` (§7.4, §11.3 E11 and, since SCRUM-44/59 (D70),
+ * §11.3 E14/E15 `incident_updates`), not typed here; each one
  * must have a producer below, and each producer sends one request and checks the envelope's `code`
  * and the HTTP status of spec §11.2. The last test checks that every code was seen in a response.
  *
@@ -38,7 +41,7 @@ import { specIncidentErrorCodes } from '../support/spec-error-codes';
  */
 type Reply = Awaited<ReturnType<typeof submitAlert>>;
 
-/** The prefixes of spec §7.4 plus the events read (§11.3 E11). */
+/** The prefixes of spec §7.4 plus the events read (§11.3 E11) and the status updates (E14/E15). */
 const INCIDENT_PREFIXES = [
   'submit_emergency_alert',
   'get_my_open_incident',
@@ -53,6 +56,7 @@ const INCIDENT_PREFIXES = [
   'list_responder_incidents',
   'get_incident_details',
   'incident_events',
+  'incident_updates',
 ] as const;
 
 describe('Phase 1 gate: every incident error code of the spec is produced (API-100-23 AC2)', () => {
@@ -196,6 +200,25 @@ describe('Phase 1 gate: every incident error code of the spec is produced (API-1
     // incident_events (§11.3 E11)
     'incident_events:not_authenticated': () => anonymous('GET', `/v1/incidents/${openId}/events`),
     'incident_events:not_found': () => getIncidentEvents(app, outsider.id, unknownId),
+    // incident_updates (§11.3 E14/E15, SCRUM-44/59, D70)
+    'incident_updates:not_authenticated': () =>
+      anonymous('POST', `/v1/incidents/${openId}/updates`, { preset: 'help_is_here' }),
+    'incident_updates:invalid_update': () =>
+      sendIncidentUpdate(app, resident.id, openId, { preset: 'help_is_here', text: 'both' }),
+    'incident_updates:not_found': () => listIncidentUpdates(app, outsider.id, openId),
+    'incident_updates:not_open': () =>
+      sendIncidentUpdate(app, closedResident.id, closedId, { preset: 'help_is_here' }),
+    'incident_updates:rate_limited': async () => {
+      const user = await createUser(client, { fullName: 'Codes Updates Resident' });
+      await createCircle(client, user);
+      const id = (await submitAlert(app, user.id, 'other')).json<{ id: string }>().id;
+      for (let i = 0; i < 10; i++) {
+        expect((await sendIncidentUpdate(app, user.id, id, { text: `u${i}` })).statusCode).toBe(
+          201,
+        );
+      }
+      return sendIncidentUpdate(app, user.id, id, { text: 'one too many' });
+    },
   };
 
   const specCodes = specIncidentErrorCodes();
@@ -203,7 +226,7 @@ describe('Phase 1 gate: every incident error code of the spec is produced (API-1
     PARITY_ERROR_CODES[prefix].map((suffix) => `${prefix}:${suffix}`),
   );
 
-  it('reads the incident codes of spec §7.4 and §11.3 E11 (12 RPCs + the events read)', () => {
+  it('reads the incident codes of spec §7.4 and §11.3 E11, E14, E15 (12 RPCs + the events and updates)', () => {
     expect(new Set(specCodes.map((code) => code.split(':')[0]))).toEqual(
       new Set(INCIDENT_PREFIXES),
     );

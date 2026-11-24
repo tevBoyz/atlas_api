@@ -176,6 +176,29 @@ export function eventPayload(
 }
 
 /**
+ * `incident.update` (SCRUM-44/59, D70) from a `status_update` event row: the update as
+ * `GET /v1/incidents/{id}/updates` shows it. No actor, no id of a person: the same for every
+ * receiver.
+ */
+export function updatePayload(row: IncidentEventRow) {
+  const { event } = row;
+  const value = (key: string) => {
+    const found = event.detail[key];
+    return typeof found === 'string' ? found : null;
+  };
+  return {
+    incident_id: row.incident_id,
+    update: {
+      id: event.id,
+      preset: value('preset'),
+      text: value('text'),
+      created_at: event.occurred_at,
+    },
+    occurred_at: event.occurred_at,
+  };
+}
+
+/**
  * Incident broadcasts (API-100-41): the realtime post-commit hook of every committed incident write.
  * It runs only after the commit (the runner is called once the transaction has committed, never after
  * a rollback) and is not awaited by the request; a failed read or emit is logged by the runner and
@@ -198,6 +221,8 @@ export function eventPayload(
  * - `incident.responders` (D56) after a member's first acknowledge or a response change, per
  *   receiver the same way: the resident full ids, the member's own sockets their own row in full,
  *   every other member the row with the user id masked;
+ * - `incident.update` (SCRUM-44/59, D70) to `incident:{id}` after the resident sent a status update
+ *   (right after that event's `incident.event`);
  * - `incident.closed` (SCRUM-63) after the close sweeper closed the incident, to the audience of
  *   `incident.resolved`. The sweeper runs in the worker process, so there the emits go through
  *   `WorkerRealtimeEmitter` (Redis adapter) instead of the gateway.
@@ -369,6 +394,9 @@ export class IncidentBroadcaster implements IncidentPostCommitHook {
         eventPayload(row, { resident: false, viewerId: actor }),
         [incidentResidentRoom(id)],
       );
+    }
+    if (row.event.event_type === 'status_update') {
+      this.gateway.emit([incidentRoom(id)], SERVER_EVENTS.update, updatePayload(row));
     }
   }
 

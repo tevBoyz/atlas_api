@@ -13,6 +13,9 @@ export const AUDIT_ACTIONS = [
   // SCRUM-63 (D62): the close sweeper closed the incident (no actor). Detail {resident_id, circle_id,
   // reason (safe | ended), auto_closed, previous_status (resolved | active)}; ids only.
   'incident.closed',
+  // SCRUM-44/59 (D70): the resident sent a status update. Detail {update_id, preset, text_length}
+  // (preset or null; text_length = characters of the free text, else null); never the text.
+  'incident.update_sent',
   'circle.invite.created',
   'circle.invite.resent',
   'circle.invite.canceled',

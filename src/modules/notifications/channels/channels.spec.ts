@@ -24,6 +24,7 @@ import {
   pushText,
   pushTime,
   pushTtlSeconds,
+  shortenUpdateText,
 } from './push-content';
 import {
   ApnsPushSender,
@@ -689,4 +690,146 @@ describe('SendGrid email adapter against a fake transport (D43)', () => {
 it('pemFromEnv turns literal \\n into newlines', () => {
   expect(pemFromEnv('a\\nb')).toBe('a\nb');
   expect(pemFromEnv('a\nb')).toBe('a\nb');
+});
+
+describe('SCRUM-44/59 (D70): status update notices', () => {
+  const NOW = Date.parse('2026-11-24T16:48:00Z');
+  const INCIDENT_ID = '11111111-1111-4111-8111-111111111111';
+  const AT = '2026-11-24T16:48:05.123456+00:00';
+  const PAYLOAD = {
+    incident_id: INCIDENT_ID,
+    resident_name: 'Tess Resident',
+    occurred_at: AT,
+    update_id: '44444444-4444-4444-8444-444444444444',
+    recipient_user_ids: ['55555555-5555-4555-8555-555555555555'],
+    emergency_type: 'medical',
+  };
+
+  it('copies the incident id, the resident name, the time and the preset (or the text) only', () => {
+    expect(
+      pushMessageOf('incident.status_update', {
+        ...PAYLOAD,
+        preset: 'situation_worsening',
+        text: null,
+      }),
+    ).toEqual({
+      topic: 'incident.status_update',
+      incident_id: INCIDENT_ID,
+      resident_name: 'Tess Resident',
+      occurred_at: AT,
+      preset: 'situation_worsening',
+      text: null,
+    });
+    expect(
+      pushMessageOf('incident.status_update', { ...PAYLOAD, preset: null, text: 'Door locked' }),
+    ).toEqual({
+      topic: 'incident.status_update',
+      incident_id: INCIDENT_ID,
+      resident_name: 'Tess Resident',
+      occurred_at: AT,
+      preset: null,
+      text: 'Door locked',
+    });
+    // Neither a known preset nor text, or no incident: nothing to send.
+    expect(
+      pushMessageOf('incident.status_update', { ...PAYLOAD, preset: 'other' }),
+    ).toBeUndefined();
+    expect(pushMessageOf('incident.status_update', { ...PAYLOAD, text: '' })).toBeUndefined();
+    expect(
+      pushMessageOf('incident.status_update', { preset: 'help_is_here', occurred_at: AT }),
+    ).toBeUndefined();
+  });
+
+  it('title = the resident name; body = the preset text or the text, plus HH:mm in the recipient zone', () => {
+    const worsening = pushMessageOf('incident.status_update', {
+      ...PAYLOAD,
+      preset: 'situation_worsening',
+    })!;
+    const help = pushMessageOf('incident.status_update', { ...PAYLOAD, preset: 'help_is_here' })!;
+    const text = pushMessageOf('incident.status_update', { ...PAYLOAD, text: 'Door locked' })!;
+    expect(pushText(worsening)).toEqual({
+      title: 'Tess Resident',
+      body: 'Situation worsening · 16:48',
+    });
+    expect(pushText(help, 'Africa/Banjul')).toEqual({
+      title: 'Tess Resident',
+      body: 'Help is here · 16:48',
+    });
+    expect(pushText(text, 'America/Chicago')).toEqual({
+      title: 'Tess Resident',
+      body: 'Door locked · 10:48',
+    });
+    // No name → Atlas; no time → no suffix (D54).
+    expect(
+      pushText(
+        pushMessageOf('incident.status_update', {
+          incident_id: INCIDENT_ID,
+          preset: 'help_is_here',
+        })!,
+      ),
+    ).toEqual({ title: 'Atlas', body: 'Help is here' });
+  });
+
+  it('a long text is one line of at most 100 characters ending with …', () => {
+    expect(shortenUpdateText('Line one\n\n  line   two ')).toBe('Line one line two');
+    expect(shortenUpdateText('a'.repeat(100))).toBe('a'.repeat(100));
+    const long = `${'a'.repeat(98)} ${'b'.repeat(150)}`;
+    expect(shortenUpdateText(long)).toBe(`${'a'.repeat(98)}…`);
+    expect([...shortenUpdateText('🚑'.repeat(250))]).toHaveLength(100);
+    expect(shortenUpdateText('🚑'.repeat(250))).toBe(`${'🚑'.repeat(99)}…`);
+    const message = pushMessageOf('incident.status_update', { ...PAYLOAD, text: 'c'.repeat(250) })!;
+    expect(pushText(message).body).toBe(`${'c'.repeat(99)}… · 16:48`);
+  });
+
+  it('data keys are exactly topic and incident_id (never the text)', () => {
+    const message = pushMessageOf('incident.status_update', { ...PAYLOAD, text: 'Door locked' })!;
+    expect(pushData(message)).toEqual({
+      topic: 'incident.status_update',
+      incident_id: INCIDENT_ID,
+    });
+  });
+
+  it('FCM: the emergency channel and priority of an alert (D55); APNs time-sensitive', () => {
+    const message = pushMessageOf('incident.status_update', {
+      ...PAYLOAD,
+      preset: 'situation_worsening',
+    })!;
+    const target = { provider: 'fcm' as const, token: DEVICE_TOKEN, time_zone: 'Africa/Banjul' };
+    expect(fcmMessage(target, message, NOW)).toEqual({
+      token: DEVICE_TOKEN,
+      notification: { title: 'Tess Resident', body: 'Situation worsening · 16:48' },
+      data: { topic: 'incident.status_update', incident_id: INCIDENT_ID },
+      android: {
+        priority: 'high',
+        ttl: `${ALERT_TTL_SECONDS}s`,
+        notification: {
+          channel_id: ANDROID_CHANNEL_ID,
+          notification_priority: 'PRIORITY_MAX',
+          sound: 'default',
+        },
+      },
+      apns: {
+        headers: {
+          'apns-priority': '10',
+          'apns-push-type': 'alert',
+          'apns-expiration': String(Math.floor(NOW / 1000) + ALERT_TTL_SECONDS),
+        },
+        payload: {
+          aps: {
+            alert: { title: 'Tess Resident', body: 'Situation worsening · 16:48' },
+            sound: 'default',
+            'interruption-level': 'time-sensitive',
+          },
+        },
+      },
+    });
+    expect(apnsAps(target, message)['interruption-level']).toBe('time-sensitive');
+  });
+
+  it('the fake push keeps the visible text (for tests and the guide)', async () => {
+    const fake = new FakePushSender();
+    const message = pushMessageOf('incident.status_update', { ...PAYLOAD, text: 'Door locked' })!;
+    await fake.send({ provider: 'fcm', token: DEVICE_TOKEN, time_zone: 'Africa/Banjul' }, message);
+    expect(fake.sent[0].text).toEqual({ title: 'Tess Resident', body: 'Door locked · 16:48' });
+  });
 });

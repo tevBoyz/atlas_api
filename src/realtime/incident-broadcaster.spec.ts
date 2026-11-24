@@ -11,6 +11,7 @@ import {
   respondersPayload,
   sharedInfoPayload,
   updatedPayload,
+  updatePayload,
 } from './incident-broadcaster';
 import { REALTIME_CONTRACT } from './realtime.contract';
 import type {
@@ -363,6 +364,46 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
   });
 });
 
+describe('IncidentBroadcaster incident.update (SCRUM-44/59, D70)', () => {
+  const update = (detail: Record<string, unknown>): IncidentEventRow => {
+    const row = eventRow(RESIDENT, detail);
+    return { ...row, event: { ...row.event, event_type: 'status_update' } };
+  };
+
+  it('payload: the update as the REST list shows it; no id of a person', () => {
+    expect(updatePayload(update({ preset: 'help_is_here' }))).toEqual({
+      incident_id: INCIDENT,
+      update: {
+        id: 'eeeeeeee-0000-4000-8000-000000000001',
+        preset: 'help_is_here',
+        text: null,
+        created_at: T,
+      },
+      occurred_at: T,
+    });
+    const text = updatePayload(update({ text: 'Door locked' }));
+    expect(text.update).toMatchObject({ preset: null, text: 'Door locked' });
+    expect(JSON.stringify(text)).not.toContain(RESIDENT);
+  });
+
+  it('after the incident.event emits, one incident.update to the incident room', async () => {
+    const { broadcaster, calls, payload } = setup(update({ preset: 'situation_worsening' }));
+    await broadcaster.afterEvent({ ...ref, event_id: 'x', event_type: 'status_update' });
+    expect(calls()).toEqual([
+      [[`incident:${INCIDENT}:resident`], 'incident.event', []],
+      [[`incident:${INCIDENT}`], 'incident.event', [`incident:${INCIDENT}:resident`]],
+      [[`incident:${INCIDENT}`], 'incident.update', []],
+    ]);
+    expect(payload(2)).toEqual(updatePayload(update({ preset: 'situation_worsening' })));
+  });
+
+  it('no incident.update for any other event type', async () => {
+    const { broadcaster, calls } = setup(eventRow(RESIDENT));
+    await broadcaster.afterEvent({ ...ref, event_id: 'x', event_type: 'closure_notified' });
+    expect(calls().map(([, event]) => event)).toEqual(['incident.event', 'incident.event']);
+  });
+});
+
 describe('the published contract (x-realtime) matches the payloads', () => {
   const events = REALTIME_CONTRACT.server_events;
   it.each([
@@ -388,6 +429,12 @@ describe('the published contract (x-realtime) matches the payloads', () => {
     const payload = respondersPayload(responderState(), { resident: true });
     expect(Object.keys(payload)).toEqual(events['incident.responders'].payload);
     expect(Object.keys(payload.responder)).toEqual(events['incident.responders'].responder_keys);
+  });
+
+  it('incident.update', () => {
+    const payload = updatePayload(eventRow(RESIDENT, { text: 'x' }));
+    expect(Object.keys(payload)).toEqual(events['incident.update'].payload);
+    expect(Object.keys(payload.update)).toEqual(events['incident.update'].update_keys);
   });
 
   it('incident.event', () => {

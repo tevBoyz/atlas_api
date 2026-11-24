@@ -11,7 +11,10 @@ import {
   OutboxWriter,
 } from '../../jobs/outbox';
 import { OutboxRelay } from '../../jobs/outbox-relay.service';
-import type { IncidentPostCommitHook } from '../incidents/incident-post-commit';
+import type {
+  IncidentEventRecordedEvent,
+  IncidentPostCommitHook,
+} from '../incidents/incident-post-commit';
 import type { Channel } from './channels/channel.types';
 import { DeliveryPlanner } from './deliveries.service';
 
@@ -25,6 +28,7 @@ export const INCIDENT_TOPICS = [
   'incident.created',
   'incident.renotified',
   'incident.resolved',
+  'incident.status_update',
 ] as const satisfies readonly OutboxTopic[];
 
 /**
@@ -56,7 +60,8 @@ function deliveryRecipients(incidentId: string): SQL {
 
 /**
  * Writes the incident outbox rows inside the incident write's transaction (API-100-48 AC1): a
- * rolled-back write leaves no row. Called by the incident service (submit, re-notify, mark safe).
+ * rolled-back write leaves no row. Called by the incident service (submit, re-notify, mark safe)
+ * and the status updates service (D70).
  */
 @Injectable()
 export class IncidentNotificationsOutbox {
@@ -102,6 +107,36 @@ export class IncidentNotificationsOutbox {
     );
   }
 
+  /**
+   * `incident.status_update` (SCRUM-44/59, D70): the resident sent a status update (the
+   * `status_update` event `eventId`, inserted in this transaction). Recipients = the incident's
+   * delivery rows (as `incident.renotified`), re-checked with `incident.memberView` at fan-out. The
+   * payload carries the incident id, the resident's display name, the time of the update, the update
+   * id and the preset or the text (the text is needed for the visible body; never a data key of the
+   * push, never logged).
+   */
+  statusUpdate(tx: OutboxTransaction, incidentId: string, eventId: string): Promise<string> {
+    return this.outbox.insert(tx, {
+      topic: 'incident.status_update',
+      aggregateId: incidentId,
+      payload: sql`(
+        select jsonb_build_object(
+                 'incident_id', i.id,
+                 'resident_name', nullif(btrim(p.full_name), ''),
+                 'occurred_at', e.occurred_at,
+                 'update_id', e.id,
+                 'preset', e.detail->>'preset',
+                 'text', e.detail->>'text',
+                 'recipient_user_ids', ${deliveryRecipients(incidentId)}
+               )
+          from public.incident_events e
+          join public.incidents i on i.id = e.incident_id
+          join public.profiles p on p.id = i.resident_id
+         where e.id = ${eventId}::uuid
+           and e.incident_id = ${incidentId}::uuid)`,
+    });
+  }
+
   private write(
     tx: OutboxTransaction,
     topic: OutboxTopic,
@@ -135,6 +170,11 @@ export class IncidentNotificationsHook implements IncidentPostCommitHook {
 
   afterResolved(): void {
     this.relay.kick();
+  }
+
+  /** SCRUM-44/59 (D70): a status update wrote its `incident.status_update` row. */
+  afterEvent(event: IncidentEventRecordedEvent): void {
+    if (event.event_type === 'status_update') this.relay.kick();
   }
 }
 
