@@ -55,16 +55,21 @@ export class DeliveryPlanner {
     this.baseDelayMs = config.get('NOTIFICATIONS_RETRY_BASE_DELAY_MS');
   }
 
-  /** Returns how many delivery jobs were (re)queued. */
+  /**
+   * Returns how many delivery jobs were (re)queued. The rows belong to `incidentId` (incident
+   * notices) or to `testAlertId` (SCRUM-35 test alerts), never both.
+   */
   async fanOut(
     row: OutboxRow,
     incidentId: string | null,
     recipients: readonly DeliveryRecipient[],
     channels: readonly Channel[],
+    testAlertId: string | null = null,
   ): Promise<number> {
     await this.repository.fanOut({
       outboxId: row.id,
       incidentId,
+      testAlertId,
       recipients,
       channels,
       enabled: {
@@ -198,7 +203,8 @@ export class DeliverySender implements JobProcessor {
 
   /**
    * SCRUM-47 latency check: one line per delivery the provider accepted, with the milliseconds from
-   * the event (`occurred_at` of the outbox payload: activation, re-notify or mark safe) to the
+   * the event (`occurred_at` of the outbox payload: activation, re-notify, mark safe or a test alert's
+   * send) to the
    * provider's acceptance. Ids, topic, channel and provider only: no token, name, phone, address,
    * text or medical data. The network leg to the device is measured on the device.
    */
@@ -210,6 +216,9 @@ export class DeliverySender implements JobProcessor {
         delivery_id: delivery.id,
         incident_id:
           typeof delivery.payload.incident_id === 'string' ? delivery.payload.incident_id : null,
+        ...(typeof delivery.payload.test_alert_id === 'string'
+          ? { test_alert_id: delivery.payload.test_alert_id }
+          : {}),
         topic: delivery.topic,
         channel: delivery.channel,
         provider: delivery.channel === 'push' ? delivery.push_provider : null,

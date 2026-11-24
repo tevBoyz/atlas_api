@@ -2396,6 +2396,26 @@
         ],
         "type": "object"
       },
+      "LatestTestAlert": {
+        "additionalProperties": false,
+        "properties": {
+          "test_alert": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TestAlertStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null when the caller never sent a test alert."
+          }
+        },
+        "required": [
+          "test_alert"
+        ],
+        "type": "object"
+      },
       "LeftCircle": {
         "additionalProperties": false,
         "properties": {
@@ -2644,6 +2664,46 @@
           "declined"
         ],
         "type": "string"
+      },
+      "MemberTestAlert": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "description": "When the owner sent the test (UTC).",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "is_test": {
+            "description": "Always true: a test, never an emergency.",
+            "type": "boolean"
+          },
+          "owner_name": {
+            "description": "The circle owner current profile name (trimmed); null when blank.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seen_at": {
+            "description": "When the caller opened it; null until then.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "owner_name",
+          "created_at",
+          "is_test",
+          "seen_at"
+        ],
+        "type": "object"
       },
       "OAuthSession": {
         "additionalProperties": false,
@@ -3987,6 +4047,170 @@
         },
         "required": [
           "emergency_type"
+        ],
+        "type": "object"
+      },
+      "TestAlertFailureReason": {
+        "enum": [
+          "no_device",
+          "invalid_token",
+          "provider_error",
+          "channel_disabled",
+          "not_eligible"
+        ],
+        "type": "string"
+      },
+      "TestAlertMemberState": {
+        "enum": [
+          "pending",
+          "delivered",
+          "seen",
+          "failed"
+        ],
+        "type": "string"
+      },
+      "TestAlertRecipient": {
+        "additionalProperties": false,
+        "properties": {
+          "delivered_at": {
+            "description": "When the push provider first accepted it for one of the member devices.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "description": "The member current profile name (trimmed), else the name on their member row.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TestAlertFailureReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set only when `status` is `failed`: `no_device`, `invalid_token`, `provider_error`, `channel_disabled` or `not_eligible`."
+          },
+          "seen_at": {
+            "description": "When the member opened it in Atlas.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/TestAlertMemberState"
+          },
+          "user_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "display_name",
+          "status",
+          "failure_reason",
+          "delivered_at",
+          "seen_at"
+        ],
+        "type": "object"
+      },
+      "TestAlertSent": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "description": "When the test was sent (UTC).",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "recipient_count": {
+            "description": "How many active members it was sent to (pending members are never included).",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "recipient_count"
+        ],
+        "type": "object"
+      },
+      "TestAlertStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "circle_id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "delivered_count": {
+            "description": "Members whose push the provider accepted.",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "failed_count": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "pending_count": {
+            "description": "Per member, exclusive: the four counts add up to `recipient_count`.",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "recipient_count": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "recipients": {
+            "description": "Every recipient, by name. `status`: `pending` (not sent yet or being retried), `delivered` (the push provider accepted it), `seen` (the member opened it in Atlas), `failed` (see `failure_reason`).",
+            "items": {
+              "$ref": "#/components/schemas/TestAlertRecipient"
+            },
+            "type": "array"
+          },
+          "seen_count": {
+            "description": "Members who opened it in Atlas.",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "circle_id",
+          "created_at",
+          "recipient_count",
+          "delivered_count",
+          "seen_count",
+          "failed_count",
+          "pending_count",
+          "recipients"
         ],
         "type": "object"
       },
@@ -11420,6 +11644,428 @@
         ]
       }
     },
+    "/v1/me/circle/test-alerts": {
+      "post": {
+        "operationId": "sendCircleTestAlert",
+        "parameters": [
+          {
+            "description": "UUID chosen by the client. A retry with the same key replays the first result.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestAlertSent"
+                }
+              }
+            },
+            "description": "Submitted: stored and queued for each active member. Delivery is confirmed later by the status (`delivered` / `seen`)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:key_required",
+                    "details": {},
+                    "message": "An Idempotency-Key header is required."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad request",
+            "x-error-codes": [
+              "idempotency:key_required"
+            ]
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "test_alerts:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "test_alerts:not_authenticated"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:in_progress",
+                    "details": {},
+                    "message": "A request with this Idempotency-Key is still being processed."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "idempotency:in_progress",
+              "test_alerts:no_eligible_recipients"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "idempotency:invalid_key",
+                    "details": {},
+                    "message": "The Idempotency-Key header must be a UUID."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "idempotency:invalid_key",
+              "idempotency:key_mismatch"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded",
+              "test_alerts:rate_limited"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Send a test alert (TEST ALERT — NOT AN EMERGENCY) to the active members of my circle",
+        "tags": [
+          "circles"
+        ]
+      }
+    },
+    "/v1/me/circle/test-alerts/latest": {
+      "get": {
+        "operationId": "latestCircleTestAlert",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatestTestAlert"
+                }
+              }
+            },
+            "description": "`test_alert` is null when I never sent one."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "test_alerts:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "test_alerts:not_authenticated"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The status of my latest test alert",
+        "tags": [
+          "circles"
+        ]
+      }
+    },
+    "/v1/me/circle/test-alerts/{id}": {
+      "get": {
+        "operationId": "getCircleTestAlertStatus",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "The test alert id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestAlertStatus"
+                }
+              }
+            },
+            "description": "Counts and per-member states"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "test_alerts:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "test_alerts:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "test_alerts:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "test_alerts:not_found"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The delivery status of one of my test alerts, per member",
+        "tags": [
+          "circles"
+        ]
+      }
+    },
     "/v1/me/devices/current": {
       "put": {
         "operationId": "registerCurrentDevice",
@@ -15028,6 +15674,302 @@
           "incidents"
         ]
       }
+    },
+    "/v1/test-alerts/{id}": {
+      "get": {
+        "operationId": "getTestAlert",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "The test alert id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberTestAlert"
+                }
+              }
+            },
+            "description": "The test alert"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "test_alerts:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "test_alerts:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "test_alerts:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "test_alerts:not_found"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "A test alert I received (who sent it and when; never an emergency)",
+        "tags": [
+          "circles"
+        ]
+      }
+    },
+    "/v1/test-alerts/{id}/seen": {
+      "post": {
+        "operationId": "markTestAlertSeen",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "The test alert id.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberTestAlert"
+                }
+              }
+            },
+            "description": "The test alert with `seen_at` (a repeat keeps the first time)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "test_alerts:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "test_alerts:not_authenticated"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "test_alerts:not_found",
+                    "details": {},
+                    "message": "Not found."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found",
+            "x-error-codes": [
+              "test_alerts:not_found"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Mark a test alert I received as seen (idempotent)",
+        "tags": [
+          "circles"
+        ]
+      }
     }
   },
   "servers": [
@@ -15080,6 +16022,16 @@
           "occurred_at"
         ],
         "room": "user:{id} of the member who was removed or left (all their sockets; D49)"
+      },
+      "circle.test_alert": {
+        "note": "SCRUM-35 (D67): sent by the API right after the circle owner sent a test alert (POST /v1/me/circle/test-alerts). Show the TEST ALERT — NOT AN EMERGENCY banner and open GET /v1/test-alerts/{test_alert_id}; never an SOS, never an incident. occurred_at = created_at (the send time). Pending, declined, removed or left members and outsiders never get it. Not replayed after a reconnect.",
+        "payload": [
+          "test_alert_id",
+          "owner_name",
+          "created_at",
+          "occurred_at"
+        ],
+        "room": "user:{id} of each recipient of the test alert (the active members of the circle when it was sent)"
       },
       "incident.closed": {
         "note": "SCRUM-63 (D61, D62): sent after the close sweeper (worker, once a minute) closed the incident: Resolved (Safe) -> Closed after the wrap-up (resolved_reason \"safe\", auto_closed false), or Active -> Closed after the inactivity period (resolved_reason \"ended\", auto_closed true: \"Closed automatically\"). status is \"closed\"; the incident is final and read-only. No push, SMS or email is sent at the close. Followed by incident.updated and incident.event in the incident room.",

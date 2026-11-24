@@ -1,15 +1,33 @@
-import type { PushMessage } from './channel.types';
+import {
+  isTestAlertMessage,
+  type PushMessage,
+  type PushNotice,
+  TEST_ALERT_TOPIC,
+  type TestAlertPushMessage,
+} from './channel.types';
 
 /**
- * The push message of an outbox payload (API-100-46 AC3). Only the five allowed values are copied,
- * whatever else the payload holds, and only when they have the expected type.
+ * The push message of an outbox payload (API-100-46 AC3). Only the allowed values are copied,
+ * whatever else the payload holds, and only when they have the expected type: for an incident the
+ * five incident values; for a test alert (SCRUM-35, D67) the test alert id, the owner's name and the
+ * time.
  */
 export function pushMessageOf(
   topic: string,
   payload: Record<string, unknown>,
-): PushMessage | undefined {
+): PushNotice | undefined {
   const text = (value: unknown): string | null =>
     typeof value === 'string' && value.length > 0 ? value : null;
+  if (topic === TEST_ALERT_TOPIC) {
+    const testAlertId = text(payload.test_alert_id);
+    if (!testAlertId) return undefined;
+    return {
+      topic: TEST_ALERT_TOPIC,
+      test_alert_id: testAlertId,
+      owner_name: text(payload.owner_name),
+      occurred_at: text(payload.occurred_at),
+    };
+  }
   const incidentId = text(payload.incident_id);
   if (!incidentId) return undefined;
   return {
@@ -63,9 +81,10 @@ export function pushTime(occurredAt: string | null, timeZone?: string | null): s
  * zone (D54), e.g. `Emergency alert: Medical · 16:48`.
  */
 export function pushText(
-  message: PushMessage,
+  message: PushNotice,
   timeZone?: string | null,
 ): { title: string; body: string } {
+  if (isTestAlertMessage(message)) return testAlertText(message, timeZone);
   const title = message.resident_name ?? 'Atlas';
   const type = message.emergency_type
     ? (TYPE_LABELS[message.emergency_type] ?? 'Emergency')
@@ -85,25 +104,73 @@ export function pushText(
   return { title, body: time ? `${body} · ${time}` : body };
 }
 
-/** An emergency alert (created or sent again), as opposed to the closing notice (D55). */
+/** SCRUM-35 (D67): the title of every test-alert notice. */
+export const TEST_ALERT_TITLE = 'TEST ALERT — NOT AN EMERGENCY';
+/** SCRUM-35 (D67): the owner name in the body when the owner's profile name is blank. */
+export const TEST_ALERT_FALLBACK_OWNER = 'Your Safety Circle owner';
+
+/**
+ * SCRUM-35 (D67): `TEST ALERT — NOT AN EMERGENCY` / `<Owner name> is testing their Safety Circle ·
+ * HH:mm` (the send time in the recipient's time zone, as D54).
+ */
+function testAlertText(
+  message: TestAlertPushMessage,
+  timeZone?: string | null,
+): { title: string; body: string } {
+  const body = `${message.owner_name ?? TEST_ALERT_FALLBACK_OWNER} is testing their Safety Circle`;
+  const time = pushTime(message.occurred_at, timeZone);
+  return { title: TEST_ALERT_TITLE, body: time ? `${body} · ${time}` : body };
+}
+
+/**
+ * An emergency alert (created or sent again), as opposed to the closing notice (D55) and the test
+ * alert (D67).
+ */
 export function isAlertTopic(topic: string): boolean {
-  return topic !== 'incident.resolved';
+  return topic !== 'incident.resolved' && topic !== TEST_ALERT_TOPIC;
 }
 
 /** D55: Android notification channel the app creates for every incident notice. */
 export const ANDROID_CHANNEL_ID = 'atlas_emergency';
+/**
+ * D67: Android notification channel the app creates for test alerts: separate from
+ * `atlas_emergency`, default importance, no Do Not Disturb bypass.
+ */
+export const ANDROID_TEST_CHANNEL_ID = 'atlas_test';
+
+/** The Android channel of a notice of this topic. */
+export function androidChannelId(topic: string): string {
+  return topic === TEST_ALERT_TOPIC ? ANDROID_TEST_CHANNEL_ID : ANDROID_CHANNEL_ID;
+}
 /** D55: an alert older than this is stale on the device (the app still lists it in Activity). */
 export const ALERT_TTL_SECONDS = 60;
 /** D55: the closing notice ("marked safe") may arrive later; it is not urgent. */
 export const RESOLVED_TTL_SECONDS = 3600;
+/** D67: a test alert is not urgent either; it stays deliverable an hour. */
+export const TEST_ALERT_TTL_SECONDS = 3600;
 
 /** Seconds a notice of this topic stays deliverable (FCM `ttl`, APNs `apns-expiration`). */
 export function pushTtlSeconds(topic: string): number {
+  if (topic === TEST_ALERT_TOPIC) return TEST_ALERT_TTL_SECONDS;
   return isAlertTopic(topic) ? ALERT_TTL_SECONDS : RESOLVED_TTL_SECONDS;
 }
 
-/** Provider data keys (FCM data and APNs custom keys are strings). */
-export function pushData(message: PushMessage): Record<string, string> {
+/**
+ * Provider data keys (FCM data and APNs custom keys are strings). Incident notices: the five keys
+ * (D54). Test alerts (D67): exactly `topic`, `test_alert_id` and `owner_name`.
+ */
+export function pushData(message: PushNotice): Record<string, string> {
+  if (isTestAlertMessage(message)) {
+    return {
+      topic: message.topic,
+      test_alert_id: message.test_alert_id,
+      owner_name: message.owner_name ?? '',
+    };
+  }
+  return incidentData(message);
+}
+
+function incidentData(message: PushMessage): Record<string, string> {
   return {
     topic: message.topic,
     incident_id: message.incident_id,

@@ -69,6 +69,7 @@ describe('stage 7.6: db/rollback/0012_down.sql restores the pre-0012 state (D42)
     // The first run also applies the later migrations (0013, D44; 0014, SCRUM-21: its new tables
     // revoke every Supabase role grant; 0015, D56: two columns only; 0016, D59/D60: one column and
     // one app_config row; 0017, D61/D62: one column, widened checks, an index and two app_config
+    // rows; 0018, D66-D68: two locked-down tables, one column, a check, an index and two app_config
     // rows), so the snapshot comparison below is unchanged, and they stay recorded through the
     // rollback.
     expect(await runMigrations(client, resolve('db/migrations'), silent)).toEqual([
@@ -78,6 +79,7 @@ describe('stage 7.6: db/rollback/0012_down.sql restores the pre-0012 state (D42)
       '0015_incident_response_status',
       '0016_share_phone_emergency_numbers',
       '0017_incident_closed_state',
+      '0018_circle_test_alerts',
     ]);
     expect(await supabasePrivilegesLeft(client)).toEqual([]);
     expect(await realtimeMembersLeft(client)).toEqual([]);

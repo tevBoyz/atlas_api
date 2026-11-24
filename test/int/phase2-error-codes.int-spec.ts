@@ -3,8 +3,13 @@ import { randomUUID } from 'node:crypto';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
-import { httpStatusForCode, PARITY_ERROR_CODES } from '../../src/common/errors';
+import {
+  GENERIC_ERROR_CODES,
+  httpStatusForCode,
+  PARITY_ERROR_CODES,
+} from '../../src/common/errors';
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
+import { authHeader } from '../../src/testing/test-tokens';
 import {
   acceptInvite,
   cancelInvite,
@@ -35,8 +40,10 @@ import { specCircleErrorCodes } from '../support/spec-error-codes';
 
 /**
  * API-100-33 AC2: every circle and invite error code of the specification is produced by a real
- * response. The codes are read from `docs/api_doc.md` (§7.2, §7.3 and the §11.3 rows C1-C6 and
- * I1-I11), not typed here, and must be exactly the parity catalogue of the Phase 2 prefixes. Each
+ * response. The codes are read from `docs/api_doc.md` (§7.2, §7.3 and the §11.3 rows C1-C11 and
+ * I1-I11), not typed here, and must be exactly the parity catalogue of the Phase 2 prefixes plus
+ * `test_alerts` (SCRUM-35, rows C7-C11); a generic code a row names (`validation:invalid_request`)
+ * must be one of `GENERIC_ERROR_CODES` and is produced like the others. Each
  * producer sends one request (fresh fixtures, so producers do not depend on each other) and checks
  * the envelope's `code` and the HTTP status of spec §11.2. The last test checks that every code was
  * seen in a response.
@@ -51,7 +58,7 @@ import { specCircleErrorCodes } from '../support/spec-error-codes';
  */
 type Reply = Awaited<ReturnType<typeof getCapacity>>;
 
-/** The Phase 2 prefixes: spec §7.2, §7.3 (lookup has no codes) and §11.3 C1. */
+/** The Phase 2 prefixes: spec §7.2, §7.3 (lookup has no codes) and §11.3 C1; SCRUM-35 C7-C11. */
 const CIRCLE_PREFIXES = [
   'circle_invite_capacity',
   'invite_circle_member_by_phone',
@@ -68,6 +75,7 @@ const CIRCLE_PREFIXES = [
   'list_my_circle_invites',
   'list_my_joined_circles',
   'leave_safety_circle',
+  'test_alerts',
 ] as const;
 
 /** Spec codes no request can produce, with the reason (checked by its own test). */
@@ -131,6 +139,13 @@ describe('Phase 2 gate: every circle and invite error code of the spec is produc
     return o;
   };
   const fakeId = () => randomUUID();
+  /** `POST /v1/me/circle/test-alerts` (C7) with a fresh Idempotency-Key. */
+  const sendTestAlert = async (userId: string) =>
+    app.inject({
+      method: 'POST',
+      url: '/v1/me/circle/test-alerts',
+      headers: { ...(await authHeader(userId)), 'idempotency-key': randomUUID() },
+    });
 
   const PRODUCERS: Record<string, () => Promise<Reply>> = {
     // C2 circle_invite_capacity
@@ -394,6 +409,28 @@ describe('Phase 2 gate: every circle and invite error code of the spec is produc
       const o = await owner();
       return leaveCircle(app, (await createUser(client)).id, o.circle.id);
     },
+
+    // C7-C11 test alerts (SCRUM-35, D66-D68)
+    'test_alerts:not_authenticated': () => anonymous('GET', '/v1/me/circle/test-alerts/latest'),
+    'test_alerts:no_eligible_recipients': async () => sendTestAlert((await owner()).owner.id),
+    'test_alerts:rate_limited': async () => {
+      const o = await owner();
+      await addActiveMember(client, o.circle, await createUser(client));
+      expect((await sendTestAlert(o.owner.id)).statusCode).toBe(201);
+      return sendTestAlert(o.owner.id);
+    },
+    'test_alerts:not_found': async () =>
+      app.inject({
+        method: 'GET',
+        url: `/v1/test-alerts/${fakeId()}`,
+        headers: await authHeader((await createUser(client)).id),
+      }),
+    'validation:invalid_request': async () =>
+      app.inject({
+        method: 'GET',
+        url: '/v1/me/circle/test-alerts/not-a-uuid',
+        headers: await authHeader((await owner()).owner.id),
+      }),
   };
 
   /**
@@ -477,17 +514,23 @@ describe('Phase 2 gate: every circle and invite error code of the spec is produc
   }
 
   const specCodes = specCircleErrorCodes();
+  const isGeneric = (code: string) => (GENERIC_ERROR_CODES as readonly string[]).includes(code);
+  const specGenericCodes = specCodes.filter(isGeneric);
+  const specParityCodes = specCodes.filter((code) => !isGeneric(code));
   const catalogueCodes = CIRCLE_PREFIXES.flatMap((prefix) =>
     PARITY_ERROR_CODES[prefix].map((suffix) => `${prefix}:${suffix}`),
   );
 
-  it('reads the circle and invite codes of spec §7.2, §7.3 and §11.3 C1-C6 / I1-I11', () => {
-    expect(new Set(specCodes.map((code) => code.split(':')[0]))).toEqual(new Set(CIRCLE_PREFIXES));
-    expect(specCodes.length).toBeGreaterThanOrEqual(68);
+  it('reads the circle and invite codes of spec §7.2, §7.3 and §11.3 C1-C11 / I1-I11', () => {
+    expect(new Set(specParityCodes.map((code) => code.split(':')[0]))).toEqual(
+      new Set(CIRCLE_PREFIXES),
+    );
+    expect(specGenericCodes).toEqual(['validation:invalid_request']);
+    expect(specParityCodes.length).toBeGreaterThanOrEqual(72);
   });
 
   it('the spec codes are exactly the parity catalogue for these prefixes', () => {
-    expect([...specCodes].sort()).toEqual([...catalogueCodes].sort());
+    expect([...specParityCodes].sort()).toEqual([...catalogueCodes].sort());
   });
 
   it('has a producer for every spec and catalogue code, except the ones proved unreachable', () => {

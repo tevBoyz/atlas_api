@@ -75,6 +75,8 @@ export class DeliveriesRepository {
   async fanOut(input: {
     outboxId: string;
     incidentId: string | null;
+    /** SCRUM-35: the test alert of the rows (never together with `incidentId`). */
+    testAlertId?: string | null;
     recipients: readonly DeliveryRecipient[];
     channels: readonly Channel[];
     enabled: Readonly<Record<Channel, boolean>>;
@@ -163,10 +165,11 @@ export class DeliveriesRepository {
          where not pe.eligible
       )
       insert into public.notification_deliveries (
-        outbox_id, incident_id, recipient_user_id, channel, device_id, status, error_code,
-        preferences
+        outbox_id, incident_id, test_alert_id, recipient_user_id, channel, device_id, status,
+        error_code, preferences
       )
-      select ${input.outboxId}::uuid, ${input.incidentId}::uuid, t.user_id, t.channel, t.device_id,
+      select ${input.outboxId}::uuid, ${input.incidentId}::uuid,
+             ${input.testAlertId ?? null}::uuid, t.user_id, t.channel, t.device_id,
              case when t.skip is null then 'queued' else 'skipped' end, t.skip, t.preferences
         from targets t
       on conflict do nothing`);

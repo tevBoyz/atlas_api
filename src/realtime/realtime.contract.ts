@@ -172,6 +172,16 @@ export const REALTIME_CONTRACT = {
         'Sent after the commit, right after the sockets left the incident rooms of that circle (D20). ' +
         'No reason and no names: screens of that circle show the neutral "no longer available" state.',
     },
+    [SERVER_EVENTS.testAlert]: {
+      room: 'user:{id} of each recipient of the test alert (the active members of the circle when it was sent)',
+      payload: ['test_alert_id', 'owner_name', 'created_at', 'occurred_at'],
+      note:
+        'SCRUM-35 (D67): sent by the API right after the circle owner sent a test alert ' +
+        '(POST /v1/me/circle/test-alerts). Show the TEST ALERT — NOT AN EMERGENCY banner and open ' +
+        'GET /v1/test-alerts/{test_alert_id}; never an SOS, never an incident. occurred_at = ' +
+        'created_at (the send time). Pending, declined, removed or left members and outsiders never ' +
+        'get it. Not replayed after a reconnect.',
+    },
     [SERVER_EVENTS.sessionExpired]: { room: 'the socket', payload: ['code'] },
   },
 } as const;

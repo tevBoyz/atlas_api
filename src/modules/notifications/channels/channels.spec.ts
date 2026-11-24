@@ -6,7 +6,7 @@ import type { Logger } from 'pino';
 import type { ApiConfigService, ConfigKey } from '../../../config';
 import { parseConfig } from '../../../config';
 import { ChannelSenders } from './channel-senders';
-import { isPermanentFailure, type PushMessage } from './channel.types';
+import { isPermanentFailure, type PushMessage, type TestAlertPushMessage } from './channel.types';
 import {
   FAKE_FAIL_TOKEN_PREFIX,
   FAKE_UNREGISTERED_TOKEN_PREFIX,
@@ -18,6 +18,7 @@ import type { HttpRequest, HttpResponse, HttpTransport } from './http-transport'
 import {
   ALERT_TTL_SECONDS,
   ANDROID_CHANNEL_ID,
+  ANDROID_TEST_CHANNEL_ID,
   pushData,
   pushMessageOf,
   pushText,
@@ -200,6 +201,94 @@ describe('D55: provider message shape', () => {
     const text = JSON.stringify(fcmMessage(target, MESSAGE, NOW));
     expect(text).not.toContain('Asia/Tokyo');
     expect(text).toContain('Emergency alert: Medical · 19:00');
+  });
+});
+
+describe('SCRUM-35 (D67): test alert notices', () => {
+  const NOW = Date.parse('2026-11-24T16:48:00Z');
+  const TEST: TestAlertPushMessage = {
+    topic: 'circle.test_alert',
+    test_alert_id: '22222222-2222-4222-8222-222222222222',
+    owner_name: 'Rita Owner',
+    occurred_at: '2026-11-24T16:48:05.123456+00:00',
+  };
+
+  it('copies only the test alert id, the owner name and the time; never an incident id', () => {
+    const message = pushMessageOf('circle.test_alert', {
+      test_alert_id: TEST.test_alert_id,
+      circle_id: '33333333-3333-4333-8333-333333333333',
+      owner_name: 'Rita Owner',
+      occurred_at: TEST.occurred_at,
+      recipient_user_ids: ['x'],
+      incident_id: '11111111-1111-4111-8111-111111111111',
+    });
+    expect(message).toEqual(TEST);
+    expect(pushData(message!)).toEqual({
+      topic: 'circle.test_alert',
+      test_alert_id: TEST.test_alert_id,
+      owner_name: 'Rita Owner',
+    });
+    expect(pushMessageOf('circle.test_alert', { owner_name: 'x' })).toBeUndefined();
+  });
+
+  it('title TEST ALERT — NOT AN EMERGENCY; body names the owner, with the time in the recipient zone', () => {
+    expect(pushText(TEST)).toEqual({
+      title: 'TEST ALERT — NOT AN EMERGENCY',
+      body: 'Rita Owner is testing their Safety Circle · 16:48',
+    });
+    expect(pushText(TEST, 'America/Chicago').body).toBe(
+      'Rita Owner is testing their Safety Circle · 10:48',
+    );
+    expect(pushText({ ...TEST, owner_name: null, occurred_at: null })).toEqual({
+      title: 'TEST ALERT — NOT AN EMERGENCY',
+      body: 'Your Safety Circle owner is testing their Safety Circle',
+    });
+  });
+
+  it('FCM: the atlas_test channel, default notification priority, 1 h TTL; APNs passive, no sound', () => {
+    const target = { provider: 'fcm' as const, token: DEVICE_TOKEN, time_zone: 'Africa/Banjul' };
+    expect(fcmMessage(target, TEST, NOW)).toEqual({
+      token: DEVICE_TOKEN,
+      notification: {
+        title: 'TEST ALERT — NOT AN EMERGENCY',
+        body: 'Rita Owner is testing their Safety Circle · 16:48',
+      },
+      data: pushData(TEST),
+      android: {
+        priority: 'high',
+        ttl: '3600s',
+        notification: {
+          channel_id: 'atlas_test',
+          notification_priority: 'PRIORITY_DEFAULT',
+          sound: 'default',
+        },
+      },
+      apns: {
+        headers: {
+          'apns-priority': '10',
+          'apns-push-type': 'alert',
+          'apns-expiration': String(Math.floor(NOW / 1000) + 3600),
+        },
+        payload: {
+          aps: {
+            alert: pushText(TEST, 'Africa/Banjul'),
+            'interruption-level': 'passive',
+          },
+        },
+      },
+    });
+    expect(ANDROID_TEST_CHANNEL_ID).toBe('atlas_test');
+    expect(pushTtlSeconds('circle.test_alert')).toBe(3600);
+  });
+
+  it('the fake push keeps the test text (for tests and the guide)', async () => {
+    const fake = new FakePushSender();
+    await fake.send({ provider: 'fcm', token: DEVICE_TOKEN, time_zone: 'Africa/Banjul' }, TEST);
+    expect(fake.sent[0].text).toEqual({
+      title: 'TEST ALERT — NOT AN EMERGENCY',
+      body: 'Rita Owner is testing their Safety Circle · 16:48',
+    });
+    expect(fake.sent[0].content).toEqual(TEST);
   });
 });
 

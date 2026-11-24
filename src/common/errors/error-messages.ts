@@ -70,6 +70,7 @@ const SUFFIX_MESSAGES: Record<ErrorSuffix, string> = {
   not_invitable: 'This member cannot be invited.',
   location_sharing_disabled: 'Turn on location sharing to manage your Safety Circle.',
   profile_setup_incomplete: 'Finish setting up your profile first.',
+  no_eligible_recipients: 'Add an active member to send a test alert.',
   personal_info_incomplete: 'Finish your personal information first.',
   emergency_info_incomplete: 'Finish your emergency information first.',
   preferences_incomplete: 'Finish your preferences first.',

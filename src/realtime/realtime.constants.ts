@@ -47,6 +47,8 @@ export const SERVER_EVENTS = {
   closed: 'incident.closed',
   /** To `user:{id}` of a member whose membership was removed or who left (D49). */
   membershipEnded: 'circle.membership_ended',
+  /** To `user:{id}` of each recipient of a test alert (SCRUM-35, D67). Never an incident. */
+  testAlert: 'circle.test_alert',
   /** Sent just before the server disconnects a socket whose token reached `exp` (API-100-39 AC4). */
   sessionExpired: 'session.expired',
 } as const;

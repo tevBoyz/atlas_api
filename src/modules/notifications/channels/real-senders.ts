@@ -2,22 +2,16 @@ import { importPKCS8, SignJWT } from 'jose';
 
 import type {
   EmailSender,
-  PushMessage,
+  PushNotice,
   PushSender,
   PushTarget,
   SendErrorCode,
   SendResult,
   SmsSender,
 } from './channel.types';
-import { failed } from './channel.types';
+import { failed, isTestAlertMessage } from './channel.types';
 import type { HttpResponse, HttpTransport } from './http-transport';
-import {
-  ANDROID_CHANNEL_ID,
-  isAlertTopic,
-  pushData,
-  pushText,
-  pushTtlSeconds,
-} from './push-content';
+import { androidChannelId, isAlertTopic, pushData, pushText, pushTtlSeconds } from './push-content';
 
 /**
  * The real providers (API-100-46 AC2, D43): built only when CHANNEL_PUSH_ADAPTER=real /
@@ -58,8 +52,14 @@ function byStatus(status: number): SendErrorCode | undefined {
   return undefined;
 }
 
-/** The APNs `aps` dictionary (D55): the alert, the default sound, and `time-sensitive` for alerts. */
-export function apnsAps(target: PushTarget, message: PushMessage): Record<string, unknown> {
+/**
+ * The APNs `aps` dictionary (D55): the alert, the default sound, and `time-sensitive` for alerts.
+ * A test alert (SCRUM-35, D67) is `passive` without a sound: it never interrupts like an SOS.
+ */
+export function apnsAps(target: PushTarget, message: PushNotice): Record<string, unknown> {
+  if (isTestAlertMessage(message)) {
+    return { alert: pushText(message, target.time_zone), 'interruption-level': 'passive' };
+  }
   return {
     alert: pushText(message, target.time_zone),
     sound: 'default',
@@ -68,7 +68,7 @@ export function apnsAps(target: PushTarget, message: PushMessage): Record<string
 }
 
 /** APNs `apns-expiration` (seconds since the epoch): now + the topic's TTL (D55). */
-function apnsExpiration(message: PushMessage, nowMs: number): string {
+function apnsExpiration(message: PushNotice, nowMs: number): string {
   return String(Math.floor(nowMs / 1000) + pushTtlSeconds(message.topic));
 }
 
@@ -79,10 +79,14 @@ function apnsExpiration(message: PushMessage, nowMs: number): string {
  * alert, 1 h for the closing notice). No `click_action`: the app handles the tap with
  * firebase_messaging (getInitialMessage / onMessageOpenedApp) and opens `incident_id`. For iOS tokens issued by FCM the same as
  * the APNs adapter (priority 10, `time-sensitive` for alerts, the default sound, expiry).
+ *
+ * A test alert (SCRUM-35, D67) goes on the separate `atlas_test` channel with the default
+ * notification priority (no Do Not Disturb bypass), a 1 h TTL and its three data keys; APNs
+ * `passive`.
  */
 export function fcmMessage(
   target: PushTarget,
-  message: PushMessage,
+  message: PushNotice,
   nowMs: number,
 ): Record<string, unknown> {
   return {
@@ -93,8 +97,8 @@ export function fcmMessage(
       priority: 'high',
       ttl: `${pushTtlSeconds(message.topic)}s`,
       notification: {
-        channel_id: ANDROID_CHANNEL_ID,
-        notification_priority: 'PRIORITY_MAX',
+        channel_id: androidChannelId(message.topic),
+        notification_priority: isTestAlertMessage(message) ? 'PRIORITY_DEFAULT' : 'PRIORITY_MAX',
         sound: 'default',
       },
     },
@@ -131,7 +135,7 @@ export class FcmPushSender implements PushSender {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async send(target: PushTarget, message: PushMessage): Promise<SendResult> {
+  async send(target: PushTarget, message: PushNotice): Promise<SendResult> {
     let token: string;
     try {
       token = await this.token();
@@ -227,7 +231,7 @@ export class ApnsPushSender implements PushSender {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async send(target: PushTarget, message: PushMessage): Promise<SendResult> {
+  async send(target: PushTarget, message: PushNotice): Promise<SendResult> {
     let token: string;
     try {
       token = await this.token();
@@ -289,7 +293,7 @@ export class ApnsPushSender implements PushSender {
 export class RoutingPushSender implements PushSender {
   constructor(private readonly senders: Partial<Record<PushTarget['provider'], PushSender>>) {}
 
-  send(target: PushTarget, message: PushMessage): Promise<SendResult> {
+  send(target: PushTarget, message: PushNotice): Promise<SendResult> {
     const sender = this.senders[target.provider];
     return sender ? sender.send(target, message) : Promise.resolve(failed('not_configured'));
   }

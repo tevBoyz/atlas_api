@@ -8,9 +8,13 @@ import 'package:retrofit/retrofit.dart';
 import '../models/capacity.dart';
 import '../models/circle_member.dart';
 import '../models/joined_circle.dart';
+import '../models/latest_test_alert.dart';
 import '../models/left_circle.dart';
+import '../models/member_test_alert.dart';
 import '../models/own_circle.dart';
 import '../models/removed_member.dart';
+import '../models/test_alert_sent.dart';
+import '../models/test_alert_status.dart';
 
 part 'circles_client.g.dart';
 
@@ -45,7 +49,33 @@ abstract class CirclesClient {
   @GET('/v1/me/circle/capacity')
   Future<Capacity> circleInviteCapacity();
 
+  /// Send a test alert (TEST ALERT — NOT AN EMERGENCY) to the active members of my circle.
+  ///
+  /// [idempotencyKey] - UUID chosen by the client. A retry with the same key replays the first result.
+  @POST('/v1/me/circle/test-alerts')
+  Future<TestAlertSent> sendCircleTestAlert({
+    @Header('Idempotency-Key') required String idempotencyKey,
+  });
+
+  /// The status of my latest test alert
+  @GET('/v1/me/circle/test-alerts/latest')
+  Future<LatestTestAlert> latestCircleTestAlert();
+
+  /// The delivery status of one of my test alerts, per member
+  @GET('/v1/me/circle/test-alerts/{id}')
+  Future<TestAlertStatus> getCircleTestAlertStatus({
+    @Path('id') required String id,
+  });
+
   /// The circles the caller is an active member of (the own circle included)
   @GET('/v1/me/joined-circles')
   Future<List<JoinedCircle>> listMyJoinedCircles();
+
+  /// A test alert I received (who sent it and when; never an emergency)
+  @GET('/v1/test-alerts/{id}')
+  Future<MemberTestAlert> getTestAlert({@Path('id') required String id});
+
+  /// Mark a test alert I received as seen (idempotent)
+  @POST('/v1/test-alerts/{id}/seen')
+  Future<MemberTestAlert> markTestAlertSeen({@Path('id') required String id});
 }

@@ -14,11 +14,12 @@ import { ChannelSenders } from './channels/channel-senders';
 import { DeliveriesRepository } from './deliveries.repository';
 import { DeliveryPlanner, DeliverySender } from './deliveries.service';
 import { IncidentNotificationsHandler } from './incident-notifications';
+import { TestAlertNotificationsHandler } from './test-alert-notifications';
 
 /**
  * What the worker process runs (API-100-45 AC3): the outbox consumer with the topic handlers, the
  * channel adapters (API-100-46), the delivery records and retries (API-100-47) and the incident
- * notices (API-100-48). The job workers also run the incident close sweep (SCRUM-63, D62) of
+ * notices (API-100-48) and the test alerts (SCRUM-35, D67). The job workers also run the incident close sweep (SCRUM-63, D62) of
  * `IncidentLifecycleWorkerModule`.
  */
 @Module({
@@ -29,10 +30,14 @@ import { IncidentNotificationsHandler } from './incident-notifications';
     DeliveryPlanner,
     DeliverySender,
     IncidentNotificationsHandler,
+    TestAlertNotificationsHandler,
     {
       provide: OUTBOX_TOPIC_HANDLERS,
-      inject: [IncidentNotificationsHandler],
-      useFactory: (incidents: IncidentNotificationsHandler): OutboxTopicHandler[] => [incidents],
+      inject: [IncidentNotificationsHandler, TestAlertNotificationsHandler],
+      useFactory: (
+        incidents: IncidentNotificationsHandler,
+        testAlerts: TestAlertNotificationsHandler,
+      ): OutboxTopicHandler[] => [incidents, testAlerts],
     },
     OutboxDispatcher,
     {

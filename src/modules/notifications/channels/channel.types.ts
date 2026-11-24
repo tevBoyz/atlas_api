@@ -66,6 +66,28 @@ export interface PushMessage {
   occurred_at: string | null;
 }
 
+/** SCRUM-35 (D67): the outbox / push topic of a test alert. */
+export const TEST_ALERT_TOPIC = 'circle.test_alert';
+
+/**
+ * The content of a test-alert push (SCRUM-35, D67): the test alert id, the owner's display name and
+ * the time it was sent, plus the topic. Never an incident id: a test is not an incident.
+ */
+export interface TestAlertPushMessage {
+  topic: typeof TEST_ALERT_TOPIC;
+  test_alert_id: string;
+  owner_name: string | null;
+  occurred_at: string | null;
+}
+
+/** Any push the adapters send: an incident notice or a test alert. */
+export type PushNotice = PushMessage | TestAlertPushMessage;
+
+/** True for a test alert (SCRUM-35). */
+export function isTestAlertMessage(message: PushNotice): message is TestAlertPushMessage {
+  return 'test_alert_id' in message;
+}
+
 export type PushProviderName = 'fcm' | 'apns';
 
 export interface PushTarget {
@@ -79,7 +101,7 @@ export interface PushTarget {
 }
 
 export interface PushSender {
-  send(target: PushTarget, message: PushMessage): Promise<SendResult>;
+  send(target: PushTarget, message: PushNotice): Promise<SendResult>;
 }
 
 /** SMS text to one E.164 number. */

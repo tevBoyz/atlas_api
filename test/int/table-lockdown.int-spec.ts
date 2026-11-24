@@ -25,6 +25,9 @@ const TABLES = [
   'public.refresh_tokens',
   'public.auth_tokens',
   'public.api_retired_supabase_access',
+  // SCRUM-35 (migration 0018): the test alerts and their receipts.
+  'public.circle_test_alerts',
+  'public.circle_test_alert_receipts',
 ];
 const ROLES = ['anon', 'authenticated'];
 const PRIVILEGES = ['select', 'insert', 'update', 'delete'];

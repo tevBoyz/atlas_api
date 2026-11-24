@@ -116,6 +116,8 @@ export const SUFFIX_STATUS: Readonly<Record<string, number>> = {
   not_invitable: 409,
   location_sharing_disabled: 409,
   profile_setup_incomplete: 409,
+  // `test_alerts:no_eligible_recipients` (SCRUM-35, D66): the circle has no active member.
+  no_eligible_recipients: 409,
 
   expired: 410,
 

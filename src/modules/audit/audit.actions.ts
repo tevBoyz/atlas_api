@@ -20,6 +20,8 @@ export const AUDIT_ACTIONS = [
   'circle.invite.declined',
   'circle.member.removed',
   'circle.member.left',
+  // SCRUM-35 (D66): the owner sent a test alert. Detail {circle_id, recipient_count}; ids only.
+  'circle.test_alert.sent',
   'profile.setup_completed',
   // SCRUM-21 (D51): detail {list, item_id} only, never the text.
   'profile.medical_item.added',

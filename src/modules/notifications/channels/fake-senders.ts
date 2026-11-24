@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type {
   EmailSender,
-  PushMessage,
+  PushNotice,
   PushSender,
   PushTarget,
   SendResult,
@@ -45,7 +45,7 @@ export class FakePushSender implements PushSender {
   /** Every call, including failed ones (tests count attempts). */
   readonly calls: PushTarget[] = [];
 
-  send(target: PushTarget, message: PushMessage): Promise<SendResult> {
+  send(target: PushTarget, message: PushNotice): Promise<SendResult> {
     remember(this.calls, target);
     if (target.token.startsWith(FAKE_FAIL_TOKEN_PREFIX)) {
       return Promise.resolve(failed('fake_unavailable'));

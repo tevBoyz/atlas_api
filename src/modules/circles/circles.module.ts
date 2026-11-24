@@ -11,16 +11,29 @@ import { MeJoinedCirclesController } from './me-joined-circles.controller';
 import { MEMBERSHIP_POST_COMMIT_HOOKS, MembershipPostCommitRunner } from './membership-post-commit';
 import { MembershipRepository } from './membership.repository';
 import { MembershipService } from './membership.service';
+import { MeTestAlertsController } from './me-test-alerts.controller';
+import { TestAlertsController } from './test-alerts.controller';
+import { TestAlertsRepository } from './test-alerts.repository';
+import { TestAlertsService } from './test-alerts.service';
 
 /**
  * Circles (spec §11.3 circles module): the own circle and capacity (API-100-24), the member list
  * (API-100-25), the joined circles (API-100-31), remove and leave through the membership service
- * (API-100-32).
+ * (API-100-32), and the test alerts (SCRUM-35, D66-D68).
  */
 @Module({
   imports: [AuditModule, RealtimeModule],
-  controllers: [MeCircleController, MeJoinedCirclesController, CirclesController],
+  controllers: [
+    MeCircleController,
+    MeJoinedCirclesController,
+    CirclesController,
+    MeTestAlertsController,
+    TestAlertsController,
+  ],
   providers: [
+    // SCRUM-35 (D66-D68): test alerts.
+    TestAlertsRepository,
+    TestAlertsService,
     CirclesRepository,
     CirclesService,
     MembershipRepository,

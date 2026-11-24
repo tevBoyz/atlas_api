@@ -167,6 +167,9 @@ export const PARITY_ERROR_CODES = {
   // behind it; every route checks the status first and answers its own `not_open`, so this is the
   // service's last guard.
   incidents: ['invalid_state_transition'],
+  // SCRUM-35 (D66-D68): test alerts. `POST /v1/me/circle/test-alerts` (send), the owner's status reads
+  // and the member's read / seen. New codes, no SQL function behind them.
+  test_alerts: ['not_authenticated', 'no_eligible_recipients', 'rate_limited', 'not_found'],
 
   // §7.5 Login lockout (prefix `login_lockout`, not the function name)
   login_lockout: [
