@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
+import { DatabaseService } from '../../src/db/database.service';
+import { DeliveriesRepository } from '../../src/modules/notifications/deliveries.repository';
+import { pushTokenHash } from '../../src/modules/notifications/device-input';
 import { DevicesRepository } from '../../src/modules/notifications/devices.repository';
 import { createTestApp, type LogCapture, withTestConfig } from '../../src/testing/test-app';
 import { authHeader } from '../../src/testing/test-tokens';
@@ -26,6 +29,7 @@ interface DeviceRow {
   push_provider: string | null;
   push_token: string | null;
   push_token_updated_at: Date | null;
+  push_token_invalid_hash: string | null;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -95,7 +99,8 @@ describe('PUT /v1/me/devices/current and DELETE .../push-token (API-100-44)', ()
       });
       expect(first.statusCode).toBe(200);
       const { device_id: deviceId } = first.json<{ device_id: string }>();
-      expect(Object.keys(first.json<Body>())).toEqual(['device_id']);
+      expect(Object.keys(first.json<Body>())).toEqual(['device_id', 'push_token_status']);
+      expect(first.json<Body>().push_token_status).toBe('none');
 
       const [row] = (await rowsOf(user.id)).filter((r) => r.installation_id === installation);
       expect(row).toMatchObject({
@@ -112,7 +117,7 @@ describe('PUT /v1/me/devices/current and DELETE .../push-token (API-100-44)', ()
         app_version: '1.1.0',
       });
       expect(again.statusCode).toBe(200);
-      expect(again.json()).toEqual({ device_id: deviceId });
+      expect(again.json()).toEqual({ device_id: deviceId, push_token_status: 'none' });
       const [updated] = (await rowsOf(user.id)).filter((r) => r.installation_id === installation);
       expect(updated.platform).toBe('ios');
       expect(updated.app_version).toBe('1.1.0');
@@ -213,6 +218,136 @@ describe('PUT /v1/me/devices/current and DELETE .../push-token (API-100-44)', ()
         app_version: '1',
       });
       expect(one.json<Body>().device_id).not.toEqual(two.json<Body>().device_id);
+    });
+  });
+
+  describe('push_token_status and the dead-token hash (D69, gap 49)', () => {
+    /** A U1 body; `pushToken` undefined = no push fields, null = clear. */
+    function android(pushToken?: string | null): Body {
+      const body: Body = { platform: 'android', app_version: '2.0.0' };
+      if (pushToken === null) return { ...body, push_provider: null, push_token: null };
+      if (pushToken !== undefined) return { ...body, push_provider: 'fcm', push_token: pushToken };
+      return body;
+    }
+
+    /** What the delivery worker does when the provider answers `unregistered` (same code path). */
+    async function providerSaysUnregistered(deviceId: string, value: string): Promise<void> {
+      await new DeliveriesRepository(app.get(DatabaseService)).clearPushToken(deviceId, value);
+      tokensUsed.push(pushTokenHash(value));
+    }
+
+    async function deviceRow(deviceId: string): Promise<DeviceRow> {
+      const { rows } = await client.query<DeviceRow>(
+        'select * from public.user_devices where id = $1',
+        [deviceId],
+      );
+      return rows[0];
+    }
+
+    const statusOf = (reply: { json: <T>() => T }) => reply.json<Body>().push_token_status;
+    const idOf = (reply: { json: <T>() => T }) => reply.json<{ device_id: string }>().device_id;
+
+    it('unregistered: the token is cleared and its SHA-256 kept in the same statement', async () => {
+      const user = await createUser(client);
+      const dead = token('dead');
+      const reply = await registerDevice(app, user.id, randomUUID(), android(dead));
+      expect(statusOf(reply)).toBe('ok');
+      const deviceId = idOf(reply);
+
+      await providerSaysUnregistered(deviceId, dead);
+      const row = await deviceRow(deviceId);
+      expect(row).toMatchObject({
+        push_token: null,
+        push_provider: null,
+        push_token_invalid_hash: pushTokenHash(dead),
+      });
+      expect(row.push_token_invalid_hash).not.toContain(dead);
+    });
+
+    it('a token re-registered since is kept: no hash is written for the old one', async () => {
+      const user = await createUser(client);
+      const installation = randomUUID();
+      const old = token('old');
+      const current = token('current');
+      const deviceId = idOf(await registerDevice(app, user.id, installation, android(old)));
+      await registerDevice(app, user.id, installation, android(current));
+      await providerSaysUnregistered(deviceId, old);
+      expect(await deviceRow(deviceId)).toMatchObject({
+        push_token: current,
+        push_token_invalid_hash: null,
+      });
+    });
+
+    it('U1 with the dead token -> invalid, nothing stored; a new token -> ok, stored, hash cleared', async () => {
+      const user = await createUser(client);
+      const installation = randomUUID();
+      const dead = token('dead');
+      const deviceId = idOf(await registerDevice(app, user.id, installation, android(dead)));
+      await providerSaysUnregistered(deviceId, dead);
+      const cleared = await deviceRow(deviceId);
+
+      const refused = await registerDevice(app, user.id, installation, {
+        ...android(dead),
+        app_version: '2.0.1',
+      });
+      expect(refused.statusCode).toBe(200);
+      expect(refused.json()).toEqual({ device_id: deviceId, push_token_status: 'invalid' });
+      expect(await deviceRow(deviceId)).toMatchObject({
+        push_token: null,
+        push_provider: null,
+        push_token_invalid_hash: pushTokenHash(dead),
+        push_token_updated_at: cleared.push_token_updated_at,
+        app_version: '2.0.1',
+      });
+      expect(await rowWithToken(dead)).toEqual([]);
+      // Refused again on the next try (the app still has the cached token).
+      expect(statusOf(await registerDevice(app, user.id, installation, android(dead)))).toBe(
+        'invalid',
+      );
+
+      const fresh = token('fresh');
+      const renewed = await registerDevice(app, user.id, installation, android(fresh));
+      expect(renewed.json()).toEqual({ device_id: deviceId, push_token_status: 'ok' });
+      expect(await deviceRow(deviceId)).toMatchObject({
+        push_token: fresh,
+        push_provider: 'fcm',
+        push_token_invalid_hash: null,
+      });
+    });
+
+    it('the dead hash belongs to its device: another installation may register that token', async () => {
+      const user = await createUser(client);
+      const dead = token('dead');
+      const deviceId = idOf(await registerDevice(app, user.id, randomUUID(), android(dead)));
+      await providerSaysUnregistered(deviceId, dead);
+      expect(statusOf(await registerDevice(app, user.id, randomUUID(), android(dead)))).toBe('ok');
+      expect(await rowWithToken(dead)).toHaveLength(1);
+    });
+
+    it('no push fields: ok when a token is stored, none when not; the hash is kept', async () => {
+      const user = await createUser(client);
+      const withToken = randomUUID();
+      await registerDevice(app, user.id, withToken, android(token()));
+      expect(statusOf(await registerDevice(app, user.id, withToken, android()))).toBe('ok');
+      expect(statusOf(await registerDevice(app, user.id, randomUUID(), android()))).toBe('none');
+
+      const deadInstallation = randomUUID();
+      const dead = token('dead');
+      const deviceId = idOf(await registerDevice(app, user.id, deadInstallation, android(dead)));
+      await providerSaysUnregistered(deviceId, dead);
+      expect(statusOf(await registerDevice(app, user.id, deadInstallation, android()))).toBe(
+        'none',
+      );
+      expect((await deviceRow(deviceId)).push_token_invalid_hash).toBe(pushTokenHash(dead));
+    });
+
+    it('null push fields clear the token: none', async () => {
+      const user = await createUser(client);
+      const installation = randomUUID();
+      await registerDevice(app, user.id, installation, android(token()));
+      expect(statusOf(await registerDevice(app, user.id, installation, android(null)))).toBe(
+        'none',
+      );
     });
   });
 

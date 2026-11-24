@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 
 import type { Database } from '../../db';
-import type { DeviceRegistration } from './device-input';
+import { type DeviceRegistration, pushTokenHash } from './device-input';
 
 /** The open transaction of a device write. */
 export type DeviceTransaction = Pick<Database, 'execute'>;
@@ -22,15 +22,34 @@ export class DevicesRepository {
   /**
    * U1: upsert on `(user_id, installation_id)`, `last_seen_at = now()`. With a token, the token is
    * first cleared from any other row (of any user) holding it. `push` undefined keeps the stored
-   * token; null clears it. Returns the row id.
+   * token; null clears it.
+   *
+   * D69 (gap 49): this row is locked first; a token whose SHA-256 equals the row's
+   * `push_token_invalid_hash` (the provider answered `unregistered` for it) is refused: nothing about
+   * the token changes (the row keeps no token). Storing any other token clears the hash. Returns the
+   * row id, whether the token was refused and whether a token is stored now.
    */
   async register(
     tx: DeviceTransaction,
     userId: string,
     installationId: string,
     input: DeviceRegistration,
-  ): Promise<string> {
-    const push = input.push;
+  ): Promise<{ id: string; refused: boolean; stored: boolean }> {
+    let push = input.push;
+    let refused = false;
+    if (push) {
+      // The row lock orders this write after a concurrent `unregistered` clear of the same row.
+      const current = await tx.execute<{ push_token_invalid_hash: string | null }>(sql`
+        select push_token_invalid_hash
+          from public.user_devices
+         where user_id = ${userId}::uuid and installation_id = ${installationId}::text
+         for update`);
+      const deadHash = current.rows[0]?.push_token_invalid_hash ?? null;
+      if (deadHash !== null && deadHash === pushTokenHash(push.token)) {
+        refused = true;
+        push = undefined;
+      }
+    }
     if (push) {
       await tx.execute(sql`
         select pg_advisory_xact_lock(${PUSH_TOKEN_LOCK_NAMESPACE}::int, hashtext(${push.token}::text))`);
@@ -45,7 +64,7 @@ export class DevicesRepository {
     const given = push !== undefined;
     const provider = push?.provider ?? null;
     const token = push?.token ?? null;
-    const result = await tx.execute<{ id: string }>(sql`
+    const result = await tx.execute<{ id: string; stored: boolean }>(sql`
       insert into public.user_devices as d (
         user_id, installation_id, platform, app_version,
         push_provider, push_token, push_token_updated_at, last_seen_at
@@ -70,9 +89,13 @@ export class DevicesRepository {
                          and (d.push_token is distinct from excluded.push_token
                               or d.push_provider is distinct from excluded.push_provider)
                     then now()
-                    else d.push_token_updated_at end
-      returning d.id::text as id`);
-    return result.rows[0].id;
+                    else d.push_token_updated_at end,
+             push_token_invalid_hash =
+               case when ${token}::text is not null then null
+                    else d.push_token_invalid_hash end
+      returning d.id::text as id, d.push_token is not null as stored`);
+    const row = result.rows[0];
+    return { id: row.id, refused, stored: row.stored };
   }
 
   /**

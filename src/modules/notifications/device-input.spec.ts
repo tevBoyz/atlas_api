@@ -4,6 +4,9 @@ import {
   APP_VERSION_MAX,
   deviceRegistrationFromBody,
   PUSH_TOKEN_MAX,
+  PUSH_TOKEN_STATUSES,
+  pushTokenHash,
+  pushTokenStatus,
   requireInstallationId,
 } from './device-input';
 
@@ -185,5 +188,37 @@ describe('device input (API-100-44, D22)', () => {
   it('the log scrubber redacts push tokens', () => {
     const scrubbed = JSON.stringify(scrub({ push_token: TOKEN, body: { push_token: TOKEN } }));
     expect(scrubbed).not.toContain(TOKEN);
+  });
+});
+
+describe('push_token_status and the dead-token hash (D69, gap 49)', () => {
+  it.each([
+    [{ refused: true, stored: false }, 'invalid'],
+    [{ refused: true, stored: true }, 'invalid'],
+    [{ refused: false, stored: true }, 'ok'],
+    [{ refused: false, stored: false }, 'none'],
+  ] as const)('%o -> %s', (outcome, status) => {
+    expect(pushTokenStatus(outcome)).toBe(status);
+  });
+
+  it('the statuses are exactly ok, none, invalid', () => {
+    expect(PUSH_TOKEN_STATUSES).toEqual(['ok', 'none', 'invalid']);
+  });
+
+  it('the hash is the SHA-256 hex of the token, never the token itself', () => {
+    const hash = pushTokenHash(TOKEN);
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(hash).not.toContain(TOKEN);
+    expect(pushTokenHash(TOKEN)).toBe(hash);
+    expect(pushTokenHash(`${TOKEN}x`)).not.toBe(hash);
+    // Known vector: SHA-256 of "abc".
+    expect(pushTokenHash('abc')).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    );
+  });
+
+  it('the log scrubber redacts the hash column too', () => {
+    const hash = pushTokenHash(TOKEN);
+    expect(JSON.stringify(scrub({ push_token_invalid_hash: hash }))).not.toContain(hash);
   });
 });

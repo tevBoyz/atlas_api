@@ -99,6 +99,7 @@ export 'models/preferred_language.dart';
 export 'models/profile.dart';
 export 'models/profile_setup_result.dart';
 export 'models/push_provider.dart';
+export 'models/push_token_status.dart';
 export 'models/readiness_unavailable.dart';
 export 'models/recent_incident.dart';
 export 'models/refresh_request.dart';

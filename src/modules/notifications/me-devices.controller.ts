@@ -13,7 +13,7 @@ import {
   INSTALLATION_ID_HEADER_CONTRACT,
   registerDeviceRequestSchema,
 } from './device.schemas';
-import { DevicesService } from './devices.service';
+import { type DeviceRegistered, DevicesService } from './devices.service';
 
 /**
  * The caller's app installation (spec §11.3 U1/U2, API-100-44, D22). The installation is named by
@@ -37,7 +37,7 @@ export class MeDevicesController {
     responses: {
       200: {
         description:
-          'The installation is registered (created or updated; `last_seen_at` is now). Same `device_id` for the same user and installation.',
+          'The installation is registered (created or updated; `last_seen_at` is now). Same `device_id` for the same user and installation. `push_token_status` (D69): `ok` a token is stored; `none` no token is stored; `invalid` the token sent is the one the push provider last rejected as unregistered for this installation: it was not stored; get a new token and register again.',
         name: 'DeviceRegistered',
         schema: deviceRegisteredSchema,
       },
@@ -55,7 +55,7 @@ export class MeDevicesController {
     @CurrentUser() user: AuthenticatedUser,
     @Headers(INSTALLATION_ID_HEADER) installationId: unknown,
     @Body() body: unknown,
-  ): Promise<{ device_id: string }> {
+  ): Promise<DeviceRegistered> {
     const installation = requireInstallationId(installationId);
     return this.devices.register(user, installation, deviceRegistrationFromBody(body));
   }

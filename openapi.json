@@ -633,10 +633,14 @@
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
             "type": "string"
+          },
+          "push_token_status": {
+            "$ref": "#/components/schemas/PushTokenStatus"
           }
         },
         "required": [
-          "device_id"
+          "device_id",
+          "push_token_status"
         ],
         "type": "object"
       },
@@ -3500,6 +3504,15 @@
         "enum": [
           "fcm",
           "apns"
+        ],
+        "type": "string"
+      },
+      "PushTokenStatus": {
+        "description": "`ok`: a push token is stored for this installation. `none`: no token is stored. `invalid`: the token sent is the one the push provider last rejected as unregistered for this installation; it was not stored, and the app must get a brand-new token and register again (D69).",
+        "enum": [
+          "ok",
+          "none",
+          "invalid"
         ],
         "type": "string"
       },
@@ -12100,7 +12113,7 @@
                 }
               }
             },
-            "description": "The installation is registered (created or updated; `last_seen_at` is now). Same `device_id` for the same user and installation."
+            "description": "The installation is registered (created or updated; `last_seen_at` is now). Same `device_id` for the same user and installation. `push_token_status` (D69): `ok` a token is stored; `none` no token is stored; `invalid` the token sent is the one the push provider last rejected as unregistered for this installation: it was not stored; get a new token and register again."
           },
           "401": {
             "content": {

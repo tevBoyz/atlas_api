@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { DomainError, type ErrorCode } from '../../common/errors';
 import { requireJsonObject } from '../incidents/incident-input';
 
@@ -38,6 +40,30 @@ export interface DeviceRegistration {
   platform: Platform;
   app_version: string;
   push?: { provider: PushProvider; token: string } | null;
+}
+
+/**
+ * D69 (gap 49): what U1 says about this installation's push token.
+ * - `ok`: a token is stored;
+ * - `none`: no token was sent and none is stored (or the body cleared it);
+ * - `invalid`: the token sent is the one the provider last answered `unregistered` for on this
+ *   device. It was not stored; the app must get a brand-new token.
+ */
+export const PUSH_TOKEN_STATUSES = ['ok', 'none', 'invalid'] as const;
+export type PushTokenStatus = (typeof PUSH_TOKEN_STATUSES)[number];
+
+/** The status of U1 from what the write found (`refused`) and left stored (`stored`). */
+export function pushTokenStatus(outcome: { refused: boolean; stored: boolean }): PushTokenStatus {
+  if (outcome.refused) return 'invalid';
+  return outcome.stored ? 'ok' : 'none';
+}
+
+/**
+ * D69: SHA-256 (lowercase hex) of a push token, kept in `user_devices.push_token_invalid_hash` for
+ * the token the provider answered `unregistered` for. Never logged.
+ */
+export function pushTokenHash(token: string): string {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
 }
 
 function fail(code: ErrorCode, field: string): DomainError {

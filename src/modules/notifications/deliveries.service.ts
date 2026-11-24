@@ -111,7 +111,8 @@ function e164(phone: string): string {
  * - Channel disabled now: `skipped` `channel_disabled`; push device without a token now:
  *   `skipped` `no_device`; no phone / email now: `skipped` `no_address`.
  * - `sent` / `delivered`: stored with the provider message id and `sent_at`.
- * - `unregistered`: the push token is cleared from `user_devices` (AC4) and the row is `failed`.
+ * - `unregistered`: the push token is cleared from `user_devices` (AC4), its SHA-256 kept in
+ *   `push_token_invalid_hash` (D69: U1 refuses that token), and the row is `failed`.
  * - Other permanent failures: `failed` at once. Transient ones: retried with exponential backoff
  *   (AC3); the last attempt writes `failed` with the last `error_code`.
  *

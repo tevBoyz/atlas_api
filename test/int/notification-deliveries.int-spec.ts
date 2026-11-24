@@ -19,6 +19,7 @@ import {
 } from '../../src/modules/notifications/channels/fake-senders';
 import type { DeliveryRecipient } from '../../src/modules/notifications/deliveries.repository';
 import { DeliveryPlanner } from '../../src/modules/notifications/deliveries.service';
+import { pushTokenHash } from '../../src/modules/notifications/device-input';
 import { createTestApp, type LogCapture, withTestConfig } from '../../src/testing/test-app';
 import { createTestWorker } from '../../src/testing/test-worker';
 import { openTestClient } from '../support/database';
@@ -64,6 +65,7 @@ async function waitFor(check: () => boolean | Promise<boolean>, ms = 15_000): Pr
 
 describe('notification deliveries and retries (API-100-47)', () => {
   let app: NestFastifyApplication;
+  let appLogs: LogCapture;
   let worker: TestingModule;
   let workerLogs: LogCapture;
   let client: Client;
@@ -85,7 +87,7 @@ describe('notification deliveries and retries (API-100-47)', () => {
   };
 
   beforeAll(async () => {
-    ({ app } = await createTestApp({}, withTestConfig(CONFIG)));
+    ({ app, logs: appLogs } = await createTestApp({}, withTestConfig(CONFIG)));
     ({ worker, logs: workerLogs } = await createTestWorker((builder) =>
       withTestConfig(CONFIG)(builder).overrideProvider(OUTBOX_TOPIC_HANDLERS).useValue([handler]),
     ));
@@ -372,6 +374,13 @@ describe('notification deliveries and retries (API-100-47)', () => {
     }>('select push_token, push_provider from public.user_devices where id = $1', [deviceId]);
     expect(rows[0]).toEqual({ push_token: null, push_provider: null });
     expect(push().calls.filter((call) => call.token === token)).toHaveLength(1);
+    // D69 (gap 49): the same statement keeps the dead token's SHA-256, never the token.
+    const { rows: hashes } = await client.query<{ push_token_invalid_hash: string | null }>(
+      'select push_token_invalid_hash from public.user_devices where id = $1',
+      [deviceId],
+    );
+    expect(hashes[0].push_token_invalid_hash).toBe(pushTokenHash(token));
+    secrets.push(pushTokenHash(token));
     await waitFor(() =>
       workerLogs.lines.some(
         (line) => line.job_id === row.id && line.msg === 'job failed, no retries left',
@@ -379,9 +388,61 @@ describe('notification deliveries and retries (API-100-47)', () => {
     );
   });
 
-  it('no push token, phone number or email address appears in any worker log line', () => {
+  it('D69: after unregistered, U1 refuses the dead token (invalid), then stores a new one (ok)', async () => {
+    const user = await createUser(client);
+    const installation = randomUUID();
+    const dead = `${FAKE_UNREGISTERED_TOKEN_PREFIX}${randomUUID()}`;
+    secrets.push(dead, pushTokenHash(dead));
+    const body = (pushToken: string) => ({
+      platform: 'android',
+      app_version: '1.0.0',
+      push_provider: 'fcm',
+      push_token: pushToken,
+    });
+    const first = await registerDevice(app, user.id, installation, body(dead));
+    expect(first.json()).toMatchObject({ push_token_status: 'ok' });
+    const deviceId = first.json<{ device_id: string }>().device_id;
+
+    const outboxId = await notify([{ user_id: user.id, eligible: true }], ['push']);
+    const [row] = await settled(outboxId, 1);
+    expect(row).toMatchObject({ status: 'failed', error_code: 'unregistered' });
+
+    const state = async () =>
+      (
+        await client.query<{ push_token: string | null; push_token_invalid_hash: string | null }>(
+          'select push_token, push_token_invalid_hash from public.user_devices where id = $1',
+          [deviceId],
+        )
+      ).rows[0];
+    expect(await state()).toEqual({
+      push_token: null,
+      push_token_invalid_hash: pushTokenHash(dead),
+    });
+
+    // The app sends the same cached token again: refused, nothing stored.
+    const again = await registerDevice(app, user.id, installation, body(dead));
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toEqual({ device_id: deviceId, push_token_status: 'invalid' });
+    expect(await state()).toEqual({
+      push_token: null,
+      push_token_invalid_hash: pushTokenHash(dead),
+    });
+
+    // A brand-new token: stored, the hash cleared, and the next notice is sent.
+    const fresh = fakePushToken('fresh');
+    secrets.push(fresh);
+    const renewed = await registerDevice(app, user.id, installation, body(fresh));
+    expect(renewed.json()).toEqual({ device_id: deviceId, push_token_status: 'ok' });
+    expect(await state()).toEqual({ push_token: fresh, push_token_invalid_hash: null });
+    const next = await notify([{ user_id: user.id, eligible: true }], ['push']);
+    const [sent] = await settled(next, 1);
+    expect(sent).toMatchObject({ status: 'sent', device_id: deviceId });
+  });
+
+  it('no push token, its hash, phone number or email address appears in any log line', () => {
     expect(workerLogs.lines.length).toBeGreaterThan(0);
     for (const secret of secrets) expect(workerLogs.text).not.toContain(secret);
+    for (const secret of secrets) expect(appLogs.text).not.toContain(secret);
     expect(workerLogs.text).not.toMatch(/@example\.test/);
     expect(workerLogs.text).not.toMatch(/\+1201555\d{4}/);
   });

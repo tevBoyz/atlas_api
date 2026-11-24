@@ -4,6 +4,7 @@ import { type SQL, sql } from 'drizzle-orm';
 import { callerPhoneSql } from '../../common/policies';
 import { DatabaseService } from '../../db/database.service';
 import type { Channel, SendErrorCode } from './channels/channel.types';
+import { pushTokenHash } from './device-input';
 
 /** Why a delivery was not attempted (`status = 'skipped'`). */
 export const SKIP_REASONS = [
@@ -246,14 +247,16 @@ export class DeliveriesRepository {
 
   /**
    * AC4: the provider says the token is no longer valid. Cleared only while the device still holds
-   * the token that failed (a token re-registered since is kept).
+   * the token that failed (a token re-registered since is kept). D69 (gap 49): the same statement
+   * keeps the token's SHA-256 in `push_token_invalid_hash` (never the token), so U1 can refuse it.
    */
   async clearPushToken(deviceId: string, token: string): Promise<void> {
     await this.write(sql`
       update public.user_devices
          set push_token = null,
              push_provider = null,
-             push_token_updated_at = now()
+             push_token_updated_at = now(),
+             push_token_invalid_hash = ${pushTokenHash(token)}::text
        where id = ${deviceId}::uuid
          and push_token = ${token}::text`);
   }

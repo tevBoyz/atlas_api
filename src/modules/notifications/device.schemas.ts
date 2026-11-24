@@ -1,7 +1,13 @@
 import { z } from 'zod';
 
 import { componentSchema } from '../../openapi/component-schema';
-import { APP_VERSION_MAX, PLATFORMS, PUSH_PROVIDERS, PUSH_TOKEN_MAX } from './device-input';
+import {
+  APP_VERSION_MAX,
+  PLATFORMS,
+  PUSH_PROVIDERS,
+  PUSH_TOKEN_MAX,
+  PUSH_TOKEN_STATUSES,
+} from './device-input';
 
 /**
  * Contract schemas of the device routes (API-100-44, spec §11.3 U1/U2). They document the body; the
@@ -29,9 +35,18 @@ export const registerDeviceRequestSchema = z.object({
     ),
 });
 
+export const pushTokenStatusSchema = componentSchema(
+  'PushTokenStatus',
+  z
+    .enum(PUSH_TOKEN_STATUSES)
+    .describe(
+      '`ok`: a push token is stored for this installation. `none`: no token is stored. `invalid`: the token sent is the one the push provider last rejected as unregistered for this installation; it was not stored, and the app must get a brand-new token and register again (D69).',
+    ),
+);
+
 export const deviceRegisteredSchema = componentSchema(
   'DeviceRegistered',
-  z.object({ device_id: z.uuid() }),
+  z.object({ device_id: z.uuid(), push_token_status: pushTokenStatusSchema }),
 );
 
 export const INSTALLATION_ID_HEADER_CONTRACT = {
