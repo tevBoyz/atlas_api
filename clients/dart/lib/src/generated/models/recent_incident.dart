@@ -15,6 +15,8 @@ part 'recent_incident.g.dart';
 class RecentIncident {
   const RecentIncident({
     required this.activatedAt,
+    required this.autoClosed,
+    required this.closedAt,
     required this.emergencyType,
     required this.id,
     required this.resolvedAt,
@@ -28,6 +30,12 @@ class RecentIncident {
 
   @JsonKey(name: 'activated_at')
   final String activatedAt;
+  @JsonKey(name: 'auto_closed')
+  final bool autoClosed;
+
+  /// SCRUM-63 (D61): when the incident became Closed (final, read-only); null until then. With status closed: resolved_reason safe = closed after the wrap-up following mark safe; ended with auto_closed true = closed automatically after inactivity.
+  @JsonKey(name: 'closed_at')
+  final String? closedAt;
   @JsonKey(name: 'emergency_type')
   final RecentIncidentEmergencyType emergencyType;
   final String id;

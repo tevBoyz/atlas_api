@@ -4,6 +4,7 @@ import { AuthenticationModule } from '../common/auth';
 import { IncidentBroadcaster } from './incident-broadcaster';
 import { MembershipRevocationHook } from './membership-revocation.hook';
 import { RealtimeAccessRepository } from './realtime-access.repository';
+import { REALTIME_EMITTER } from './realtime-emitter';
 import { RealtimeReadsRepository } from './realtime-reads.repository';
 import { RealtimeGateway } from './realtime.gateway';
 
@@ -17,6 +18,7 @@ import { RealtimeGateway } from './realtime.gateway';
   imports: [AuthenticationModule],
   providers: [
     RealtimeGateway,
+    { provide: REALTIME_EMITTER, useExisting: RealtimeGateway },
     RealtimeAccessRepository,
     RealtimeReadsRepository,
     MembershipRevocationHook,

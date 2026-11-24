@@ -194,6 +194,41 @@ const PHASES: Record<PhaseNumber, Phase> = {
           '`test/int/incidents-notes-renotify.int-spec.ts`, `test/int/incidents-responder.int-spec.ts` ' +
           '(`test/support/share-payload-shape.ts`)',
       },
+      {
+        decision: 'D61, D62 (SCRUM-63; approved by Dawit 2026-11-24, plan `scrum-63-plan.md`)',
+        case: '`mark_incident_safe` events, and incidents after the close.',
+        sql:
+          'Mark safe writes `safe_recorded`, `incident_closed {resolved_reason: "safe"}`, ' +
+          '`location_sharing_ended`, `closure_notified`. No `closed` status: an incident stays ' +
+          '`resolved`.',
+        api:
+          'Mark safe writes the same events except `incident_closed`. The worker close sweeper ' +
+          'moves Resolved -> Closed after `incident_close_after_minutes` and Active -> Closed after ' +
+          '`incident_auto_close_after_hours` without activity (migration 0017: status `closed`, ' +
+          '`closed_at`), writing `incident_closed {reason, auto_closed}` (no actor) then. The SQL ' +
+          'functions and RLS do not list closed incidents; a closed incident refuses every write ' +
+          'with the same `not_open` codes on both sides.',
+        provedBy:
+          '`test/int/incidents-close-scrum63.int-spec.ts`, `test/parity/scrum45_closure_events.spec.ts` ' +
+          '(L148, L168, L181, L230, L239), `test/parity/membership_access_window.spec.ts` (L207), ' +
+          '`test/int/incidents-mark-safe.int-spec.ts`, ' +
+          '`test/int/incidents-events.int-spec.ts`, `test/int/phase1-mixed-writers.int-spec.ts`',
+      },
+      {
+        decision: "D63 (SCRUM-63; proposed for Dawit's approval)",
+        case:
+          '`get_my_open_incident`, `list_my_recent_incidents`, `renotify_emergency_alert`, the ' +
+          'submit body, `list_responder_incidents` and `get_incident_details`.',
+        sql: 'No `closed_at`; the recent list has no `auto_closed` and no closed incidents.',
+        api:
+          'The same JSON plus `closed_at` (and `auto_closed` on recent items); the recent and ' +
+          'member reads also list closed incidents. The comparisons remove the keys after ' +
+          'checking they are null / false.',
+        provedBy:
+          '`test/parity/scrum36_resident_incident_reads.spec.ts` (L137), ' +
+          '`test/int/incidents-reads.int-spec.ts`, `test/int/incidents-responder.int-spec.ts`, ' +
+          '`test/int/incidents-close-scrum63.int-spec.ts` (`test/support/share-payload-shape.ts`)',
+      },
     ],
   },
   2: {

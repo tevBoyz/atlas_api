@@ -27,9 +27,13 @@ export const INCIDENT_EVENT_TYPES = {
   renotified: { oncePerIncident: false },
   /** Mark safe. `{}`. */
   safe_recorded: { oncePerIncident: true },
-  /** Mark safe. `{resolved_reason: "safe"}`. */
+  /**
+   * The real close (SCRUM-63, D62), by the close sweeper (no actor): `{reason: "safe"|"ended",
+   * auto_closed}`. Rows written by mark safe before SCRUM-63 (and by the old SQL function) hold
+   * `{resolved_reason: "safe"}` and the resident as actor.
+   */
   incident_closed: { oncePerIncident: true },
-  /** Mark safe. `{}`. */
+  /** Mark safe, or the automatic close of an inactive alert (no actor). `{}`. */
   location_sharing_ended: { oncePerIncident: true },
   /** Mark safe. `{recipient_count, recipient_ids}`: members inside the window (rule 54), sorted. */
   closure_notified: { oncePerIncident: true },
@@ -150,7 +154,7 @@ export class IncidentEventService {
   /**
    * `GET /v1/incidents/{id}/events`: the incident's events ordered `occurred_at, id`, when the caller
    * passes `incident.eventsView` (the resident; or an active member inside the window while the
-   * incident is `active`/`resolved`, rule 54). A caller who is not the resident never gets
+   * incident is `active`/`resolved`/`closed`, rule 54; SCRUM-63: history stays readable). A caller who is not the resident never gets
    * `recipient_ids` (epic §18 D3); `recipient_count` stays. For that caller each `actor_id` is
    * obscured by {@link maskActorId} (epic §18 D11), except the caller's own id. Undefined when the
    * incident is unknown or hidden from the caller (both `not_found`). One statement: the access check

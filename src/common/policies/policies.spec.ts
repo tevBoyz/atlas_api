@@ -69,7 +69,7 @@ describe('SQL predicate form (API-100-09 AC3)', () => {
   it('columns are used as columns (list form over the incidents table)', () => {
     const query = render(incidentMemberView.where({ callerId: CALLER }));
     expect(query.sql).toContain('"incidents"."circle_id" is not null');
-    expect(query.sql).toContain('"incidents"."status" in (\'active\', \'resolved\')');
+    expect(query.sql).toContain("\"incidents\".\"status\" in ('active', 'resolved', 'closed')");
     expect(query.sql).toContain('pc_w.activated_at <= "incidents"."activated_at"');
     expect(query.sql).toContain('"incidents"."resident_id" is distinct from ($');
   });

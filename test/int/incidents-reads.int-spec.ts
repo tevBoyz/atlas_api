@@ -19,7 +19,7 @@ import {
   markSafe,
   submitAlert,
 } from '../support/incident-api';
-import { withoutEmergencyServicesText } from '../support/share-payload-shape';
+import { withoutClosedAtText, withoutEmergencyServicesText } from '../support/share-payload-shape';
 
 /**
  * `GET /v1/me/incidents/open` and `GET /v1/me/incidents` (API-100-16) beyond the SQL script: the
@@ -33,6 +33,9 @@ type Reply = Awaited<ReturnType<typeof getOpenIncident>>;
 const POSTGRES_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?\+00:00$/;
 const RECENT_KEYS = [
   'activated_at',
+  // SCRUM-63 (D61, D63): after the SQL keys.
+  'auto_closed',
+  'closed_at',
   'emergency_type',
   'id',
   'resolved_at',
@@ -40,6 +43,18 @@ const RECENT_KEYS = [
   'sent_at',
   'status',
 ];
+
+/**
+ * SCRUM-63 (D63): each recent item also carries `auto_closed` and `closed_at` (false / null for the
+ * active and resolved incidents the SQL function lists); the text without them, so the rest compares
+ * byte for byte.
+ */
+function asSqlRecentText(text: string): string {
+  if (/"closed_at":(?!null)|"auto_closed":(?!false)/.test(text)) {
+    throw new Error('a recent item is closed: not comparable with the SQL function');
+  }
+  return withoutClosedAtText(text).replace(/"auto_closed":false,|,"auto_closed":false/g, '');
+}
 
 describe('resident incident reads (API-100-16)', () => {
   let app: NestFastifyApplication;
@@ -345,6 +360,8 @@ describe('resident incident reads (API-100-16)', () => {
         sent_at: created.sent_at,
         resolved_at: null,
         resolved_reason: null,
+        auto_closed: false,
+        closed_at: null,
       });
     });
   });
@@ -443,7 +460,7 @@ describe('resident incident reads (API-100-16)', () => {
           [limit],
         );
         const res = await listRecentIncidents(app, resident.id, query);
-        expect(res.body).toBe(JSON.stringify(viaSql));
+        expect(asSqlRecentText(res.body)).toBe(JSON.stringify(viaSql));
       }
     });
 
@@ -459,7 +476,9 @@ describe('resident incident reads (API-100-16)', () => {
         expect(withoutEmergencyServicesText((await getOpenIncident(app, user.id)).body)).toBe(
           `{"open_incident":${JSON.stringify(sqlOpen)}}`,
         );
-        expect((await listRecentIncidents(app, user.id)).body).toBe(JSON.stringify(sqlList));
+        expect(asSqlRecentText((await listRecentIncidents(app, user.id)).body)).toBe(
+          JSON.stringify(sqlList),
+        );
       }
     });
   });

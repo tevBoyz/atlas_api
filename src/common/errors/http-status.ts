@@ -107,6 +107,8 @@ export const SUFFIX_STATUS: Readonly<Record<string, number>> = {
   canceled: 409,
   not_pending: 409,
   not_open: 409,
+  // SCRUM-63 (D61); exact row, so the `invalid_*` pattern (422) does not apply.
+  invalid_state_transition: 409,
   own_circle: 409,
   is_owner: 409,
   cannot_remove_owner: 409,

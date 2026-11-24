@@ -18,6 +18,7 @@ class IncidentDetails {
   const IncidentDetails({
     required this.activatedAt,
     required this.autoClosed,
+    required this.closedAt,
     required this.emergencyServices,
     required this.emergencyType,
     required this.id,
@@ -47,6 +48,10 @@ class IncidentDetails {
   final String activatedAt;
   @JsonKey(name: 'auto_closed')
   final bool autoClosed;
+
+  /// SCRUM-63 (D61): when the incident became Closed (final, read-only); null until then. With status closed: resolved_reason safe = closed after the wrap-up following mark safe; ended with auto_closed true = closed automatically after inactivity.
+  @JsonKey(name: 'closed_at')
+  final String? closedAt;
 
   /// The local emergency numbers of the incident's region (SCRUM-54, D60), always in the order ambulance, police, fire_rescue; a service without a number is left out; `[]` when the region has none configured.
   @JsonKey(name: 'emergency_services')

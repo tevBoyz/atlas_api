@@ -504,11 +504,13 @@ describe('POST /v1/incidents (API-100-15)', () => {
       const { resident } = await residentWithCircle(1);
       const body = (await submitAlert(app, resident.id, 'fire')).json<Body>();
 
-      // SCRUM-54 (D60): plus emergency_services (the seeded numbers, fixed order).
+      // SCRUM-54 (D60): plus emergency_services (the seeded numbers, fixed order); SCRUM-63 (D63):
+      // plus closed_at (null: a submitted alert is active).
       expect(Object.keys(body).sort()).toEqual(
-        [...INCIDENT_SEND_KEYS, 'submit_outcome', 'emergency_services'].sort(),
+        [...INCIDENT_SEND_KEYS, 'submit_outcome', 'emergency_services', 'closed_at'].sort(),
       );
       expect(body.emergency_services).toEqual(GM_EMERGENCY_SERVICES);
+      expect(body.closed_at).toBeNull();
       expect(body.activated_at).toMatch(POSTGRES_UTC_TIMESTAMP);
       expect(body.sent_at).toBe(body.activated_at);
     });

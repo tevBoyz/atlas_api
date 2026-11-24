@@ -193,8 +193,11 @@ describe('scrum36_resident_incident_reads.sql', () => {
   });
 
   it('L137: recent list keys wrong: %', () => {
+    // The SQL keys plus `auto_closed` and `closed_at` (SCRUM-63, D63, recorded divergence).
     expect(Object.keys(recentOf(defaultList)[1]).sort()).toEqual([
       'activated_at',
+      'auto_closed',
+      'closed_at',
       'emergency_type',
       'id',
       'resolved_at',

@@ -26,8 +26,18 @@ export const emergencyTypeSchema = z.enum([
 /** Spec §5.1 and §5.5. */
 export const locationSourceSchema = z.enum(['current', 'last_known', 'unavailable']);
 
-/** Spec §5.4. `activating` and `cancelled` appear on legacy rows only. */
-export const incidentStatusSchema = z.enum(['active', 'resolved', 'activating', 'cancelled']);
+/**
+ * Spec §5.4. `activating` and `cancelled` appear on legacy rows only. SCRUM-63 (D61): `resolved` is
+ * Resolved (Safe); `closed` is final (after the wrap-up, or automatically after inactivity when
+ * `auto_closed`).
+ */
+export const incidentStatusSchema = z.enum([
+  'active',
+  'resolved',
+  'activating',
+  'cancelled',
+  'closed',
+]);
 
 /** Spec §5.3: statuses of the owner's member list (`expired` is derived, never stored). */
 export const memberStatusSchema = z.enum(['active', 'pending', 'expired', 'declined']);

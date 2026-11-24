@@ -15,7 +15,7 @@ import {
  * `delivery.own` (spec §11.4; RLS `incident_deliveries_select_own` / `_update_own`, rule 54):
  * the delivery row is the caller's (`member_user_id = caller`) AND the caller passes
  * `incident.eventsView` for its incident (resident, or active member inside the window while the
- * incident is active/resolved). A stray delivery row outside the window opens nothing.
+ * incident is active/resolved/closed, SCRUM-63). A stray delivery row outside the window opens nothing.
  */
 
 export interface DeliveryRef {

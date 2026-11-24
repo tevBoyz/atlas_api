@@ -8,7 +8,7 @@ import type { IncidentTransaction } from './incidents.repository';
  * The member side of incidents (spec §6.10, §7.4): `list_responder_incidents` and
  * `get_incident_details` (final definitions: baseline migration 20261117100000). Access is the
  * API-100-09 policy `incident.memberView` as a SQL predicate: `circle_id` not null, status
- * `active`/`resolved`, the caller an active member whose membership started at or before the incident
+ * `active`/`resolved`/`closed` (SCRUM-63: a closed incident stays readable), the caller an active member whose membership started at or before the incident
  * (`circle.activeMemberSince`, rule 54), and not the resident. JSON is built by Postgres as the SQL
  * functions build it (the caller's transaction sets `TimeZone` to UTC first).
  *
@@ -20,7 +20,8 @@ export class ResponderIncidentsRepository {
   /**
    * `list_responder_incidents`: every incident the caller may see as a member, filtered entirely in
    * SQL, ordered `coalesce(resolved_at, sent_at, activated_at) desc, id` (asc), no pagination.
-   * `resident_name = coalesce(profiles.full_name, '')`.
+   * `resident_name = coalesce(profiles.full_name, '')`. SCRUM-63 (D61): `closed_at` after the SQL
+   * keys.
    */
   async list(tx: IncidentTransaction, callerId: string): Promise<Record<string, unknown>[]> {
     const result = await tx.execute<{ body: Record<string, unknown>[] }>(sql`
@@ -39,7 +40,8 @@ export class ResponderIncidentsRepository {
                    'renotified_at', i.renotified_at,
                    'resolved_at', i.resolved_at,
                    'resolved_reason', i.resolved_reason,
-                   'auto_closed', i.auto_closed
+                   'auto_closed', i.auto_closed,
+                   'closed_at', i.closed_at
                  ) as payload,
                  coalesce(i.resolved_at, i.sent_at, i.activated_at) as sort_at,
                  i.id as sort_id
@@ -53,7 +55,7 @@ export class ResponderIncidentsRepository {
 
   /**
    * `get_incident_details`: IncidentDetails (the 19 keys of the SQL function, then 2 SCRUM-21 keys,
-   * D53) of one incident the caller may see as a member. `share_payload` is the LIVE shared info
+   * D53, then `closed_at`, SCRUM-63 D61) of one incident the caller may see as a member. `share_payload` is the LIVE shared info
    * (`live_share_payload`, set when the resident changed it during the incident) else the activation
    * snapshot, `{}` when none; `share_payload_at_activation` is always the snapshot (`{}` when none);
    * `share_payload_updated_at` is `live_share_updated_at` (null = unchanged since activation).
@@ -88,7 +90,8 @@ export class ResponderIncidentsRepository {
                'incident_notes_updated_at', rec.incident_notes_updated_at,
                'share_payload', coalesce(rec.live_share_payload, rec.share_payload, '{}'::jsonb),
                'share_payload_at_activation', coalesce(rec.share_payload, '{}'::jsonb),
-               'share_payload_updated_at', rec.live_share_updated_at
+               'share_payload_updated_at', rec.live_share_updated_at,
+               'closed_at', rec.closed_at
              ) as body
         from public.incidents rec
         left join public.profiles p

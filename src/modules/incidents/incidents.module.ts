@@ -15,6 +15,7 @@ import { IncidentRespondersController } from './incident-responders.controller';
 import { IncidentRespondersRepository } from './incident-responders.repository';
 import { IncidentRespondersService } from './incident-responders.service';
 import { IncidentReadsService } from './incident-reads.service';
+import { IncidentStateService } from './incident-state.service';
 import { IncidentsController } from './incidents.controller';
 import { IncidentsRepository } from './incidents.repository';
 import { IncidentsService } from './incidents.service';
@@ -35,6 +36,7 @@ import { ResponderIncidentsService } from './responder-incidents.service';
   ],
   providers: [
     IncidentEventService,
+    IncidentStateService,
     IncidentsRepository,
     IncidentsService,
     IncidentReadsService,

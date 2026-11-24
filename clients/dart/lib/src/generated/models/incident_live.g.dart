@@ -13,6 +13,7 @@ IncidentLive _$IncidentLiveFromJson(Map<String, dynamic> json) => IncidentLive(
   autoClosed: json['auto_closed'] as bool,
   cancelledAt: json['cancelled_at'] as String?,
   circleId: json['circle_id'] as String?,
+  closedAt: json['closed_at'] as String?,
   deliveredCount: (json['delivered_count'] as num).toInt(),
   emergencyServices: (json['emergency_services'] as List<dynamic>)
       .map((e) => EmergencyService.fromJson(e as Map<String, dynamic>))
@@ -48,6 +49,7 @@ Map<String, dynamic> _$IncidentLiveToJson(IncidentLive instance) =>
       'auto_closed': instance.autoClosed,
       'cancelled_at': instance.cancelledAt,
       'circle_id': instance.circleId,
+      'closed_at': instance.closedAt,
       'delivered_count': instance.deliveredCount,
       'emergency_services': instance.emergencyServices,
       'emergency_type': instance.emergencyType,

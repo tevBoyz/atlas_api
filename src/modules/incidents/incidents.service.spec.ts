@@ -12,6 +12,7 @@ import {
   type IncidentSubmittedEvent,
 } from './incident-post-commit';
 import { submitEmergencyAlertRequestSchema } from './incident.schemas';
+import type { IncidentStateService } from './incident-state.service';
 import type { IncidentsRepository } from './incidents.repository';
 import {
   IncidentOperationFailedError,
@@ -37,7 +38,9 @@ const EVENT: IncidentSubmittedEvent = {
 };
 
 function serviceWith(
-  overrides: Partial<Record<keyof IncidentsRepository, jest.Mock>> = {},
+  // `closeSafe` stands for `IncidentStateService.resolveSafe` (SCRUM-63, D61: the state service owns
+  // the status write since then).
+  overrides: Partial<Record<keyof IncidentsRepository | 'closeSafe', jest.Mock>> = {},
   recorded: RecordedIncidentEvent[] = [],
 ) {
   const repository = {
@@ -58,6 +61,9 @@ function serviceWith(
     setNotes: jest.fn().mockResolvedValue({ body: { circle_id: null }, cleared: false }),
     keyShareProfile: jest.fn().mockResolvedValue(undefined),
     sendResult: jest.fn().mockResolvedValue({ circle_id: null, delivered_count: 3 }),
+    liveResult: jest
+      .fn()
+      .mockResolvedValue({ circle_id: null, delivered_count: 3, closed_at: null }),
     closeSafe: jest.fn().mockResolvedValue({ circle_id: null }),
     closureRecipientIds: jest.fn().mockResolvedValue(['a', 'b']),
     recordClosureEvents: jest.fn().mockResolvedValue(undefined),
@@ -88,6 +94,9 @@ function serviceWith(
     postCommit as unknown as IncidentPostCommitRunner,
     events as unknown as IncidentEventService,
     notifications as unknown as IncidentNotificationsOutbox,
+    {
+      resolveSafe: (...args: unknown[]) => repository.closeSafe(...args) as Promise<unknown>,
+    } as unknown as IncidentStateService,
   );
   return { service, repository, audit, postCommit, events, notifications };
 }
@@ -255,13 +264,15 @@ describe('IncidentsService.renotify (API-100-18)', () => {
     }
   });
 
-  it('reuses the submit re-notify (applyRenotify), answers IncidentSend, audits the count', async () => {
+  it('reuses the submit re-notify (applyRenotify), answers IncidentLive, audits the count', async () => {
     const { service, repository, audit, postCommit } = serviceWith();
     await expect(service.renotify(USER, INCIDENT_ID)).resolves.toEqual({
       circle_id: null,
       delivered_count: 3,
+      closed_at: null,
       emergency_services: SERVICES,
     });
+    expect(repository.sendResult).not.toHaveBeenCalled();
     expect(repository.emergencyServices).toHaveBeenCalledWith({});
     expect(repository.applyRenotify).toHaveBeenCalledWith({}, INCIDENT_ID, USER.id);
     expect(repository.submitResult).not.toHaveBeenCalled();
@@ -336,6 +347,9 @@ describe('IncidentsService.markSafe (API-100-19)', () => {
     ['resolved', null],
     ['activating', null],
     ['cancelled', null],
+    // SCRUM-63 (D61): a closed alert is final, whatever its reason.
+    ['closed', 'safe'],
+    ['closed', 'ended'],
   ])('%s / %s is not_open, nothing written', async (status, reason) => {
     const { service, repository, postCommit } = serviceWith({
       lockOwnIncident: locked(status, reason),

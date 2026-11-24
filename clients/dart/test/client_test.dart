@@ -66,6 +66,8 @@ void main() {
       'delivered_count': 0,
       'acknowledged_count': 0,
       'submit_outcome': 'created',
+      // SCRUM-63 (D63): null on a live alert.
+      'closed_at': null,
       'emergency_services': [
         {'service': 'ambulance', 'label': 'Ambulance', 'number': '116'},
       ],
@@ -126,6 +128,7 @@ void main() {
         'delivered_count': 2,
         'acknowledged_count': 1,
         'emergency_services': <Object>[],
+        'closed_at': null,
       },
     });
     final result = await clientWith(open).incidents.getMyOpenIncident();
@@ -142,18 +145,23 @@ void main() {
         {
           'id': '7a1c9e52-4b3d-4f6a-9c8e-2d1b0a3f4e5c',
           'emergency_type': 'medical',
-          'status': 'resolved',
+          'status': 'closed',
           'activated_at': '2026-11-18T10:00:00.123456+00:00',
           'sent_at': '2026-11-18T10:00:00.123456+00:00',
           'resolved_at': '2026-11-18T10:05:00.5+00:00',
           'resolved_reason': 'safe',
+          // SCRUM-63 (D61, D63): Closed after the wrap-up.
+          'auto_closed': false,
+          'closed_at': '2026-11-18T10:35:00.5+00:00',
         },
       ]);
       final list = await clientWith(
         adapter,
       ).incidents.listMyRecentIncidents(limit: 3);
       expect(list, hasLength(1));
-      expect(list.first.status, RecentIncidentStatus.resolved);
+      expect(list.first.status, RecentIncidentStatus.closed);
+      expect(list.first.closedAt, '2026-11-18T10:35:00.5+00:00');
+      expect(list.first.autoClosed, isFalse);
       expect(list.first.resolvedReason, 'safe');
       expect(adapter.last?.path, '/v1/me/incidents');
       expect(adapter.last?.queryParameters, {'limit': 3});
@@ -174,5 +182,7 @@ void main() {
   test('publishes the enums with their stored values', () {
     expect(EmergencyType.domesticViolence.toJson(), 'domestic_violence');
     expect(LocationSource.lastKnown.toJson(), 'last_known');
+    // SCRUM-63 (D61): the final state.
+    expect(IncidentStatus.closed.toJson(), 'closed');
   });
 }

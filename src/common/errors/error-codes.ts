@@ -162,6 +162,11 @@ export const PARITY_ERROR_CODES = {
   // function behind them.
   incident_response: ['not_authenticated', 'invalid_status', 'not_found', 'not_open'],
   incident_responders: ['not_authenticated', 'not_found'],
+  // SCRUM-63 (D61): the one incident state service refuses any status change that is not a defined
+  // transition (active -> resolved, resolved -> closed, active -> closed). New code, no SQL function
+  // behind it; every route checks the status first and answers its own `not_open`, so this is the
+  // service's last guard.
+  incidents: ['invalid_state_transition'],
 
   // §7.5 Login lockout (prefix `login_lockout`, not the function name)
   login_lockout: [

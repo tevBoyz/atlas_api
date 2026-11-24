@@ -41,6 +41,8 @@ Map<String, Object?> incidentDetailsJson({
     {'label': 'Fire and Rescue', 'number': '119', 'service': 'fire_rescue'},
   ],
   'status': status,
+  // SCRUM-63 (D63): when the incident became Closed (null until then).
+  'closed_at': null,
 };
 
 /// A model's toJson() keeps nested models as objects (`emergency_services`): compare as plain JSON.
@@ -120,6 +122,8 @@ void main() {
         'resolved_reason': null,
         'sent_at': null,
         'status': 'paused',
+        'auto_closed': false,
+        'closed_at': null,
       };
       final recent = RecentIncident.fromJson(json);
       expect(recent.status, RecentIncidentStatus.$unknown);

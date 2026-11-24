@@ -55,7 +55,7 @@ export class IncidentRespondersService {
 
   /**
    * The responder list in a read-only transaction in UTC. The resident (any status) or a member
-   * inside the window while the incident is `active` / `resolved` (`incident.eventsView`); anything
+   * inside the window while the incident is `active` / `resolved` / `closed` (`incident.eventsView`); anything
    * else, including an unknown id, is 404 `incident_responders:not_found`. Read-only on a resolved
    * incident (the statuses stay as they were at the close).
    */

@@ -23,6 +23,7 @@ class IncidentSubmitResult {
     required this.autoClosed,
     required this.cancelledAt,
     required this.circleId,
+    required this.closedAt,
     required this.deliveredCount,
     required this.emergencyServices,
     required this.emergencyType,
@@ -60,6 +61,10 @@ class IncidentSubmitResult {
   final String? cancelledAt;
   @JsonKey(name: 'circle_id')
   final String? circleId;
+
+  /// SCRUM-63 (D61): when the incident became Closed; always null on the live bodies (only an active incident is open, re-notified or submitted; resolved and closed incidents never block a new SOS).
+  @JsonKey(name: 'closed_at')
+  final String? closedAt;
   @JsonKey(name: 'delivered_count')
   final int deliveredCount;
 

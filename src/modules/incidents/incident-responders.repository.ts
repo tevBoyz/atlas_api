@@ -133,7 +133,7 @@ export class IncidentRespondersRepository {
   /**
    * `GET /v1/incidents/{id}/responders`: ONE statement. The incident by primary key and
    * `incident.eventsView` (the resident at any status; a member inside the window while it is
-   * `active` / `resolved`, i.e. `incident.resident` OR `incident.memberView`), whether the caller is
+   * `active` / `resolved` / `closed`, i.e. `incident.resident` OR `incident.memberView`), whether the caller is
    * the resident, and the rows. Undefined when the incident is unknown or hidden (both `not_found`).
    */
   async visibleResponders(

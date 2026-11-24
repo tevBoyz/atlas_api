@@ -2,7 +2,10 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
 import { maskActorId } from '../../src/modules/incidents/incident-actor-mask';
+import { JobWorkers } from '../../src/jobs/job-workers';
+import { IncidentCloseSweeper } from '../../src/modules/incidents/incident-close-sweeper';
 import { createTestApp } from '../../src/testing/test-app';
+import { createTestWorker } from '../../src/testing/test-worker';
 import { openTestClient } from '../support/database';
 import {
   addActiveMember,
@@ -301,11 +304,12 @@ describe('scrum45_closure_events.sql', () => {
   });
 
   it('L148: events after mark safe wrong: %', () => {
+    // SCRUM-63 (D62, recorded divergence): the SQL function also writes `incident_closed` here; the
+    // API writes it only when the incident really closes (L168).
     expect(eventsAfterSafe).toEqual({
       alert_sent: 1,
       location_sharing_started: 1,
       safe_recorded: 1,
-      incident_closed: 1,
       location_sharing_ended: 1,
       closure_notified: 1,
     });
@@ -328,15 +332,33 @@ describe('scrum45_closure_events.sql', () => {
   });
 
   it('L168: incident_closed detail wrong', async () => {
-    expect(
-      await countRows(
+    // SCRUM-63 (D62, recorded divergence): the SQL function writes `incident_closed
+    // {resolved_reason: "safe"}` with the resident as actor at mark safe. The API writes it once, at
+    // the real close (Resolved -> Closed after the wrap-up, by the close sweeper, no actor):
+    // `{reason: "safe", auto_closed: false}`.
+    const closedEvents = (sql: string) =>
+      countRows(
         client,
         `select count(*)::int as n from public.incident_events e
-          where e.incident_id = $1
-            and e.event_type = 'incident_closed'
-            and e.detail->>'resolved_reason' = 'safe'
-            and e.actor_id = $2`,
-        [incidentId, resident.id],
+          where e.incident_id = $1 and e.event_type = 'incident_closed' ${sql}`,
+        [incidentId],
+      );
+    expect(await closedEvents('')).toBe(0);
+    await client.query(
+      `update public.incidents set resolved_at = resolved_at - interval '31 minutes' where id = $1`,
+      [incidentId],
+    );
+    const { worker } = await createTestWorker((builder) =>
+      builder.overrideProvider(JobWorkers).useValue({}),
+    );
+    try {
+      await worker.get(IncidentCloseSweeper).sweep();
+    } finally {
+      await worker.close();
+    }
+    expect(
+      await closedEvents(
+        `and e.detail = '{"reason": "safe", "auto_closed": false}'::jsonb and e.actor_id is null`,
       ),
     ).toBe(1);
   });
@@ -350,7 +372,7 @@ describe('scrum45_closure_events.sql', () => {
   });
 
   it('L181: mark safe retry added events: %', () => {
-    expect(eventsAfterRetry).toBe(6);
+    expect(eventsAfterRetry).toBe(5); // 6 with the SQL function (D62: no incident_closed yet)
   });
 
   it('L189: attach after close did not raise', () => {
@@ -382,9 +404,10 @@ describe('scrum45_closure_events.sql', () => {
   });
 
   it('L230: resident sees % events', () => {
-    expect(residentEvents.rls).toBe(6);
+    // 5, not the SQL function's 6: no incident_closed at mark safe (SCRUM-63, D62).
+    expect(residentEvents.rls).toBe(5);
     expect(residentEvents.api.statusCode).toBe(200);
-    expect(residentEvents.api.json<Body[]>()).toHaveLength(6);
+    expect(residentEvents.api.json<Body[]>()).toHaveLength(5);
     // The same rows, in the same order, with the full actor_id (epic §18 D11: resident unmasked).
     expect(
       residentEvents.api.json<Body[]>().map((e) => ({ id: e.id, actor_id: e.actor_id })),
@@ -392,10 +415,10 @@ describe('scrum45_closure_events.sql', () => {
   });
 
   it('L239: active member sees % events', () => {
-    expect(memberEvents.rls).toBe(6);
+    expect(memberEvents.rls).toBe(5); // SCRUM-63 (D62), as L230
     expect(memberEvents.api.statusCode).toBe(200);
     const events = memberEvents.api.json<Body[]>();
-    expect(events).toHaveLength(6);
+    expect(events).toHaveLength(5);
     // Epic §18 D3: members never get recipient_ids (RLS would return them).
     expect(memberEvents.api.body).not.toContain('recipient_ids');
     // Epic §18 D11: the same rows and order as RLS, with actor_id in its masked form.

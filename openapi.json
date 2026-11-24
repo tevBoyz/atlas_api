@@ -574,7 +574,8 @@
               "active",
               "resolved",
               "activating",
-              "cancelled"
+              "cancelled",
+              "closed"
             ],
             "type": "string"
           }
@@ -997,6 +998,13 @@
           "auto_closed": {
             "type": "boolean"
           },
+          "closed_at": {
+            "description": "SCRUM-63 (D61): when the incident became Closed (final, read-only); null until then. With status closed: resolved_reason safe = closed after the wrap-up following mark safe; ended with auto_closed true = closed automatically after inactivity.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "emergency_services": {
             "description": "The local emergency numbers of the incident's region (SCRUM-54, D60), always in the order ambulance, police, fire_rescue; a service without a number is left out; `[]` when the region has none configured.",
             "items": {
@@ -1133,7 +1141,8 @@
               "active",
               "resolved",
               "activating",
-              "cancelled"
+              "cancelled",
+              "closed"
             ],
             "type": "string"
           }
@@ -1149,6 +1158,7 @@
           "resolved_at",
           "resolved_reason",
           "auto_closed",
+          "closed_at",
           "location_lat",
           "location_lng",
           "location_accuracy_m",
@@ -1239,6 +1249,13 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "closed_at": {
+            "description": "SCRUM-63 (D61): when the incident became Closed; always null on the live bodies (only an active incident is open, re-notified or submitted; resolved and closed incidents never block a new SOS).",
+            "type": [
+              "string",
+              "null"
             ]
           },
           "delivered_count": {
@@ -1375,7 +1392,8 @@
               "active",
               "resolved",
               "activating",
-              "cancelled"
+              "cancelled",
+              "closed"
             ],
             "type": "string"
           }
@@ -1405,7 +1423,8 @@
           "location_sharing_ended_at",
           "delivered_count",
           "acknowledged_count",
-          "emergency_services"
+          "emergency_services",
+          "closed_at"
         ],
         "type": "object"
       },
@@ -1590,7 +1609,8 @@
               "active",
               "resolved",
               "activating",
-              "cancelled"
+              "cancelled",
+              "closed"
             ],
             "type": "string"
           }
@@ -1778,7 +1798,8 @@
               "active",
               "resolved",
               "activating",
-              "cancelled"
+              "cancelled",
+              "closed"
             ],
             "type": "string"
           }
@@ -1814,7 +1835,8 @@
           "active",
           "resolved",
           "activating",
-          "cancelled"
+          "cancelled",
+          "closed"
         ],
         "type": "string"
       },
@@ -1854,6 +1876,13 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "closed_at": {
+            "description": "SCRUM-63 (D61): when the incident became Closed; always null on the live bodies (only an active incident is open, re-notified or submitted; resolved and closed incidents never block a new SOS).",
+            "type": [
+              "string",
+              "null"
             ]
           },
           "delivered_count": {
@@ -1990,7 +2019,8 @@
               "active",
               "resolved",
               "activating",
-              "cancelled"
+              "cancelled",
+              "closed"
             ],
             "type": "string"
           },
@@ -2029,7 +2059,8 @@
           "delivered_count",
           "acknowledged_count",
           "submit_outcome",
-          "emergency_services"
+          "emergency_services",
+          "closed_at"
         ],
         "type": "object"
       },
@@ -3445,6 +3476,16 @@
           "activated_at": {
             "type": "string"
           },
+          "auto_closed": {
+            "type": "boolean"
+          },
+          "closed_at": {
+            "description": "SCRUM-63 (D61): when the incident became Closed (final, read-only); null until then. With status closed: resolved_reason safe = closed after the wrap-up following mark safe; ended with auto_closed true = closed automatically after inactivity.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "emergency_type": {
             "enum": [
               "medical",
@@ -3484,7 +3525,8 @@
               "active",
               "resolved",
               "activating",
-              "cancelled"
+              "cancelled",
+              "closed"
             ],
             "type": "string"
           }
@@ -3496,7 +3538,9 @@
           "activated_at",
           "sent_at",
           "resolved_at",
-          "resolved_reason"
+          "resolved_reason",
+          "auto_closed",
+          "closed_at"
         ],
         "type": "object"
       },
@@ -3657,6 +3701,13 @@
           "auto_closed": {
             "type": "boolean"
           },
+          "closed_at": {
+            "description": "SCRUM-63 (D61): when the incident became Closed (final, read-only); null until then. With status closed: resolved_reason safe = closed after the wrap-up following mark safe; ended with auto_closed true = closed automatically after inactivity.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "emergency_type": {
             "enum": [
               "medical",
@@ -3706,7 +3757,8 @@
               "active",
               "resolved",
               "activating",
-              "cancelled"
+              "cancelled",
+              "closed"
             ],
             "type": "string"
           }
@@ -3721,7 +3773,8 @@
           "renotified_at",
           "resolved_at",
           "resolved_reason",
-          "auto_closed"
+          "auto_closed",
+          "closed_at"
         ],
         "type": "object"
       },
@@ -15028,6 +15081,18 @@
         ],
         "room": "user:{id} of the member who was removed or left (all their sockets; D49)"
       },
+      "incident.closed": {
+        "note": "SCRUM-63 (D61, D62): sent after the close sweeper (worker, once a minute) closed the incident: Resolved (Safe) -> Closed after the wrap-up (resolved_reason \"safe\", auto_closed false), or Active -> Closed after the inactivity period (resolved_reason \"ended\", auto_closed true: \"Closed automatically\"). status is \"closed\"; the incident is final and read-only. No push, SMS or email is sent at the close. Followed by incident.updated and incident.event in the incident room.",
+        "payload": [
+          "incident_id",
+          "status",
+          "closed_at",
+          "resolved_reason",
+          "auto_closed",
+          "occurred_at"
+        ],
+        "room": "incident:{id}, user:{id} of each delivery recipient and user:{resident_id} (as incident.resolved; once per socket)"
+      },
       "incident.delivery_counts": {
         "payload": [
           "incident_id",
@@ -15155,7 +15220,8 @@
           "location_sharing_ended_at",
           "incident_notes",
           "incident_notes_updated_at",
-          "share_payload"
+          "share_payload",
+          "closed_at"
         ],
         "payload": [
           "incident_id",

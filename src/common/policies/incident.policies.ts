@@ -19,11 +19,14 @@ import {
  * - `incident.resident`   = `resident_id = caller` (RLS `incidents_select_own`; the resident passes
  *   for every status and regardless of any membership window).
  * - `incident.memberView` = RLS `incidents_select_active_member` + "not the resident":
- *   `circle_id IS NOT NULL AND status IN ('active','resolved') AND
+ *   `circle_id IS NOT NULL AND status IN ('active','resolved','closed') AND
  *   circle.activeMemberSince(circle_id, caller, activated_at) AND resident_id <> caller`
  *   (`list_responder_incidents`, `get_incident_details`).
  * - `incident.eventsView` = `_can_view_incident_events`: resident, or (circle_id not null, status
- *   active/resolved, inside the window).
+ *   active/resolved/closed, inside the window).
+ * SCRUM-63 (D61): `closed` joins `active`/`resolved` in memberView and eventsView, so a closed
+ * incident's details, responders and history stay readable (read-only). The SQL functions and RLS
+ * know no `closed` (recorded divergence).
  * - `incident.countsView` = `incident_delivery_counts`: resident (any status), or (circle_id not
  *   null, status active, inside the window).
  *
@@ -106,7 +109,7 @@ export const incidentResident = defineIncidentPolicy(
 export const incidentMemberView = defineIncidentPolicy(
   'incident.memberView',
   (incident, caller, callerId) => sql`(${incident.circleId} is not null
-    and ${incident.status} in ('active', 'resolved')
+    and ${incident.status} in ('active', 'resolved', 'closed')
     and ${insideWindow(incident, callerId)}
     and ${incident.residentId} is distinct from ${caller})`,
 );
@@ -115,7 +118,7 @@ export const incidentEventsView = defineIncidentPolicy(
   'incident.eventsView',
   (incident, caller, callerId) => sql`(${incident.residentId} = ${caller}
     or (${incident.circleId} is not null
-        and ${incident.status} in ('active', 'resolved')
+        and ${incident.status} in ('active', 'resolved', 'closed')
         and ${insideWindow(incident, callerId)}))`,
 );
 

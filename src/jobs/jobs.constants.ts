@@ -7,10 +7,17 @@ import type { JobsOptions } from 'bullmq';
  *   (job id = outbox id, so a second publish of the same row is ignored while the job is kept).
  * - `notification-deliveries`: one job per `notification_deliveries` row (job id = delivery id),
  *   added by the outbox consumer (API-100-47).
+ * - `incident-lifecycle`: the incident close sweep (SCRUM-63, D62), a job scheduler.
  */
 export const OUTBOX_QUEUE = 'notification-outbox';
 export const DELIVERY_QUEUE = 'notification-deliveries';
-export const JOB_QUEUES = [OUTBOX_QUEUE, DELIVERY_QUEUE] as const;
+/**
+ * `incident-lifecycle` (SCRUM-63, D62): the close sweep only, one repeatable job
+ * ({@link INCIDENT_CLOSE_SWEEP_SCHEDULER_ID}, every {@link INCIDENT_CLOSE_SWEEP_EVERY_MS}) that the
+ * worker process schedules and runs. No per-incident job.
+ */
+export const INCIDENT_LIFECYCLE_QUEUE = 'incident-lifecycle';
+export const JOB_QUEUES = [OUTBOX_QUEUE, DELIVERY_QUEUE, INCIDENT_LIFECYCLE_QUEUE] as const;
 export type JobQueueName = (typeof JOB_QUEUES)[number];
 
 /** Data of an outbox job: the row id only; the consumer reads the committed row. */
@@ -37,3 +44,18 @@ export const OUTBOX_JOB_OPTIONS: JobsOptions = {
 
 /** Delivery jobs: attempts and backoff come from NOTIFICATIONS_RETRY_* (API-100-47). */
 export const DELIVERY_JOB_RETENTION = RETENTION;
+
+/** The job scheduler id (and job name) of the incident close sweep (SCRUM-63, D62). */
+export const INCIDENT_CLOSE_SWEEP_SCHEDULER_ID = 'incident-close-sweep';
+/** The close sweep runs once a minute. */
+export const INCIDENT_CLOSE_SWEEP_EVERY_MS = 60_000;
+
+/**
+ * Sweep jobs: a failed sweep is not retried (the next one runs a minute later and closes whatever is
+ * still due); a few are kept for inspection.
+ */
+export const INCIDENT_CLOSE_SWEEP_JOB_OPTIONS = {
+  attempts: 1,
+  removeOnComplete: { count: 100 },
+  removeOnFail: { age: 7 * 24 * 60 * 60, count: 1_000 },
+} as const;

@@ -7,6 +7,7 @@ import { type AuditAction, AuditService, type AuditTransaction } from '../audit'
 import { IncidentNotificationsOutbox } from '../notifications/incident-notifications';
 import { IncidentEventService, type RecordedIncidentEvent } from './incident-events.service';
 import { IncidentPostCommitRunner, type IncidentSubmittedEvent } from './incident-post-commit';
+import { IncidentStateService } from './incident-state.service';
 import {
   IncidentOperationFailedError,
   IncidentSubmitFailedError,
@@ -56,6 +57,7 @@ export class IncidentsService {
     private readonly postCommit: IncidentPostCommitRunner,
     private readonly events: IncidentEventService,
     private readonly notifications: IncidentNotificationsOutbox,
+    private readonly state: IncidentStateService,
   ) {}
 
   async submit(
@@ -144,7 +146,7 @@ export class IncidentsService {
         await this.notifications.renotified(tx, incident.id);
         const body = await this.withEmergencyServices(
           tx,
-          await this.repository.sendResult(tx, incident.id),
+          await this.repository.liveResult(tx, incident.id),
         );
         await this.recordAudit(tx, user, 'incident.renotified', incident.id, {
           recipient_count: recipientCount,
@@ -167,9 +169,12 @@ export class IncidentsService {
    * `mark_incident_safe` (final definition: baseline migration 20261023140000; its recipient helper
    * `_incident_active_recipient_ids`: 20261117100000). In the function's order: lock the caller's own
    * incident (`not_found`); already `resolved`/`safe` → the unchanged IncidentSend and nothing written
-   * (no events, no timestamps, no audit, no hook); any other status than `active` → `not_open`; else
-   * close it, read the closure recipients (rule 54) and log the four closure events once each.
-   * Returns IncidentSend.
+   * (no events, no timestamps, no audit, no hook); any other status than `active` → `not_open` (also
+   * `closed`, SCRUM-63: a closed alert is final); else `active -> resolved` through the state service
+   * (D61), read the closure recipients (rule 54) and log the closure events once each:
+   * `safe_recorded`, `location_sharing_ended`, `closure_notified`. Since SCRUM-63 (D62) mark safe no
+   * longer writes `incident_closed`: the close sweeper writes it when the incident really closes (a
+   * recorded divergence from the SQL function, which still writes it). Returns IncidentSend.
    */
   async markSafe(user: AuthenticatedUser, incidentId: string): Promise<Record<string, unknown>> {
     const operation = 'mark_incident_safe';
@@ -190,7 +195,7 @@ export class IncidentsService {
         }
         if (incident.status !== 'active') throw new DomainError('mark_incident_safe:not_open');
 
-        const closed = await this.repository.closeSafe(tx, incident.id);
+        const closed = await this.state.resolveSafe(tx, incident.id, incident.status);
         if (!closed) throw new Error('mark_incident_safe:not_open');
         const recipientIds = await this.repository.closureRecipientIds(tx, incident.id);
         await this.repository.recordClosureEvents(tx, incident.id, user.id, recipientIds);

@@ -523,6 +523,38 @@ describe('Phase 1 gate: SQL and API writers are interchangeable (API-100-23 AC3)
     return out;
   }
 
+  /**
+   * SCRUM-63 recorded divergences, taken out before the runs are compared: the SQL mark safe writes
+   * `incident_closed` while the API writes it only at the real close (D62), and the API's recent list
+   * also carries `auto_closed` (D63; `closed_at` is taken out by `asSqlSharePayloadShape`).
+   */
+  function withoutScrum63Divergence(
+    steps: Record<string, unknown>,
+    rows: unknown,
+  ): { steps: Record<string, unknown>; rows: unknown } {
+    const notClosedEvent = (event: Body) => event.event_type !== 'incident_closed';
+    const outSteps: Record<string, unknown> = {};
+    for (const [name, outcome] of Object.entries(steps)) {
+      const o = outcome as { ok: boolean; body?: unknown };
+      if (name.startsWith('events') && o.ok && Array.isArray(o.body)) {
+        outSteps[name] = { ...o, body: (o.body as Body[]).filter(notClosedEvent) };
+      } else if (name.startsWith('recent') && o.ok && Array.isArray(o.body)) {
+        outSteps[name] = {
+          ...o,
+          body: (o.body as Body[]).map((item) => {
+            const rest = { ...item };
+            delete rest.auto_closed;
+            return rest;
+          }),
+        };
+      } else {
+        outSteps[name] = outcome;
+      }
+    }
+    const r = rows as { incident: Body; deliveries: Body[]; events: Body[] };
+    return { steps: outSteps, rows: { ...r, events: r.events.filter(notClosedEvent) } };
+  }
+
   const MODES: Mode[] = ['sql', 'api', 'sql→api', 'api→sql'];
 
   it.each(MODES)('%s: the scenario runs through', async (mode) => {
@@ -604,14 +636,18 @@ describe('Phase 1 gate: SQL and API writers are interchangeable (API-100-23 AC3)
   it.each(['api', 'sql→api', 'api→sql'] as const)(
     '%s: every step answers as in the SQL-only run',
     (mode) => {
-      expect(normalized[mode].steps).toEqual(normalized.sql.steps);
+      expect(withoutScrum63Divergence(normalized[mode].steps, normalized[mode].rows).steps).toEqual(
+        withoutScrum63Divergence(normalized.sql.steps, normalized.sql.rows).steps,
+      );
     },
   );
 
   it.each(['api', 'sql→api', 'api→sql'] as const)(
     '%s: the same final incident, delivery and event rows as the SQL-only run',
     (mode) => {
-      expect(normalized[mode].rows).toEqual(normalized.sql.rows);
+      expect(withoutScrum63Divergence(normalized[mode].steps, normalized[mode].rows).rows).toEqual(
+        withoutScrum63Divergence(normalized.sql.steps, normalized.sql.rows).rows,
+      );
     },
   );
 

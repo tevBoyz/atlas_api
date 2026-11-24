@@ -86,6 +86,16 @@ export interface IncidentRespondersEvent extends IncidentRef {
 }
 
 /**
+ * `incident.closed` (SCRUM-63, D61/D62): the close sweeper closed the incident (Resolved -> Closed
+ * after the wrap-up, or Active -> Closed after the inactivity period). Raised once per incident, by
+ * the sweep that closed it, after the commit. Realtime only: nothing is sent by push, SMS or email.
+ */
+export interface IncidentClosedEvent extends IncidentRef {
+  /** The state the incident left. */
+  from: 'active' | 'resolved';
+}
+
+/**
  * Work that follows a committed incident write: realtime (API-100-41) and the outbox (API-100-48).
  * A hook implements the events it cares about.
  */
@@ -99,6 +109,7 @@ export interface IncidentPostCommitHook {
   afterEvent?(event: IncidentEventRecordedEvent): void | Promise<void>;
   afterSharedInfo?(event: IncidentSharedInfoEvent): void | Promise<void>;
   afterResponders?(event: IncidentRespondersEvent): void | Promise<void>;
+  afterClosed?(event: IncidentClosedEvent): void | Promise<void>;
 }
 
 /** The registered hooks: the realtime broadcaster (API-100-41/42); the outbox (API-100-48) later. */
@@ -156,6 +167,11 @@ export class IncidentPostCommitRunner {
   /** `incident.responders` (D56). Never rejects. */
   afterResponders(event: IncidentRespondersEvent): Promise<void> {
     return this.run('afterResponders', event, (hook) => hook.afterResponders?.(event));
+  }
+
+  /** `incident.closed` (SCRUM-63). Never rejects. */
+  afterClosed(event: IncidentClosedEvent): Promise<void> {
+    return this.run('afterClosed', event, (hook) => hook.afterClosed?.(event));
   }
 
   /**

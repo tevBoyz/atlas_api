@@ -64,6 +64,7 @@ export const REALTIME_CONTRACT = {
         'incident_notes',
         'incident_notes_updated_at',
         'share_payload',
+        'closed_at',
       ],
     },
     [SERVER_EVENTS.location]: {
@@ -96,6 +97,24 @@ export const REALTIME_CONTRACT = {
         'location_sharing_ended_at',
         ...TIMES,
       ],
+    },
+    [SERVER_EVENTS.closed]: {
+      room: 'incident:{id}, user:{id} of each delivery recipient and user:{resident_id} (as incident.resolved; once per socket)',
+      payload: [
+        'incident_id',
+        'status',
+        'closed_at',
+        'resolved_reason',
+        'auto_closed',
+        'occurred_at',
+      ],
+      note:
+        'SCRUM-63 (D61, D62): sent after the close sweeper (worker, once a minute) closed the ' +
+        'incident: Resolved (Safe) -> Closed after the wrap-up (resolved_reason "safe", auto_closed ' +
+        'false), or Active -> Closed after the inactivity period (resolved_reason "ended", ' +
+        'auto_closed true: "Closed automatically"). status is "closed"; the incident is final and ' +
+        'read-only. No push, SMS or email is sent at the close. Followed by incident.updated and ' +
+        'incident.event in the incident room.',
     },
     [SERVER_EVENTS.deliveryCounts]: {
       room: 'user:{resident_id}',

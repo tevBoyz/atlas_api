@@ -616,8 +616,9 @@ describe('membership_access_window.sql', () => {
 
   it('L207: resident sees no events on A', () => {
     expect(residentEventsA.rlsEvents).toBeGreaterThan(0);
-    // incident.eventsView: the resident reads the closed, backdated A (6 events).
-    expect(residentEventsA.apiEvents).toEqual({ A: { status: 200, count: 6 } });
+    // incident.eventsView: the resident reads the closed, backdated A (5 events: the API mark safe
+    // writes no incident_closed since SCRUM-63, D62; the SQL function's close leaves 6).
+    expect(residentEventsA.apiEvents).toEqual({ A: { status: 200, count: 5 } });
   });
 
   it('L217: early member sees % incidents', () => {

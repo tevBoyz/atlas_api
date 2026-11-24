@@ -32,6 +32,9 @@ export interface IncidentBroadcastState {
   renotified_at: string | null;
   resolved_at: string | null;
   resolved_reason: string | null;
+  /** SCRUM-63 (D61): set once the incident is closed. */
+  closed_at: string | null;
+  auto_closed: boolean;
   location_sharing_ended_at: string | null;
   location_source: string | null;
   location_lat: number | string | null;
@@ -63,7 +66,7 @@ export interface IncidentEventRow {
   };
 }
 
-/** The 16 merged keys, in the order of spec §11.5. */
+/** The 16 merged keys, in the order of spec §11.5, plus `closed_at` (SCRUM-63, D61). */
 const INCIDENT_UPDATED_JSON = sql`jsonb_build_object(
     'emergency_type', rec.emergency_type,
     'status', rec.status,
@@ -80,7 +83,8 @@ const INCIDENT_UPDATED_JSON = sql`jsonb_build_object(
     'location_sharing_ended_at', rec.location_sharing_ended_at,
     'incident_notes', rec.incident_notes,
     'incident_notes_updated_at', rec.incident_notes_updated_at,
-    'share_payload', coalesce(rec.live_share_payload, rec.share_payload, '{}'::jsonb)
+    'share_payload', coalesce(rec.live_share_payload, rec.share_payload, '{}'::jsonb),
+    'closed_at', rec.closed_at
   )`;
 
 /** `incident.shared_info_updated` (SCRUM-21, D53): the live shared info of one incident. */
@@ -133,6 +137,8 @@ export class RealtimeReadsRepository {
                'renotified_at', rec.renotified_at,
                'resolved_at', rec.resolved_at,
                'resolved_reason', rec.resolved_reason,
+               'closed_at', rec.closed_at,
+               'auto_closed', rec.auto_closed,
                'location_sharing_ended_at', rec.location_sharing_ended_at,
                'location_source', rec.location_source,
                'location_lat', rec.location_lat,

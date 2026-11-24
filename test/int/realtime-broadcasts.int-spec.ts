@@ -34,9 +34,10 @@ import { connectSocket, eventually, sleep, type TestSocket } from '../support/re
  */
 type Body = Record<string, unknown>;
 
-/** The keys of `incident.updated.incident` (spec §11.5): 16, never resident_id / circle_id. */
+/** The keys of `incident.updated.incident` (spec §11.5): 16 plus closed_at (SCRUM-63), never resident_id / circle_id. */
 const UPDATED_KEYS = [
   'auto_closed',
+  'closed_at',
   'emergency_type',
   'incident_notes',
   'incident_notes_updated_at',
@@ -282,7 +283,6 @@ describe('incident broadcasts (API-100-41)', () => {
         expect(live.map((e) => e.event_type)).toEqual([
           'renotified',
           'safe_recorded',
-          'incident_closed',
           'location_sharing_ended',
           'closure_notified',
         ]);

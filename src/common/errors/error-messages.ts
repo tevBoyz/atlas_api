@@ -62,6 +62,7 @@ const SUFFIX_MESSAGES: Record<ErrorSuffix, string> = {
   canceled: 'This invitation is no longer available.',
   not_pending: 'This invitation is no longer pending.',
   not_open: 'This alert is no longer open.',
+  invalid_state_transition: 'This alert cannot change to that state.',
   own_circle: 'This is your own Safety Circle.',
   is_owner: 'The circle owner cannot leave their own Safety Circle.',
   cannot_remove_owner: 'The circle owner cannot be removed.',

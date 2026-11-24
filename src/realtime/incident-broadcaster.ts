@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
 import { maskActorId } from '../modules/incidents/incident-actor-mask';
 import { type ResponderViewer, responderView } from '../modules/incidents/incident-responder-view';
 import { RESIDENT_ONLY_DETAIL_KEYS } from '../modules/incidents/incident-events.service';
 import type {
+  IncidentClosedEvent,
   IncidentDeliveryCountsEvent,
   IncidentEventRecordedEvent,
   IncidentLocationEvent,
@@ -22,7 +23,7 @@ import {
   SERVER_EVENTS,
   userRoom,
 } from './realtime.constants';
-import { RealtimeGateway } from './realtime.gateway';
+import { REALTIME_EMITTER, type RealtimeEmitter } from './realtime-emitter';
 import {
   type IncidentBroadcastState,
   type IncidentEventRow,
@@ -98,6 +99,21 @@ export function resolvedPayload(state: IncidentBroadcastState) {
     resolved_reason: state.resolved_reason,
     location_sharing_ended_at: state.location_sharing_ended_at,
     updated_at: state.updated_at,
+    occurred_at: state.occurred_at,
+  };
+}
+
+/**
+ * `incident.closed` (SCRUM-63, D61/D62). No ids other than the incident's: the same for every
+ * receiver (nothing to mask).
+ */
+export function closedPayload(state: IncidentBroadcastState) {
+  return {
+    incident_id: state.incident_id,
+    status: state.status,
+    closed_at: state.closed_at,
+    resolved_reason: state.resolved_reason,
+    auto_closed: state.auto_closed,
     occurred_at: state.occurred_at,
   };
 }
@@ -181,7 +197,10 @@ export function eventPayload(
  *   the row as stored, the actor's own sockets their own id unmasked, every other member D3/D11;
  * - `incident.responders` (D56) after a member's first acknowledge or a response change, per
  *   receiver the same way: the resident full ids, the member's own sockets their own row in full,
- *   every other member the row with the user id masked.
+ *   every other member the row with the user id masked;
+ * - `incident.closed` (SCRUM-63) after the close sweeper closed the incident, to the audience of
+ *   `incident.resolved`. The sweeper runs in the worker process, so there the emits go through
+ *   `WorkerRealtimeEmitter` (Redis adapter) instead of the gateway.
  *
  * Every payload carries `incident_id` and `occurred_at` (database time); row events also carry the
  * row's `updated_at`.
@@ -189,7 +208,7 @@ export function eventPayload(
 @Injectable()
 export class IncidentBroadcaster implements IncidentPostCommitHook {
   constructor(
-    private readonly gateway: RealtimeGateway,
+    @Inject(REALTIME_EMITTER) private readonly gateway: RealtimeEmitter,
     private readonly reads: RealtimeReadsRepository,
   ) {}
 
@@ -247,6 +266,26 @@ export class IncidentBroadcaster implements IncidentPostCommitHook {
     );
     this.sendUpdated(state);
     this.sendCounts(state);
+  }
+
+  /**
+   * `incident.closed` (SCRUM-63, D61/D62), from the close sweeper in the worker process: to the
+   * incident room AND `user:{id}` of every delivery recipient still inside the window and of the
+   * resident, in ONE broadcast (the audience of `incident.resolved`, D48), so a member or the resident
+   * not watching the alert sees it become Closed. Then `incident.updated` to the incident room, as
+   * after every write. Nothing when the row is gone or not closed (any more).
+   */
+  async afterClosed(event: IncidentClosedEvent): Promise<void> {
+    const state = await this.state(event.incident_id);
+    if (state?.status !== 'closed') return;
+    const recipients = await this.reads.recipientUserIds(state.incident_id);
+    const userRooms = [...new Set([...recipients, state.resident_id])].map(userRoom);
+    this.gateway.emit(
+      [incidentRoom(state.incident_id), ...userRooms],
+      SERVER_EVENTS.closed,
+      closedPayload(state),
+    );
+    this.sendUpdated(state);
   }
 
   async afterDeliveryCounts(event: IncidentDeliveryCountsEvent): Promise<void> {

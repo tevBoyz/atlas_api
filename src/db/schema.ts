@@ -325,6 +325,7 @@ export const incidents = pgTable(
     }),
     liveSharePayload: jsonb('live_share_payload'),
     liveShareUpdatedAt: timestamp('live_share_updated_at', { withTimezone: true, mode: 'string' }),
+    closedAt: timestamp('closed_at', { withTimezone: true, mode: 'string' }),
   },
   (table) => [
     index('incidents_circle_id_idx')
@@ -334,6 +335,9 @@ export const incidents = pgTable(
       .using('btree', table.residentId.asc().nullsLast())
       .where(sql`(status = ANY (ARRAY['activating'::text, 'active'::text]))`),
     index('incidents_resident_id_idx').using('btree', table.residentId.asc().nullsLast()),
+    index('incidents_resolved_at_resolved_idx')
+      .using('btree', table.resolvedAt.asc().nullsLast())
+      .where(sql`(status = 'resolved'::text)`),
     foreignKey({
       columns: [table.residentId],
       foreignColumns: [profiles.id],
@@ -346,7 +350,7 @@ export const incidents = pgTable(
     }).onDelete('set null'),
     check(
       'incidents_status_allowed',
-      sql`status = ANY (ARRAY['activating'::text, 'active'::text, 'cancelled'::text, 'resolved'::text])`,
+      sql`status = ANY (ARRAY['activating'::text, 'active'::text, 'cancelled'::text, 'resolved'::text, 'closed'::text])`,
     ),
     check(
       'incidents_location_source_allowed',
@@ -370,7 +374,7 @@ export const incidents = pgTable(
     ),
     check(
       'incidents_resolved_shape_check',
-      sql`((status = 'resolved'::text) AND (resolved_at IS NOT NULL) AND (resolved_reason IS NOT NULL)) OR ((status <> 'resolved'::text) AND (resolved_at IS NULL) AND (resolved_reason IS NULL) AND (auto_closed = false))`,
+      sql`((status = ANY (ARRAY['resolved'::text, 'closed'::text])) AND (resolved_at IS NOT NULL) AND (resolved_reason IS NOT NULL)) OR ((status <> ALL (ARRAY['resolved'::text, 'closed'::text])) AND (resolved_at IS NULL) AND (resolved_reason IS NULL) AND (auto_closed = false))`,
     ),
     check(
       'incidents_emergency_type_allowed',
@@ -378,7 +382,11 @@ export const incidents = pgTable(
     ),
     check(
       'incidents_location_sharing_ended_shape',
-      sql`(location_sharing_ended_at IS NULL) OR (status = 'resolved'::text)`,
+      sql`(location_sharing_ended_at IS NULL) OR (status = ANY (ARRAY['resolved'::text, 'closed'::text]))`,
+    ),
+    check(
+      'incidents_closed_shape',
+      sql`((status = 'closed'::text) = (closed_at IS NOT NULL)) AND ((status <> 'closed'::text) OR (resolved_reason = ANY (ARRAY['safe'::text, 'ended'::text])))`,
     ),
   ],
 );

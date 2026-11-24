@@ -82,14 +82,24 @@ export const incidentSendSchema = componentSchema(
   }),
 );
 
+/** `closed_at` of the resident's live bodies (SCRUM-63, D61). */
+const liveClosedAtSchema = z
+  .string()
+  .nullable()
+  .describe(
+    'SCRUM-63 (D61): when the incident became Closed; always null on the live bodies (only an active incident is open, re-notified or submitted; resolved and closed incidents never block a new SOS).',
+  );
+
 /**
- * IncidentLive: IncidentSend plus `emergency_services` (SCRUM-54, D60), what the resident's live alert
- * screen reads: the open read and re-notify. Mark safe keeps IncidentSend.
+ * IncidentLive: IncidentSend plus `emergency_services` (SCRUM-54, D60) and `closed_at` (SCRUM-63,
+ * D61), what the resident's live alert screen reads: the open read and re-notify. Mark safe keeps
+ * IncidentSend.
  */
 export const incidentLiveSchema = componentSchema(
   'IncidentLive',
   incidentSendSchema.extend({
     emergency_services: emergencyServicesSchema,
+    closed_at: liveClosedAtSchema,
   }),
 );
 
@@ -120,12 +130,13 @@ export const setIncidentNotesRequestSchema = z.object({
 });
 
 /**
- * The body of `POST /v1/incidents`: IncidentSend plus `submit_outcome` and `emergency_services`
- * (SCRUM-54, D60).
+ * The body of `POST /v1/incidents`: IncidentSend plus `submit_outcome`, `emergency_services`
+ * (SCRUM-54, D60) and `closed_at` (SCRUM-63, D61).
  */
 export const incidentSubmitResultSchema = incidentSendSchema.extend({
   submit_outcome: z.enum(SUBMIT_OUTCOMES),
   emergency_services: emergencyServicesSchema,
+  closed_at: liveClosedAtSchema,
 });
 
 /**
@@ -136,7 +147,10 @@ export const openIncidentResultSchema = z.object({
   open_incident: incidentLiveSchema.nullable(),
 });
 
-/** One entry of `list_my_recent_incidents`: exactly these 7 keys. */
+/**
+ * One entry of `list_my_recent_incidents`: its 7 keys plus `auto_closed` and `closed_at` (SCRUM-63,
+ * D61). Since SCRUM-63 the list also holds closed incidents.
+ */
 export const recentIncidentSchema = componentSchema(
   'RecentIncident',
   z.object({
@@ -147,6 +161,13 @@ export const recentIncidentSchema = componentSchema(
     sent_at: z.string().nullable(),
     resolved_at: z.string().nullable(),
     resolved_reason: z.string().nullable(),
+    auto_closed: z.boolean(),
+    closed_at: z
+      .string()
+      .nullable()
+      .describe(
+        'SCRUM-63 (D61): when the incident became Closed (final, read-only); null until then. With status closed: resolved_reason safe = closed after the wrap-up following mark safe; ended with auto_closed true = closed automatically after inactivity.',
+      ),
   }),
 );
 
@@ -167,7 +188,8 @@ export const deliveryCountsSchema = componentSchema(
 );
 
 /**
- * One entry of `list_responder_incidents` (spec §7.4): exactly these 10 keys. Never `resident_id`,
+ * One entry of `list_responder_incidents` (spec §7.4): its 10 keys plus `closed_at` (SCRUM-63, D61;
+ * closed incidents stay listed). Never `resident_id`,
  * `circle_id` or profile data beyond `resident_name` (API-100-21 AC3).
  */
 export const responderIncidentSchema = componentSchema(
@@ -183,6 +205,12 @@ export const responderIncidentSchema = componentSchema(
     resolved_at: z.string().nullable(),
     resolved_reason: z.string().nullable(),
     auto_closed: z.boolean(),
+    closed_at: z
+      .string()
+      .nullable()
+      .describe(
+        'SCRUM-63 (D61): when the incident became Closed (final, read-only); null until then. With status closed: resolved_reason safe = closed after the wrap-up following mark safe; ended with auto_closed true = closed automatically after inactivity.',
+      ),
   }),
 );
 

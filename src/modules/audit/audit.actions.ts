@@ -10,6 +10,9 @@ export const AUDIT_ACTIONS = [
   'incident.acknowledged',
   // SCRUM-50/51 (D56): detail {delivery_id, status, previous_status, acknowledged_now}; ids only.
   'incident.response_set',
+  // SCRUM-63 (D62): the close sweeper closed the incident (no actor). Detail {resident_id, circle_id,
+  // reason (safe | ended), auto_closed, previous_status (resolved | active)}; ids only.
+  'incident.closed',
   'circle.invite.created',
   'circle.invite.resent',
   'circle.invite.canceled',

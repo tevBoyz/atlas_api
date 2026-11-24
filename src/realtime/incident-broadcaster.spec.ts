@@ -1,4 +1,5 @@
 import {
+  closedPayload,
   deliveryCountsPayload,
   eventPayload,
   IncidentBroadcaster,
@@ -12,7 +13,6 @@ import {
   updatedPayload,
 } from './incident-broadcaster';
 import { REALTIME_CONTRACT } from './realtime.contract';
-import type { RealtimeGateway } from './realtime.gateway';
 import type {
   IncidentBroadcastState,
   IncidentEventRow,
@@ -42,6 +42,8 @@ function state(): IncidentBroadcastState {
     renotified_at: null,
     resolved_at: null,
     resolved_reason: null,
+    closed_at: null,
+    auto_closed: false,
     location_sharing_ended_at: null,
     location_source: 'current',
     location_lat: 1,
@@ -107,7 +109,7 @@ function setup(row?: IncidentEventRow) {
     responder: jest.fn().mockResolvedValue(responderState()),
   };
   const broadcaster = new IncidentBroadcaster(
-    { emit } as unknown as RealtimeGateway,
+    { emit },
     reads as unknown as RealtimeReadsRepository,
   );
   /** `[rooms, event, except]` of every emit. */
@@ -149,6 +151,47 @@ describe('eventPayload (D3, D11 per receiver)', () => {
     const row = eventRow(RESIDENT, detail);
     eventPayload(row, { resident: false, viewerId: null });
     expect(row.event.detail).toEqual(detail);
+  });
+});
+
+describe('IncidentBroadcaster incident.closed (SCRUM-63, D61/D62)', () => {
+  const closedState = (): IncidentBroadcastState => ({
+    ...state(),
+    status: 'closed',
+    resolved_at: T,
+    resolved_reason: 'ended',
+    closed_at: T,
+    auto_closed: true,
+    location_sharing_ended_at: T,
+  });
+
+  it('payload: exactly incident_id, status, closed_at, resolved_reason, auto_closed, occurred_at', () => {
+    expect(closedPayload(closedState())).toEqual({
+      incident_id: INCIDENT,
+      status: 'closed',
+      closed_at: T,
+      resolved_reason: 'ended',
+      auto_closed: true,
+      occurred_at: T,
+    });
+  });
+
+  it('one broadcast to the incident room, each recipient and the resident user room, then updated', async () => {
+    const { broadcaster, calls, reads } = setup();
+    reads.incidentState.mockResolvedValue(closedState());
+    await broadcaster.afterClosed({ ...ref, from: 'active' });
+    expect(calls()).toEqual([
+      [[`incident:${INCIDENT}`, `user:${MEMBER}`, `user:${RESIDENT}`], 'incident.closed', []],
+      [[`incident:${INCIDENT}`], 'incident.updated', []],
+    ]);
+  });
+
+  it('nothing when the row is gone or not closed', async () => {
+    const { broadcaster, calls, reads } = setup();
+    await broadcaster.afterClosed({ ...ref, from: 'resolved' });
+    reads.incidentState.mockResolvedValue(undefined);
+    await broadcaster.afterClosed({ ...ref, from: 'resolved' });
+    expect(calls()).toEqual([]);
   });
 });
 
@@ -330,6 +373,7 @@ describe('the published contract (x-realtime) matches the payloads', () => {
     ['incident.resolved', resolvedPayload],
     ['incident.delivery_counts', deliveryCountsPayload],
     ['incident.incoming', incomingPayload],
+    ['incident.closed', closedPayload],
   ] as const)('%s', (name, build) => {
     expect(Object.keys(build(state()))).toEqual(events[name].payload);
   });

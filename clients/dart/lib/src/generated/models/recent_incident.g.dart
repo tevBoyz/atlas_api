@@ -9,6 +9,8 @@ part of 'recent_incident.dart';
 RecentIncident _$RecentIncidentFromJson(Map<String, dynamic> json) =>
     RecentIncident(
       activatedAt: json['activated_at'] as String,
+      autoClosed: json['auto_closed'] as bool,
+      closedAt: json['closed_at'] as String?,
       emergencyType: RecentIncidentEmergencyType.fromJson(
         json['emergency_type'] as String,
       ),
@@ -22,6 +24,8 @@ RecentIncident _$RecentIncidentFromJson(Map<String, dynamic> json) =>
 Map<String, dynamic> _$RecentIncidentToJson(RecentIncident instance) =>
     <String, dynamic>{
       'activated_at': instance.activatedAt,
+      'auto_closed': instance.autoClosed,
+      'closed_at': instance.closedAt,
       'emergency_type': instance.emergencyType,
       'id': instance.id,
       'resolved_at': instance.resolvedAt,

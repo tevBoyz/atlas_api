@@ -7,6 +7,8 @@
  *   `share_payload_updated_at` besides the SQL keys;
  * - SCRUM-54 (D60): the member read and the resident's live reads carry `emergency_services`
  *   (removed here after checking it is the seeded list).
+ * - SCRUM-63 (D61): the open read, the recent list and the member reads carry `closed_at` (removed
+ *   here when present, after checking it is null: the SQL functions know no closed incident).
  *
  * {@link asSqlSharePayloadShape} returns a deep copy with every such array joined with ", " (what the
  * old text column holds, and the one-item case equals the SQL string) and the two keys removed, after
@@ -40,6 +42,11 @@ export function asSqlSharePayloadShape<T>(value: T): T {
   }
   for (const [key, entry] of Object.entries(input)) {
     if (key === 'share_payload_at_activation' || key === 'share_payload_updated_at') continue;
+    if (key === 'closed_at') {
+      // SCRUM-63 (D61): not in the SQL shapes; null until the incident is closed.
+      if (entry !== null) throw new Error('closed_at (D61) is set on a compared body');
+      continue;
+    }
     if (key === 'emergency_services') {
       // SCRUM-54 (D60): not in the SQL shapes; must be the seeded numbers.
       if (JSON.stringify(entry) !== JSON.stringify(GM_EMERGENCY_SERVICES)) {
@@ -80,7 +87,30 @@ export function withoutEmergencyServicesText(text: string): string {
   if (!text.includes(EMERGENCY_SERVICES_SUFFIX)) {
     throw new Error('emergency_services (D60, the seeded numbers) is missing from the body');
   }
-  return text.replace(EMERGENCY_SERVICES_SUFFIX, '');
+  return withoutClosedAtText(text.replace(EMERGENCY_SERVICES_SUFFIX, ''));
+}
+
+/**
+ * SCRUM-63 (D61) deliberate divergence: the open read (`GET /v1/me/incidents/open`) carries
+ * `closed_at` (always null there: only an active incident is open), and so do the recent list and
+ * the member reads; the SQL shapes do not have it. The body text without every `"closed_at":null`,
+ * so the rest compares byte for byte. A body without the key is returned unchanged; a set value
+ * throws.
+ */
+export function withoutClosedAtText(text: string): string {
+  if (/"closed_at":(?!null)/.test(text)) {
+    throw new Error('closed_at (D61) is set on a compared body');
+  }
+  return text.replace(/"closed_at":null,|,"closed_at":null/g, '');
+}
+
+/** A body without `closed_at` (D61) when it has it, after checking it is null. */
+export function withoutClosedAt<T extends Record<string, unknown>>(body: T): T {
+  if (!('closed_at' in body)) return body;
+  if (body.closed_at !== null) throw new Error('closed_at (D61) is set on a compared body');
+  const rest: Record<string, unknown> = { ...body };
+  delete rest.closed_at;
+  return rest as T;
 }
 
 /** A body without `emergency_services`, after checking it holds the seeded numbers (D60). */
@@ -90,5 +120,5 @@ export function withoutEmergencyServices<T extends Record<string, unknown>>(body
   }
   const rest: Record<string, unknown> = { ...body };
   delete rest.emergency_services;
-  return rest as T;
+  return withoutClosedAt(rest) as T;
 }

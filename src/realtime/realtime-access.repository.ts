@@ -18,7 +18,7 @@ export interface JoinAccess {
 /**
  * The authorization of `incident.join` (API-100-40 AC1, AC4): the same policies as the REST incident
  * reads, as one SQL predicate per call (no cached grant). The resident (`incident.resident`, any
- * status) or a member passing `incident.memberView` (circle set, status `active`/`resolved`, an
+ * status) or a member passing `incident.memberView` (circle set, status `active`/`resolved`/`closed` (SCRUM-63), an
  * `active` member row whose `activated_at` is not after the incident's `activated_at` (rule 54), not
  * the resident). Pending, declined, removed and left users, members who joined after the incident
  * started, and outsiders get nothing, the same as `GET /v1/incidents/{id}` (`not_found`).

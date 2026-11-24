@@ -18,7 +18,7 @@ export class IncidentEventsController {
 
   /**
    * `incident.eventsView`: the resident, or an active member inside the window (rule 54) while the
-   * incident is `active`/`resolved`. Anything else, including an unknown id, is 404
+   * incident is `active`/`resolved`/`closed` (SCRUM-63). Anything else, including an unknown id, is 404
    * `incident_events:not_found`. A caller who is not the resident gets `alert_sent` and
    * `closure_notified` without `recipient_ids` (epic §18 D3); `recipient_count` stays.
    */

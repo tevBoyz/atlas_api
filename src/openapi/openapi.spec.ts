@@ -421,11 +421,12 @@ describe('OpenAPI document (API-100-12)', () => {
         anyOf: [{ $ref: '#/components/schemas/IncidentLive' }, { type: 'null' }],
       });
       expect(Object.keys(doc.components.schemas.IncidentSend.properties)).toHaveLength(24);
-      // SCRUM-54 (D60): IncidentLive = IncidentSend + emergency_services.
+      // SCRUM-54 (D60): IncidentLive = IncidentSend + emergency_services (+ closed_at, SCRUM-63).
       expect(Object.keys(doc.components.schemas.IncidentLive.properties).sort()).toEqual(
         [
           ...Object.keys(doc.components.schemas.IncidentSend.properties),
           'emergency_services',
+          'closed_at',
         ].sort(),
       );
       expect(doc.components.schemas.IncidentDetails.properties.emergency_services).toEqual(

@@ -10,6 +10,7 @@ IncidentDetails _$IncidentDetailsFromJson(Map<String, dynamic> json) =>
     IncidentDetails(
       activatedAt: json['activated_at'] as String,
       autoClosed: json['auto_closed'] as bool,
+      closedAt: json['closed_at'] as String?,
       emergencyServices: (json['emergency_services'] as List<dynamic>)
           .map((e) => EmergencyService.fromJson(e as Map<String, dynamic>))
           .toList(),
@@ -45,6 +46,7 @@ Map<String, dynamic> _$IncidentDetailsToJson(IncidentDetails instance) =>
     <String, dynamic>{
       'activated_at': instance.activatedAt,
       'auto_closed': instance.autoClosed,
+      'closed_at': instance.closedAt,
       'emergency_services': instance.emergencyServices,
       'emergency_type': instance.emergencyType,
       'id': instance.id,

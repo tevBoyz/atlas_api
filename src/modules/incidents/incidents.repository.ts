@@ -28,10 +28,12 @@ export interface LockedIncidentRow extends Record<string, unknown> {
   sharing_ended: boolean;
 }
 
-/** The lifecycle events `mark_incident_safe` writes, in the order it writes them (spec §5.6). */
+/**
+ * The lifecycle events mark safe writes, in the order it writes them (spec §5.6). Since SCRUM-63
+ * (D62) not `incident_closed`: the close sweeper writes that one when the incident closes.
+ */
 export const CLOSURE_EVENT_TYPES = [
   'safe_recorded',
-  'incident_closed',
   'location_sharing_ended',
   'closure_notified',
 ] as const;
@@ -360,7 +362,19 @@ export class IncidentsRepository {
     return result.rows[0];
   }
 
-  /** `_incident_send_json` plus `submit_outcome`. */
+  /**
+   * IncidentSend plus `closed_at` (SCRUM-63, D61): the re-notify body (IncidentLive without
+   * `emergency_services`, which the service adds).
+   */
+  async liveResult(tx: IncidentTransaction, incidentId: string): Promise<Record<string, unknown>> {
+    const result = await tx.execute<{ body: Record<string, unknown> }>(sql`
+      select ${INCIDENT_SEND_JSON} || jsonb_build_object('closed_at', rec.closed_at) as body
+        from public.incidents rec
+       where rec.id = ${incidentId}::uuid`);
+    return result.rows[0].body;
+  }
+
+  /** `_incident_send_json` plus `submit_outcome`, and `closed_at` (SCRUM-63, D61). */
   async submitResult(
     tx: IncidentTransaction,
     incidentId: string,
@@ -368,7 +382,8 @@ export class IncidentsRepository {
   ): Promise<Record<string, unknown>> {
     const result = await tx.execute<{ body: Record<string, unknown> }>(sql`
       select ${INCIDENT_SEND_JSON}
-             || jsonb_build_object('submit_outcome', ${outcome}::text) as body
+             || jsonb_build_object('submit_outcome', ${outcome}::text, 'closed_at', rec.closed_at)
+             as body
         from public.incidents rec
        where rec.id = ${incidentId}::uuid`);
     return result.rows[0].body;
@@ -377,14 +392,15 @@ export class IncidentsRepository {
   /**
    * `get_my_open_incident` (final definition: baseline migration 20261023160000): the caller's
    * `active` incident as `_incident_send_json`, or null. One statement, so the incident and its counts
-   * come from one snapshot.
+   * come from one snapshot. SCRUM-63 (D61): plus `closed_at` (null: only an active incident is open;
+   * resolved and closed incidents never block a new SOS).
    */
   async openIncident(
     tx: IncidentTransaction,
     residentId: string,
   ): Promise<Record<string, unknown> | null> {
     const result = await tx.execute<{ body: Record<string, unknown> }>(sql`
-      select ${INCIDENT_SEND_JSON} as body
+      select ${INCIDENT_SEND_JSON} || jsonb_build_object('closed_at', rec.closed_at) as body
         from public.incidents rec
        where ${incidentResident.where({ callerId: residentId, incident: incidentAlias('rec') })}
          and rec.status = 'active'
@@ -396,7 +412,9 @@ export class IncidentsRepository {
   /**
    * `list_my_recent_incidents` (final definition: baseline migration 20261023160000): the caller's
    * `active`/`resolved` incidents, newest `activated_at` first then `id` desc. `limit` is already
-   * clamped (see `clampRecentIncidentsLimit`).
+   * clamped (see `clampRecentIncidentsLimit`). SCRUM-63 (D61): also `closed` incidents, and each item
+   * also carries `auto_closed` and `closed_at` (after the SQL keys), so the app can show Active /
+   * Resolved (Safe) / Closed / Closed automatically.
    */
   async recentIncidents(
     tx: IncidentTransaction,
@@ -418,39 +436,17 @@ export class IncidentsRepository {
                    'activated_at', i.activated_at,
                    'sent_at', i.sent_at,
                    'resolved_at', i.resolved_at,
-                   'resolved_reason', i.resolved_reason
+                   'resolved_reason', i.resolved_reason,
+                   'auto_closed', i.auto_closed,
+                   'closed_at', i.closed_at
                  ) as payload
             from public.incidents i
            where ${incidentResident.where({ callerId: residentId, incident: incidentAlias('i') })}
-             and i.status in ('active', 'resolved')
+             and i.status in ('active', 'resolved', 'closed')
            order by i.activated_at desc, i.id desc
            limit ${limit}::int
         ) as r`);
     return result.rows[0].body;
-  }
-
-  /**
-   * The close of `mark_incident_safe` (final definition: baseline migration 20261023140000), after the
-   * row lock and the status checks: `status = 'resolved'`, `resolved_at = now()`,
-   * `resolved_reason = 'safe'`, `auto_closed = false`, `location_sharing_ended_at = now()`. Undefined
-   * (nothing written) when the incident is no longer `active`; the caller holds the row lock, so this
-   * only guards against a caller that skipped the check.
-   */
-  async closeSafe(
-    tx: IncidentTransaction,
-    incidentId: string,
-  ): Promise<{ circle_id: string | null } | undefined> {
-    const result = await tx.execute<{ circle_id: string | null }>(sql`
-      update public.incidents
-         set status = 'resolved',
-             resolved_at = now(),
-             resolved_reason = 'safe',
-             auto_closed = false,
-             location_sharing_ended_at = now()
-       where id = ${incidentId}::uuid
-         and status = 'active'
-      returning circle_id::text as circle_id`);
-    return result.rows[0];
   }
 
   /**
@@ -479,9 +475,10 @@ export class IncidentsRepository {
   }
 
   /**
-   * The four events of `mark_incident_safe`, in its order: `safe_recorded {}`,
-   * `incident_closed {resolved_reason: "safe"}`, `location_sharing_ended {}` and
+   * The events of mark safe, in its order: `safe_recorded {}`, `location_sharing_ended {}` and
    * `closure_notified {recipient_count, recipient_ids}`. Each is once-only (a repeat is a no-op).
+   * SCRUM-63 (D62): `incident_closed` (which `mark_incident_safe` writes between the first two) is
+   * written by the close sweeper at the real close instead (`IncidentStateService.closeDue`).
    * `recipientIds` is {@link closureRecipientIds}: the detail is built from that one read, so the count
    * and the ids always agree.
    */
@@ -492,13 +489,6 @@ export class IncidentsRepository {
     recipientIds: readonly string[],
   ): Promise<void> {
     await this.events.record(tx, incidentId, 'safe_recorded', actorId, sql`'{}'::jsonb`);
-    await this.events.record(
-      tx,
-      incidentId,
-      'incident_closed',
-      actorId,
-      sql`jsonb_build_object('resolved_reason', 'safe')`,
-    );
     await this.events.record(tx, incidentId, 'location_sharing_ended', actorId, sql`'{}'::jsonb`);
     await this.events.record(
       tx,

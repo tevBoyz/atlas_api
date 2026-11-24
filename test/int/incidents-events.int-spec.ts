@@ -182,7 +182,7 @@ describe('incident events (API-100-22)', () => {
       expect(reply.statusCode).toBe(200);
       const events = reply.json<Body[]>();
       expect(events).toEqual(await storedEvents(s.incidentId));
-      expect(events).toHaveLength(7);
+      expect(events).toHaveLength(6); // SCRUM-63 (D62): no incident_closed at mark safe
       for (const event of events) {
         expect(Object.keys(event).sort()).toEqual([
           'actor_id',
@@ -331,11 +331,16 @@ describe('incident events (API-100-22)', () => {
         }));
       const viaApi = (await getIncidentEvents(app, a.members[0].id, a.incidentId)).json<Body[]>();
       const viaSql = (await getIncidentEvents(app, b.members[0].id, b.incidentId)).json<Body[]>();
+      // SCRUM-63 (D62, recorded divergence): the SQL mark safe also writes `incident_closed`; the API
+      // writes it only at the real close (the close sweeper).
       expect(
         shape(viaApi).sort((x, y) => String(x.event_type).localeCompare(String(y.event_type))),
       ).toEqual(
-        shape(viaSql).sort((x, y) => String(x.event_type).localeCompare(String(y.event_type))),
+        shape(viaSql)
+          .filter((e) => e.event_type !== 'incident_closed')
+          .sort((x, y) => String(x.event_type).localeCompare(String(y.event_type))),
       );
+      expect(viaSql.filter((e) => e.event_type === 'incident_closed')).toHaveLength(1);
       const fresh = (await getIncidentEvents(app, a.members[0].id, sqlSide.id as string)).json<
         Body[]
       >();
@@ -391,7 +396,7 @@ describe('incident events (API-100-22)', () => {
       await markSafe(app, s.resident.id, s.incidentId);
       const closed = await storedEvents(s.incidentId);
       for (const event of renotified) expect(closed).toContainEqual(event);
-      expect(closed).toHaveLength(renotified.length + 4);
+      expect(closed).toHaveLength(renotified.length + 3); // SCRUM-63 (D62): not incident_closed
     });
   });
 
@@ -434,10 +439,10 @@ describe('incident events (API-100-22)', () => {
       hookCalls.length = 0;
       const key = randomUUID();
       await markSafe(app, s.resident.id, s.incidentId, key);
-      await waitForHooks(4);
+      await waitForHooks(3);
+      // SCRUM-63 (D62): no `incident_closed` at mark safe (the sweeper writes it at the close).
       expect(mine().map((e) => e.event_type)).toEqual([
         'safe_recorded',
-        'incident_closed',
         'location_sharing_ended',
         'closure_notified',
       ]);

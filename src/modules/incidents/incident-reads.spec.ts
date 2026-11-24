@@ -65,9 +65,11 @@ describe('read response schemas (API-100-16 AC1, AC2)', () => {
     });
   });
 
-  it('a recent entry has exactly 7 keys', () => {
+  it('a recent entry has exactly 9 keys (the SQL 7 plus auto_closed, closed_at: SCRUM-63)', () => {
     expect(Object.keys(recentIncidentSchema.shape).sort()).toEqual([
       'activated_at',
+      'auto_closed',
+      'closed_at',
       'emergency_type',
       'id',
       'resolved_at',

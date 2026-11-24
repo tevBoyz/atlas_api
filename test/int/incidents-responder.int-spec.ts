@@ -4,7 +4,11 @@ import type { Client } from 'pg';
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
 import { authHeader } from '../../src/testing/test-tokens';
 import { openTestClient } from '../support/database';
-import { asSqlSharePayloadShape, GM_EMERGENCY_SERVICES } from '../support/share-payload-shape';
+import {
+  asSqlSharePayloadShape,
+  GM_EMERGENCY_SERVICES,
+  withoutClosedAtText,
+} from '../support/share-payload-shape';
 import {
   addActiveMember,
   type CircleFixture,
@@ -40,6 +44,8 @@ const RACE_ROUNDS = 25;
 const LIST_KEYS = [
   'activated_at',
   'auto_closed',
+  // SCRUM-63 (D61, D63): after the SQL keys.
+  'closed_at',
   'emergency_type',
   'id',
   'renotified_at',
@@ -283,7 +289,8 @@ describe('responder incident list and details (API-100-21)', () => {
         const api = await listResponderIncidents(app, caller.id);
         const sql = await callSqlAs(client, caller.id, 'public.list_responder_incidents()');
         expect(api.statusCode).toBe(200);
-        expect(api.body).toBe(JSON.stringify(sql));
+        // SCRUM-63 (D63): `closed_at` (null here) is the API's only extra key.
+        expect(withoutClosedAtText(api.body)).toBe(JSON.stringify(sql));
       }
     });
   });

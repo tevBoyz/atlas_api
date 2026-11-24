@@ -171,18 +171,29 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
     return rows[0]?.detail;
   };
 
-  /** Exactly one of each closure event and of the two submit events (re-notifies aside). */
+  /**
+   * Exactly one of each closure event and of the two submit events (re-notifies aside). SCRUM-63
+   * (D62, recorded divergence): `incident_closed` is checked apart: the API mark safe no longer
+   * writes it (the close sweeper does, at the real close), the SQL function still does, so it is
+   * there at most once (once when the SQL function won a race).
+   */
   async function expectClosedOnce(incidentId: string) {
     const { rows } = await client.query<{ event_type: string; n: number }>(
       `select event_type, count(*)::int as n from public.incident_events
-        where incident_id = $1 and event_type <> 'renotified'
+        where incident_id = $1 and event_type not in ('renotified', 'incident_closed')
         group by event_type order by event_type`,
       [incidentId],
     );
+    const { rows: closedEvents } = await client.query(
+      `select 1 from public.incident_events
+        where incident_id = $1 and event_type = 'incident_closed'`,
+      [incidentId],
+    );
+    expect(closedEvents.length).toBeLessThanOrEqual(1);
     expect(rows).toEqual([
       { event_type: 'alert_sent', n: 1 },
       { event_type: 'closure_notified', n: 1 },
-      { event_type: 'incident_closed', n: 1 },
+      // SCRUM-63 (D62): `incident_closed` is written at the real close (the sweeper), not here.
       { event_type: 'location_sharing_ended', n: 1 },
       { event_type: 'location_sharing_started', n: 1 },
       { event_type: 'safe_recorded', n: 1 },
@@ -426,12 +437,6 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
         {
           event_type: 'closure_notified',
           detail: { recipient_count: 3, recipient_ids: sortedIds },
-          actor_id: resident.id,
-          at_close: true,
-        },
-        {
-          event_type: 'incident_closed',
-          detail: { resolved_reason: 'safe' },
           actor_id: resident.id,
           at_close: true,
         },
@@ -949,12 +954,22 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
                 e.occurred_at = i.resolved_at as at_close
            from public.incident_events e join public.incidents i on i.id = e.incident_id
           where e.incident_id = $1
-            and e.event_type not in ('alert_sent', 'location_sharing_started')
+            and e.event_type not in ('alert_sent', 'location_sharing_started', 'incident_closed')
           order by e.event_type`,
         [incidentId],
       );
       return { incident, events };
     };
+
+    /** SCRUM-63 (D62): `incident_closed` rows at the close (the SQL function only). */
+    const closedEventCount = async (incidentId: string) =>
+      (
+        await client.query(
+          `select 1 from public.incident_events
+            where incident_id = $1 and event_type = 'incident_closed'`,
+          [incidentId],
+        )
+      ).rows.length;
 
     it('same rows, events and response whichever side closes', async () => {
       const [a, b] = [await activeAlert(3), await activeAlert(3)];
@@ -964,6 +979,9 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
       expect(comparable(api.json<Body>())).toEqual(comparable(sql));
       expect(Object.keys(api.json<Body>())).toEqual(Object.keys(sql));
       expect(await rowsOf(a.incidentId)).toEqual(await rowsOf(b.incidentId));
+      // SCRUM-63 (D62, recorded divergence): only the SQL function writes incident_closed here.
+      expect(await closedEventCount(a.incidentId)).toBe(0);
+      expect(await closedEventCount(b.incidentId)).toBe(1);
       expect((await closureDetail(a.incidentId))?.recipient_ids).toEqual(
         a.memberUsers.map((user) => user.id).sort(),
       );
