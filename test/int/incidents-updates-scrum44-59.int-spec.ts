@@ -496,7 +496,7 @@ describe('SCRUM-44/59 resident status updates (D70)', () => {
       return rows;
     }
 
-    it('one push per recipient device: title = resident name, body = preset text · HH:mm', async () => {
+    it('one push per recipient device: title = resident name, body = preset text · h:mm AM/PM', async () => {
       const s = await scene();
       await registerDevice(app, s.member.id, randomUUID(), {
         platform: 'android',
@@ -520,7 +520,7 @@ describe('SCRUM-44/59 resident status updates (D70)', () => {
       expect(ana).toMatchObject({ status: 'skipped', error_code: 'no_device' });
       const fake = push().sent.find((m) => m.provider_message_id === milo.provider_message_id);
       const { rows: hhmm } = await client.query<{ t: string }>(
-        `select to_char(occurred_at at time zone 'Africa/Banjul', 'HH24:MI') as t
+        `select to_char(occurred_at at time zone 'Africa/Banjul', 'FMHH12:MI AM') as t
            from public.incident_events where id = $1`,
         [update.id],
       );
@@ -557,7 +557,7 @@ describe('SCRUM-44/59 resident status updates (D70)', () => {
       }, 15_000);
       const fake = push().sent.find((m) => m.provider_message_id === sentId);
       const { rows: hhmm } = await client.query<{ t: string }>(
-        `select to_char(occurred_at at time zone 'Africa/Banjul', 'HH24:MI') as t
+        `select to_char(occurred_at at time zone 'Africa/Banjul', 'FMHH12:MI AM') as t
            from public.incident_events where id = $1`,
         [update.id],
       );

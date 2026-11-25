@@ -75,21 +75,31 @@ const TYPE_LABELS: Readonly<Record<string, string>> = {
 export const DEFAULT_TIME_ZONE = 'Africa/Banjul';
 
 /**
- * D54: the time of the event (`occurred_at`: activation, re-notify or mark safe) as `HH:mm`,
- * 24-hour, in the recipient's time zone (`profiles.timezone`; {@link DEFAULT_TIME_ZONE} when
- * missing or unknown). `null` when the payload has no valid time.
+ * D54: the time of the event (`occurred_at`: activation, re-notify or mark safe) in the
+ * recipient's time zone (`profiles.timezone`; {@link DEFAULT_TIME_ZONE} when missing or unknown),
+ * 12-hour as the app shows it (gap 62): `7:20 PM` (hour without a leading zero, midnight
+ * `12:05 AM`, noon `12:00 PM`, always a plain space before `AM` / `PM`). `null` when the payload
+ * has no valid time.
  */
 export function pushTime(occurredAt: string | null, timeZone?: string | null): string | null {
   if (!occurredAt) return null;
   const at = Date.parse(occurredAt);
   if (Number.isNaN(at)) return null;
-  const format = (zone: string) =>
-    new Intl.DateTimeFormat('en-GB', {
-      hour: '2-digit',
+  const format = (zone: string) => {
+    // Built from the parts so the text never depends on the ICU spacing (some versions put a
+    // narrow no-break space before AM / PM).
+    const parts = new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric',
       minute: '2-digit',
-      hourCycle: 'h23',
+      hourCycle: 'h12',
       timeZone: zone,
-    }).format(at);
+    }).formatToParts(at);
+    const part = (type: Intl.DateTimeFormatPartTypes) =>
+      parts.find((p) => p.type === type)?.value ?? '';
+    const hour = Number(part('hour')) % 12 || 12;
+    const minute = part('minute').padStart(2, '0');
+    return `${hour}:${minute} ${part('dayPeriod').toUpperCase()}`;
+  };
   try {
     return format(timeZone || DEFAULT_TIME_ZONE);
   } catch {
@@ -100,7 +110,7 @@ export function pushTime(occurredAt: string | null, timeZone?: string | null): s
 /**
  * The visible title and body (English; the app may show its own text from the data keys). Built
  * from the allowed values only; the body ends with the time of the event in the recipient's time
- * zone (D54), e.g. `Emergency alert: Medical · 16:48`.
+ * zone (D54; 12-hour, gap 62), e.g. `Emergency alert: Medical · 4:48 PM`.
  */
 export function pushText(
   message: PushNotice,
@@ -153,7 +163,7 @@ export function shortenUpdateText(value: string): string {
 
 /**
  * SCRUM-44/59 (D70): title = the resident's display name (`Atlas` when blank, as D54); body =
- * `Situation worsening · 16:48`, `Help is here · 16:48` or the free text shortened plus the time of
+ * `Situation worsening · 4:48 PM`, `Help is here · 4:48 PM` or the free text shortened plus the time of
  * the update in the recipient's time zone (D54).
  */
 function statusUpdateText(
@@ -174,7 +184,7 @@ export const TEST_ALERT_FALLBACK_OWNER = 'Your Safety Circle owner';
 
 /**
  * SCRUM-35 (D67): `TEST ALERT — NOT AN EMERGENCY` / `<Owner name> is testing their Safety Circle ·
- * HH:mm` (the send time in the recipient's time zone, as D54).
+ * 4:48 PM` (the send time in the recipient's time zone, 12-hour, as D54).
  */
 function testAlertText(
   message: TestAlertPushMessage,

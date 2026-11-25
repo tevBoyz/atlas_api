@@ -125,7 +125,7 @@ describe('DeliverySender (API-100-47)', () => {
       SENT,
     );
     await sender.process(job());
-    expect(send).toHaveBeenCalledWith('+12015550123', 'R: Emergency alert: Fire · 07:48');
+    expect(send).toHaveBeenCalledWith('+12015550123', 'R: Emergency alert: Fire · 7:48 AM');
   });
 
   it('SCRUM-47 latency line: occurred_at to provider acceptance in ms, ids only (no personal data)', async () => {

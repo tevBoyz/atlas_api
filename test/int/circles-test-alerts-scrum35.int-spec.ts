@@ -295,7 +295,7 @@ describe('SCRUM-35 test alerts (D66-D68)', () => {
     expect(ok.status).toBe('sent');
     const fake = push().sent.find((m) => m.provider_message_id === ok.provider_message_id);
     const { rows: hhmm } = await client.query<{ t: string }>(
-      `select to_char(created_at at time zone 'Africa/Banjul', 'HH24:MI') as t
+      `select to_char(created_at at time zone 'Africa/Banjul', 'FMHH12:MI AM') as t
          from public.circle_test_alerts where id = $1`,
       [id],
     );

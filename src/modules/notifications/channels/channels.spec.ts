@@ -111,31 +111,46 @@ describe('push content (API-100-46 AC3)', () => {
   it('visible text uses the allowed values only, with the time (D54)', () => {
     expect(pushText(MESSAGE)).toEqual({
       title: 'Ada Example',
-      body: 'Emergency alert: Medical · 10:00',
+      body: 'Emergency alert: Medical · 10:00 AM',
     });
     expect(pushText({ ...MESSAGE, topic: 'incident.renotified', resident_name: null })).toEqual({
       title: 'Atlas',
-      body: 'Alert sent again: Medical · 10:00',
+      body: 'Alert sent again: Medical · 10:00 AM',
     });
     expect(pushText({ ...MESSAGE, topic: 'incident.resolved' }).body).toBe(
-      'Marked safe. The alert is closed. · 10:00',
+      'Marked safe. The alert is closed. · 10:00 AM',
     );
     expect(pushText({ ...MESSAGE, occurred_at: null }).body).toBe('Emergency alert: Medical');
   });
 
-  it('D54: the time is in the recipient time zone, 24-hour HH:mm; default Africa/Banjul', () => {
+  it('D54: the time is in the recipient time zone, 12-hour h:mm AM/PM (gap 62); default Africa/Banjul', () => {
     const at = '2026-11-20T22:05:00.123456+00:00';
     // Two recipients of the same alert in different zones see their own local time.
     expect(pushText({ ...MESSAGE, occurred_at: at }, 'America/Chicago').body).toBe(
-      'Emergency alert: Medical · 16:05',
+      'Emergency alert: Medical · 4:05 PM',
     );
     expect(pushText({ ...MESSAGE, occurred_at: at }, 'Asia/Kolkata').body).toBe(
-      'Emergency alert: Medical · 03:35',
+      'Emergency alert: Medical · 3:35 AM',
     );
-    expect(pushTime(at, 'Africa/Banjul')).toBe('22:05');
-    expect(pushTime(at, null)).toBe('22:05');
-    expect(pushTime(at, 'Not/AZone')).toBe('22:05');
-    expect(pushTime('2026-11-20T00:00:00Z', 'Africa/Banjul')).toBe('00:00');
+    expect(pushTime(at, 'Africa/Banjul')).toBe('10:05 PM');
+    expect(pushTime(at, null)).toBe('10:05 PM');
+    expect(pushTime(at, 'Not/AZone')).toBe('10:05 PM');
+  });
+
+  it('gap 62: 12-hour form: no leading zero, midnight 12:xx AM, noon 12:xx PM, plain space', () => {
+    expect(pushTime('2026-11-20T00:00:00Z', 'Africa/Banjul')).toBe('12:00 AM');
+    expect(pushTime('2026-11-20T00:07:00Z', 'Africa/Banjul')).toBe('12:07 AM');
+    expect(pushTime('2026-11-20T12:00:00Z', 'Africa/Banjul')).toBe('12:00 PM');
+    expect(pushTime('2026-11-20T12:59:59Z', 'Africa/Banjul')).toBe('12:59 PM');
+    expect(pushTime('2026-11-20T07:05:00Z', 'Africa/Banjul')).toBe('7:05 AM');
+    expect(pushTime('2026-11-20T19:20:00Z', 'Africa/Banjul')).toBe('7:20 PM');
+    expect(pushTime('2026-11-20T01:00:00Z', 'Africa/Banjul')).toBe('1:00 AM');
+    expect(pushTime('2026-11-20T11:59:00Z', 'Africa/Banjul')).toBe('11:59 AM');
+    expect(pushTime('2026-11-20T23:59:00Z', 'Africa/Banjul')).toBe('11:59 PM');
+    // A zone where the local day is different: Tokyo is UTC+9.
+    expect(pushTime('2026-11-20T15:30:00Z', 'Asia/Tokyo')).toBe('12:30 AM');
+    // The space before AM / PM is a plain U+0020 (never ICU's narrow no-break space).
+    expect(pushTime('2026-11-20T19:20:00Z', 'Africa/Banjul')).toMatch(/^\d{1,2}:\d{2} (AM|PM)$/);
     expect(pushTime('not a time', 'Africa/Banjul')).toBeNull();
     expect(pushTime(null, 'Africa/Banjul')).toBeNull();
   });
@@ -154,7 +169,7 @@ describe('D55: provider message shape', () => {
     const target = { provider: 'fcm' as const, token: DEVICE_TOKEN, time_zone: 'Africa/Banjul' };
     expect(fcmMessage(target, MESSAGE, NOW)).toEqual({
       token: DEVICE_TOKEN,
-      notification: { title: 'Ada Example', body: 'Emergency alert: Medical · 10:00' },
+      notification: { title: 'Ada Example', body: 'Emergency alert: Medical · 10:00 AM' },
       data: pushData(MESSAGE),
       android: {
         priority: 'high',
@@ -173,7 +188,7 @@ describe('D55: provider message shape', () => {
         },
         payload: {
           aps: {
-            alert: { title: 'Ada Example', body: 'Emergency alert: Medical · 10:00' },
+            alert: { title: 'Ada Example', body: 'Emergency alert: Medical · 10:00 AM' },
             sound: 'default',
             'interruption-level': 'time-sensitive',
           },
@@ -201,7 +216,7 @@ describe('D55: provider message shape', () => {
     const target = { provider: 'fcm' as const, token: DEVICE_TOKEN, time_zone: 'Asia/Tokyo' };
     const text = JSON.stringify(fcmMessage(target, MESSAGE, NOW));
     expect(text).not.toContain('Asia/Tokyo');
-    expect(text).toContain('Emergency alert: Medical · 19:00');
+    expect(text).toContain('Emergency alert: Medical · 7:00 PM');
   });
 });
 
@@ -235,10 +250,10 @@ describe('SCRUM-35 (D67): test alert notices', () => {
   it('title TEST ALERT — NOT AN EMERGENCY; body names the owner, with the time in the recipient zone', () => {
     expect(pushText(TEST)).toEqual({
       title: 'TEST ALERT — NOT AN EMERGENCY',
-      body: 'Rita Owner is testing their Safety Circle · 16:48',
+      body: 'Rita Owner is testing their Safety Circle · 4:48 PM',
     });
     expect(pushText(TEST, 'America/Chicago').body).toBe(
-      'Rita Owner is testing their Safety Circle · 10:48',
+      'Rita Owner is testing their Safety Circle · 10:48 AM',
     );
     expect(pushText({ ...TEST, owner_name: null, occurred_at: null })).toEqual({
       title: 'TEST ALERT — NOT AN EMERGENCY',
@@ -252,7 +267,7 @@ describe('SCRUM-35 (D67): test alert notices', () => {
       token: DEVICE_TOKEN,
       notification: {
         title: 'TEST ALERT — NOT AN EMERGENCY',
-        body: 'Rita Owner is testing their Safety Circle · 16:48',
+        body: 'Rita Owner is testing their Safety Circle · 4:48 PM',
       },
       data: pushData(TEST),
       android: {
@@ -287,7 +302,7 @@ describe('SCRUM-35 (D67): test alert notices', () => {
     await fake.send({ provider: 'fcm', token: DEVICE_TOKEN, time_zone: 'Africa/Banjul' }, TEST);
     expect(fake.sent[0].text).toEqual({
       title: 'TEST ALERT — NOT AN EMERGENCY',
-      body: 'Rita Owner is testing their Safety Circle · 16:48',
+      body: 'Rita Owner is testing their Safety Circle · 4:48 PM',
     });
     expect(fake.sent[0].content).toEqual(TEST);
   });
@@ -313,7 +328,7 @@ describe('fake adapters (AC2)', () => {
       { provider: 'fcm', token: DEVICE_TOKEN, time_zone: 'America/Chicago' },
       MESSAGE,
     );
-    expect(fake.sent[1].text?.body).toBe('Emergency alert: Medical · 04:00');
+    expect(fake.sent[1].text?.body).toBe('Emergency alert: Medical · 4:00 AM');
   });
 
   it('sms and email: sent, kept in memory only', async () => {
@@ -529,7 +544,7 @@ describe('APNs adapter against a fake transport', () => {
       (r) => JSON.parse(r.body) as { aps: Record<string, unknown> },
     );
     expect(alert.aps).toEqual({
-      alert: { title: 'Ada Example', body: 'Emergency alert: Medical · 19:00' },
+      alert: { title: 'Ada Example', body: 'Emergency alert: Medical · 7:00 PM' },
       sound: 'default',
       'interruption-level': 'time-sensitive',
     });
@@ -740,7 +755,7 @@ describe('SCRUM-44/59 (D70): status update notices', () => {
     ).toBeUndefined();
   });
 
-  it('title = the resident name; body = the preset text or the text, plus HH:mm in the recipient zone', () => {
+  it('title = the resident name; body = the preset text or the text, plus h:mm AM/PM in the recipient zone', () => {
     const worsening = pushMessageOf('incident.status_update', {
       ...PAYLOAD,
       preset: 'situation_worsening',
@@ -749,15 +764,15 @@ describe('SCRUM-44/59 (D70): status update notices', () => {
     const text = pushMessageOf('incident.status_update', { ...PAYLOAD, text: 'Door locked' })!;
     expect(pushText(worsening)).toEqual({
       title: 'Tess Resident',
-      body: 'Situation worsening · 16:48',
+      body: 'Situation worsening · 4:48 PM',
     });
     expect(pushText(help, 'Africa/Banjul')).toEqual({
       title: 'Tess Resident',
-      body: 'Help is here · 16:48',
+      body: 'Help is here · 4:48 PM',
     });
     expect(pushText(text, 'America/Chicago')).toEqual({
       title: 'Tess Resident',
-      body: 'Door locked · 10:48',
+      body: 'Door locked · 10:48 AM',
     });
     // No name → Atlas; no time → no suffix (D54).
     expect(
@@ -778,7 +793,7 @@ describe('SCRUM-44/59 (D70): status update notices', () => {
     expect([...shortenUpdateText('🚑'.repeat(250))]).toHaveLength(100);
     expect(shortenUpdateText('🚑'.repeat(250))).toBe(`${'🚑'.repeat(99)}…`);
     const message = pushMessageOf('incident.status_update', { ...PAYLOAD, text: 'c'.repeat(250) })!;
-    expect(pushText(message).body).toBe(`${'c'.repeat(99)}… · 16:48`);
+    expect(pushText(message).body).toBe(`${'c'.repeat(99)}… · 4:48 PM`);
   });
 
   it('data keys are exactly topic and incident_id (never the text)', () => {
@@ -797,7 +812,7 @@ describe('SCRUM-44/59 (D70): status update notices', () => {
     const target = { provider: 'fcm' as const, token: DEVICE_TOKEN, time_zone: 'Africa/Banjul' };
     expect(fcmMessage(target, message, NOW)).toEqual({
       token: DEVICE_TOKEN,
-      notification: { title: 'Tess Resident', body: 'Situation worsening · 16:48' },
+      notification: { title: 'Tess Resident', body: 'Situation worsening · 4:48 PM' },
       data: { topic: 'incident.status_update', incident_id: INCIDENT_ID },
       android: {
         priority: 'high',
@@ -816,7 +831,7 @@ describe('SCRUM-44/59 (D70): status update notices', () => {
         },
         payload: {
           aps: {
-            alert: { title: 'Tess Resident', body: 'Situation worsening · 16:48' },
+            alert: { title: 'Tess Resident', body: 'Situation worsening · 4:48 PM' },
             sound: 'default',
             'interruption-level': 'time-sensitive',
           },
@@ -830,6 +845,6 @@ describe('SCRUM-44/59 (D70): status update notices', () => {
     const fake = new FakePushSender();
     const message = pushMessageOf('incident.status_update', { ...PAYLOAD, text: 'Door locked' })!;
     await fake.send({ provider: 'fcm', token: DEVICE_TOKEN, time_zone: 'Africa/Banjul' }, message);
-    expect(fake.sent[0].text).toEqual({ title: 'Tess Resident', body: 'Door locked · 16:48' });
+    expect(fake.sent[0].text).toEqual({ title: 'Tess Resident', body: 'Door locked · 4:48 PM' });
   });
 });

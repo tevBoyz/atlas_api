@@ -127,10 +127,10 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
     // The recipient's profiles.timezone goes with the target (D54); the CHECK allows Africa/Banjul only.
     expect(fake?.to).toEqual({ provider: 'fcm', token: goodToken, time_zone: 'Africa/Banjul' });
     expect(fake?.content).toMatchObject({ incident_id: incidentId, topic: 'incident.created' });
-    // SCRUM-47 AC2 / D54: resident name, emergency type and the activation time (HH:mm, 24-hour, in
+    // SCRUM-47 AC2 / D54: resident name, emergency type and the activation time (h:mm AM/PM, 12-hour, in
     // the recipient's time zone; Africa/Banjul = UTC).
     const { rows: at } = await client.query<{ hhmm: string }>(
-      `select to_char(sent_at at time zone 'Africa/Banjul', 'HH24:MI') as hhmm
+      `select to_char(sent_at at time zone 'Africa/Banjul', 'FMHH12:MI AM') as hhmm
          from public.incidents where id = $1`,
       [incidentId],
     );
@@ -205,9 +205,9 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
       )
       .map((s) => s.text?.body);
     expect(texts).toEqual([
-      expect.stringMatching(/^Emergency alert: Medical · \d\d:\d\d$/),
-      expect.stringMatching(/^Alert sent again: Medical · \d\d:\d\d$/),
-      expect.stringMatching(/^Marked safe\. The alert is closed\. · \d\d:\d\d$/),
+      expect.stringMatching(/^Emergency alert: Medical · \d{1,2}:\d{2} [AP]M$/),
+      expect.stringMatching(/^Alert sent again: Medical · \d{1,2}:\d{2} [AP]M$/),
+      expect.stringMatching(/^Marked safe\. The alert is closed\. · \d{1,2}:\d{2} [AP]M$/),
     ]);
   });
 
