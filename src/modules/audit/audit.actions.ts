@@ -16,6 +16,14 @@ export const AUDIT_ACTIONS = [
   // SCRUM-44/59 (D70): the resident sent a status update. Detail {update_id, preset, text_length}
   // (preset or null; text_length = characters of the free text, else null); never the text.
   'incident.update_sent',
+  // SCRUM-74 (D75): a member's alert delivery row (incident.created / incident.renotified notice)
+  // became final, written by the worker with that final status. Detail {delivery_id,
+  // recipient_user_id, channel, status (sent | delivered | failed | skipped), attempts, error_code};
+  // never a token, device push id or text. One row per delivery row.
+  'incident.delivery_outcome',
+  // SCRUM-74 (D75): the SCRUM-71 notice "the alert did not reach this member" was recorded for the
+  // resident. Detail {resident_id, member_user_id, reason (no_device | failed)}; ids only.
+  'incident.delivery_failed_notice',
   'circle.invite.created',
   'circle.invite.resent',
   'circle.invite.canceled',

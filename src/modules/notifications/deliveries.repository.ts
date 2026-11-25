@@ -3,13 +3,22 @@ import { type SQL, sql } from 'drizzle-orm';
 
 import { callerPhoneSql } from '../../common/policies';
 import { DatabaseService } from '../../db/database.service';
+import { AuditService, type AuditTransaction } from '../audit';
 import type { Channel, SendErrorCode } from './channels/channel.types';
+import { type DeliveryFinalRow, deliveryOutcomeAudit, finalOutcomeOf } from './delivery-audit';
 import { pushTokenHash } from './device-input';
 
-/** The columns of a {@link DeliveryFinalOutcome}, returned by the status writes. */
+/**
+ * The columns of a {@link DeliveryFinalRow}, returned by the status writes: the outcome
+ * ({@link DeliveryFinalOutcome}) plus the incident and the outbox topic of the row (SCRUM-74 audit).
+ */
 const FINAL_RETURNING = sql`returning id::text as delivery_id,
                                       recipient_user_id::text as recipient_user_id, channel,
-                                      status, error_code, attempts`;
+                                      status, error_code, attempts,
+                                      incident_id::text as incident_id,
+                                      (select o.topic
+                                         from public.notification_outbox o
+                                        where o.id = notification_deliveries.outbox_id) as topic`;
 
 /** Why a delivery was not attempted (`status = 'skipped'`). */
 export const SKIP_REASONS = [
@@ -63,10 +72,18 @@ export interface DeliveryToSend extends Record<string, unknown> {
 /**
  * `public.notification_deliveries` (migration 0007, spec §11.7). Every status write is guarded by
  * `status = 'queued'`, so a repeated job can never overwrite a final outcome.
+ *
+ * SCRUM-74 (D75): a row of an alert notice of an incident that becomes final gets its
+ * `incident.delivery_outcome` audit row in the SAME transaction as that final status write
+ * ({@link deliveryOutcomeAudit}): both commit or neither, and a repeated write (no longer `queued`,
+ * or a fan-out row that already exists) returns no row, so there is exactly one audit row per row.
  */
 @Injectable()
 export class DeliveriesRepository {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * One write in its own transaction with `synchronous_commit = off` (D25): the worker's bookkeeping
@@ -82,6 +99,29 @@ export class DeliveriesRepository {
       await tx.execute(sql`set local synchronous_commit = off`);
       return (await tx.execute<T>(statement)).rows as T[];
     });
+  }
+
+  /**
+   * {@link write} of a statement returning {@link FINAL_RETURNING}: in the same transaction, one
+   * `incident.delivery_outcome` audit row per returned row that is final and belongs to an alert
+   * notice of an incident (SCRUM-74). Returns the rows as outcomes (without incident and topic).
+   */
+  private writeFinal(statement: SQL): Promise<DeliveryFinalOutcome[]> {
+    return this.database.db.transaction(async (tx) => {
+      await tx.execute(sql`set local synchronous_commit = off`);
+      const rows = (await tx.execute<DeliveryFinalRow>(statement)).rows;
+      await this.auditFinal(tx, rows);
+      return rows.map(finalOutcomeOf);
+    });
+  }
+
+  private async auditFinal(tx: AuditTransaction, rows: readonly DeliveryFinalRow[]): Promise<void> {
+    for (const row of rows) {
+      // The fan-out also returns the new rows it queued: not final yet.
+      if ((row.status as string) === 'queued') continue;
+      const entry = deliveryOutcomeAudit(row);
+      if (entry) await this.audit.record(entry, tx);
+    }
   }
 
   /**
@@ -108,7 +148,7 @@ export class DeliveriesRepository {
     enabled: Readonly<Record<Channel, boolean>>;
   }): Promise<DeliveryFinalOutcome[]> {
     if (input.recipients.length === 0 || input.channels.length === 0) return [];
-    const inserted = await this.write<DeliveryFinalOutcome>(sql`
+    const inserted = await this.writeFinal(sql`
       with recipients as (
         select distinct on (r.user_id) r.user_id, r.eligible
           from jsonb_to_recordset(${JSON.stringify(input.recipients)}::jsonb)
@@ -243,7 +283,7 @@ export class DeliveriesRepository {
     status: 'sent' | 'delivered',
     providerMessageId: string | null,
   ): Promise<DeliveryFinalOutcome | undefined> {
-    const rows = await this.write<DeliveryFinalOutcome>(sql`
+    const rows = await this.writeFinal(sql`
       update public.notification_deliveries
          set status = ${status}::text,
              provider_message_id = ${providerMessageId}::text,
@@ -267,7 +307,7 @@ export class DeliveriesRepository {
     errorCode: SendErrorCode,
     final: boolean,
   ): Promise<DeliveryFinalOutcome | undefined> {
-    const rows = await this.write<DeliveryFinalOutcome>(sql`
+    const rows = await this.writeFinal(sql`
       update public.notification_deliveries
          set status = case when ${final}::boolean then 'failed' else 'queued' end,
              error_code = ${errorCode}::text,
@@ -282,7 +322,7 @@ export class DeliveriesRepository {
 
   /** `skipped` with its reason and `final_at` = now (SCRUM-67); the row, when written now. */
   async markSkipped(id: string, reason: SkipReason): Promise<DeliveryFinalOutcome | undefined> {
-    const rows = await this.write<DeliveryFinalOutcome>(sql`
+    const rows = await this.writeFinal(sql`
       update public.notification_deliveries
          set status = 'skipped',
              error_code = ${reason}::text,

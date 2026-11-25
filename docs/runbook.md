@@ -125,6 +125,58 @@ The config refuses invalid combinations at startup and names the key, never the 
 6. Watch for a few minutes: 5xx rate, `readiness: unavailable` lines, `job failed` lines,
    `auth email not sent` lines, Socket.IO connection errors.
 
+### 2.8 Incident audit trail for support (SCRUM-74, D75)
+
+Every incident event (activation, re-notify, each member's alert delivery outcome, the "not
+delivered" notice, acknowledgments, responses, status updates, notes, marked safe, closure) is a row
+of the append-only `public.audit_log`. Support and compliance read it through the read-only view
+`public.support_incident_audit` (migration 0024). No endpoint and no admin role: only someone with
+SQL access to the database (the Supabase SQL editor of `atlas_main` / `atlas_staging`, as
+`postgres`). Read only: never write to `audit_log` (UPDATE, DELETE and TRUNCATE are refused anyway).
+
+1. Find the incident, by the resident's account email (newest first):
+
+   ```sql
+   select i.id, i.status, i.emergency_type, i.activated_at, i.resolved_at, i.closed_at
+     from public.incidents i
+     join public.users u on u.id = i.resident_id
+    where u.email = '<resident email>'
+    order by i.activated_at desc
+    limit 10;
+   ```
+
+   or by a time window (UTC):
+
+   ```sql
+   select id, resident_id, status, activated_at
+     from public.incidents
+    where activated_at between '2026-11-26 08:00+00' and '2026-11-26 10:00+00'
+    order by activated_at;
+   ```
+
+2. Read its trail in time order (times are UTC):
+
+   ```sql
+   select occurred_at, action, actor_user_id, detail,
+          resident_id, resident_name, circle_id, emergency_type, incident_status
+     from public.support_incident_audit
+    where incident_id = '<incident id>'
+    order by occurred_at, audit_id;
+   ```
+
+3. The actions: `incident.created` / `incident.renotified` (activation, recipient count);
+   `incident.delivery_outcome` (one per member push row: `status` sent / delivered / failed /
+   skipped, `attempts`, `error_code`, e.g. `no_device`); `incident.delivery_failed_notice` (the
+   resident was told a member did not receive the alert); `incident.acknowledged`;
+   `incident.response_set` (`status` responding / unable); `incident.update_sent`;
+   `incident.notes_set`; `incident.resolved` (marked safe); `incident.closed` (`auto_closed` true =
+   closed by the sweeper after inactivity). `actor_user_id` null = the system (worker or sweeper).
+
+The view holds ids and names only: no coordinates, notes, share payloads, phone numbers, tokens or
+client IP. Retention: every row is kept (no purge) until the client's data retention policy exists
+(client question C6). Cancels before sending never reach the server and are not in the trail;
+location sharing start / stop is in `incident_events` (the activity feed), not in the audit log.
+
 ## 3. Going live checklist (still open)
 
 | # | Item | Owner | Notes |

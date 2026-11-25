@@ -7,6 +7,7 @@ import { DatabaseService } from '../../db/database.service';
 import { OutboxWriter } from '../../jobs/outbox';
 import { OutboxRelay } from '../../jobs/outbox-relay.service';
 import { ROOT_LOGGER } from '../../observability/logger';
+import { AuditService } from '../audit';
 import {
   IncidentBroadcaster,
   type IncidentDeliveryFailedEvent,
@@ -17,6 +18,7 @@ import {
   memberDeliverySql,
 } from '../incidents/incident-delivery-status';
 import { DELIVERY_FAILED_TOPIC } from './channels/channel.types';
+import { deliveryFailedNoticeAudit } from './delivery-audit';
 
 /** True for the outbox topics whose push rows make a member's delivery status (D73). */
 export function isAlertDeliveryTopic(topic: string): boolean {
@@ -39,7 +41,8 @@ export type DeliveryFailedNotice = IncidentDeliveryFailedEvent;
  *    resolve it in between: no notice after the alert ended), the member's delivery status
  *    ({@link memberDeliverySql}); when it is `failed`, `incident_deliveries.delivery_failed_notified_at`
  *    is set if still null (the member must still pass `incident.memberView`) and, only when this
- *    call set it, an `incident.delivery_failed` outbox row for the resident is written in the same
+ *    call set it, an `incident.delivery_failed` outbox row for the resident and the
+ *    `incident.delivery_failed_notice` audit row (SCRUM-74, D75) are written in the same
  *    transaction. At most one notice per member per incident (decision 3), whatever retries,
  *    re-notifies or repeated jobs happen. Lock order: incident, then the member's delivery row (as
  *    acknowledge and re-notify), never the other way round.
@@ -58,6 +61,7 @@ export class AlertDeliveryOutcomes {
     private readonly relay: OutboxRelay,
     private readonly broadcaster: IncidentBroadcaster,
     @Inject(ROOT_LOGGER) private readonly logger: Logger,
+    private readonly audit: AuditService,
   ) {}
 
   /** Re-checks every member in `memberUserIds` of incident `incidentId` (see the class comment). */
@@ -139,6 +143,15 @@ export class AlertDeliveryOutcomes {
           'recipient_user_ids', jsonb_build_array(${residentId}::uuid)
         )`,
       });
+      await this.audit.record(
+        deliveryFailedNoticeAudit({
+          incident_id: incidentId,
+          resident_id: residentId,
+          member_user_id: memberUserId,
+          reason,
+        }),
+        tx,
+      );
       return {
         incident_id: incidentId,
         resident_id: residentId,

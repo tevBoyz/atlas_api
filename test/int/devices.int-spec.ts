@@ -4,6 +4,7 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
 import { DatabaseService } from '../../src/db/database.service';
+import { AuditService } from '../../src/modules/audit';
 import { DeliveriesRepository } from '../../src/modules/notifications/deliveries.repository';
 import { pushTokenHash } from '../../src/modules/notifications/device-input';
 import { DevicesRepository } from '../../src/modules/notifications/devices.repository';
@@ -232,7 +233,10 @@ describe('PUT /v1/me/devices/current and DELETE .../push-token (API-100-44)', ()
 
     /** What the delivery worker does when the provider answers `unregistered` (same code path). */
     async function providerSaysUnregistered(deviceId: string, value: string): Promise<void> {
-      await new DeliveriesRepository(app.get(DatabaseService)).clearPushToken(deviceId, value);
+      await new DeliveriesRepository(
+        app.get(DatabaseService),
+        app.get(AuditService),
+      ).clearPushToken(deviceId, value);
       tokensUsed.push(pushTokenHash(value));
     }
 

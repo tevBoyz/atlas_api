@@ -5,7 +5,7 @@ const ID = '3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b';
 
 describe('Audit actions (API-100-14 AC3)', () => {
   it('lists the Epic 100 actions', () => {
-    expect(AUDIT_ACTIONS).toHaveLength(34);
+    expect(AUDIT_ACTIONS).toHaveLength(36);
     expect(AUDIT_ACTIONS).toEqual(
       expect.arrayContaining([
         'incident.created',
@@ -22,6 +22,8 @@ describe('Audit actions (API-100-14 AC3)', () => {
         'incident.closed',
         'circle.test_alert.sent',
         'incident.update_sent',
+        'incident.delivery_outcome',
+        'incident.delivery_failed_notice',
       ]),
     );
   });

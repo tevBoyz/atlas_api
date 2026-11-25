@@ -72,7 +72,7 @@ describe('stage 7.6: db/rollback/0012_down.sql restores the pre-0012 state (D42)
     // rows; 0018, D66-D68: two locked-down tables, one column, a check, an index and two app_config
     // rows; 0019, D69: one nullable column; 0020, D70, and 0021, D71: one widened check each; 0022,
     // D73: two nullable columns, a check and a trigger whose function no Supabase role may execute;
-    // 0023, D74: one nullable column and a check),
+    // 0023, D74: one nullable column and a check; 0024, D75: one view no Supabase role may read),
     // so the snapshot comparison below is unchanged, and they stay recorded through the rollback.
     expect(await runMigrations(client, resolve('db/migrations'), silent)).toEqual([
       '0012_retire_supabase_app_paths',
@@ -87,6 +87,7 @@ describe('stage 7.6: db/rollback/0012_down.sql restores the pre-0012 state (D42)
       '0021_incident_events_responder',
       '0022_notification_deliveries_final_at',
       '0023_incident_location_unavailable_since',
+      '0024_support_incident_audit_view',
     ]);
     expect(await supabasePrivilegesLeft(client)).toEqual([]);
     expect(await realtimeMembersLeft(client)).toEqual([]);

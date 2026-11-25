@@ -8,6 +8,7 @@ import {
   type OutboxTopicHandler,
   OutboxDispatcher,
 } from '../../jobs/job-workers';
+import { AuditModule } from '../audit/audit.module';
 import { IncidentCloseSweeper } from '../incidents/incident-close-sweeper';
 import { IncidentLifecycleWorkerModule } from '../incidents/incident-lifecycle-worker.module';
 import { ChannelSenders } from './channels/channel-senders';
@@ -28,7 +29,7 @@ import { TestAlertNotificationsHandler } from './test-alert-notifications';
  * `IncidentLifecycleWorkerModule`.
  */
 @Module({
-  imports: [IncidentLifecycleWorkerModule],
+  imports: [AuditModule, IncidentLifecycleWorkerModule],
   providers: [
     ChannelSenders,
     DeliveriesRepository,
