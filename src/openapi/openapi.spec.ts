@@ -427,7 +427,11 @@ describe('OpenAPI document (API-100-12)', () => {
       expect(doc.components.schemas.OpenIncidentResult.properties.open_incident).toEqual({
         anyOf: [{ $ref: '#/components/schemas/IncidentLive' }, { type: 'null' }],
       });
-      expect(Object.keys(doc.components.schemas.IncidentSend.properties)).toHaveLength(24);
+      // 24 keys + location_unavailable_since (SCRUM-68, D74).
+      expect(Object.keys(doc.components.schemas.IncidentSend.properties)).toHaveLength(25);
+      expect(doc.components.schemas.IncidentSend.properties).toHaveProperty(
+        'location_unavailable_since',
+      );
       // SCRUM-54 (D60): IncidentLive = IncidentSend + emergency_services (+ closed_at, SCRUM-63).
       expect(Object.keys(doc.components.schemas.IncidentLive.properties).sort()).toEqual(
         [

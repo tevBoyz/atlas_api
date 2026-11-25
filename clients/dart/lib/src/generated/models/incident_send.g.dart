@@ -28,6 +28,7 @@ IncidentSend _$IncidentSendFromJson(Map<String, dynamic> json) => IncidentSend(
   locationSource: json['location_source'] == null
       ? null
       : IncidentSendLocationSource.fromJson(json['location_source'] as String),
+  locationUnavailableSince: json['location_unavailable_since'] as String?,
   renotifiedAt: json['renotified_at'] as String?,
   residentId: json['resident_id'] as String,
   resolvedAt: json['resolved_at'] as String?,
@@ -56,6 +57,7 @@ Map<String, dynamic> _$IncidentSendToJson(IncidentSend instance) =>
       'location_lng': instance.locationLng,
       'location_sharing_ended_at': instance.locationSharingEndedAt,
       'location_source': instance.locationSource,
+      'location_unavailable_since': instance.locationUnavailableSince,
       'renotified_at': instance.renotifiedAt,
       'resident_id': instance.residentId,
       'resolved_at': instance.resolvedAt,

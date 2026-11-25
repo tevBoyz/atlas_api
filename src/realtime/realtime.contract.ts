@@ -65,6 +65,7 @@ export const REALTIME_CONTRACT = {
         'incident_notes_updated_at',
         'share_payload',
         'closed_at',
+        'location_unavailable_since',
       ],
     },
     [SERVER_EVENTS.location]: {
@@ -76,8 +77,15 @@ export const REALTIME_CONTRACT = {
         'location_lng',
         'location_accuracy_m',
         'location_captured_at',
+        'location_unavailable_since',
         ...TIMES,
       ],
+      note:
+        'SCRUM-68 (D74): location_unavailable_since is set (since when) while the phone of the resident ' +
+        'reports live location unavailable; the location keys then keep the last known fix ' +
+        '(label it "Last known · N min ago" from location_captured_at, with "Location unavailable"). ' +
+        'With no fix ever stored, location_source is "unavailable" and the position keys are null. ' +
+        'The next fix clears it.',
     },
     [SERVER_EVENTS.notes]: {
       room: 'incident:{id}',

@@ -32,7 +32,11 @@ import {
   type SqlOutcome,
   submitAlert,
 } from '../support/incident-api';
-import { withoutEmergencyServicesText } from '../support/share-payload-shape';
+import {
+  withoutClosedAtText,
+  withoutEmergencyServicesText,
+  withoutUnavailableSince,
+} from '../support/share-payload-shape';
 
 /**
  * `POST /v1/incidents/{id}/locations` (API-100-17) beyond the SQL script: argument conversion and
@@ -61,6 +65,7 @@ const INCIDENT_SHARED_KEYS = [
   'location_lng',
   'location_sharing_ended_at',
   'location_source',
+  'location_unavailable_since',
   'renotified_at',
   'resident_id',
   'resolved_at',
@@ -186,7 +191,7 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
       expect(errorOf(res).code).toBe('attach_incident_location:not_authenticated');
     });
 
-    it('stores a current fix and answers IncidentShared (22 keys, the SQL helper bytes)', async () => {
+    it('stores a current fix and answers IncidentShared (22 keys + D74, the SQL helper bytes)', async () => {
       const { resident, incidentId } = await activeAlert();
       const res = await attachLocation(app, resident.id, incidentId, fix(T0));
 
@@ -202,7 +207,9 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
         location_accuracy_m: 12.5,
         location_captured_at: T0,
       });
-      expect(res.body).toBe(JSON.stringify(await sharedJsonViaSql(incidentId)));
+      expect(withoutClosedAtText(res.body)).toBe(
+        JSON.stringify(await sharedJsonViaSql(incidentId)),
+      );
     });
 
     it('the open-incident read reflects the location update', async () => {
@@ -221,10 +228,13 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
       await attachLocation(app, resident.id, incidentId, { location_source: 'unavailable' });
       const after = (await getOpenIncident(app, resident.id)).json<{ open_incident: Body }>()
         .open_incident;
+      // SCRUM-68 (D74): the last fix is kept; only since when live location is unavailable is new.
       expect(after).toMatchObject({
-        location_source: 'unavailable',
-        location_lat: null,
-        location_captured_at: null,
+        location_source: 'current',
+        location_lat: 9.03,
+        location_lng: 38.74,
+        location_captured_at: T0,
+        location_unavailable_since: expect.any(String) as unknown,
       });
     });
 
@@ -534,7 +544,7 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
       void resident_id;
       void activated_at;
       void sent_at;
-      return rest;
+      return withoutUnavailableSince(rest);
     };
 
     it.each(CASES)('%s', async (_name, json, expected, ...rest) => {
@@ -552,6 +562,21 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
       expect(api.kind).toBe(expected);
       expect(sql.kind).toBe(expected);
       if (field) expect(api.field).toBe(field);
+      if (api.body?.location_unavailable_since) {
+        // SCRUM-68 (D74), deliberate divergence: an accepted `unavailable` report keeps the stored
+        // fix (the SQL function wipes it) and records since when live location is unavailable.
+        expect(api.body).toMatchObject({
+          location_source: 'current',
+          location_lat: 1,
+          location_captured_at: T0,
+          location_unavailable_since: expect.any(String) as unknown,
+        });
+        expect(await storedLocation(viaApi.incidentId)).toEqual(
+          await storedLocation((await incidentWithFix()).incidentId),
+        );
+        expect(sql.body).toMatchObject({ location_source: 'unavailable', location_lat: null });
+        return;
+      }
       expect(comparable(api.body)).toEqual(comparable(sql.body));
       expect(await storedLocation(viaApi.incidentId)).toEqual(
         await storedLocation(viaSql.incidentId),
@@ -790,7 +815,9 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
       );
       expect(res.statusCode).toBe(200);
       expect(res.json<Body>()).toMatchObject({ location_lat: 1, location_captured_at: T0 });
-      expect(res.body).toBe(JSON.stringify(await sharedJsonViaSql(incidentId)));
+      expect(withoutClosedAtText(res.body)).toBe(
+        JSON.stringify(await sharedJsonViaSql(incidentId)),
+      );
       expect(hookCalls).toEqual([]);
     });
 
@@ -827,22 +854,25 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
       expect(res.json<Body>()).toMatchObject({ location_lat: 52, location_captured_at: T0 });
     });
 
-    it('unavailable always overwrites all five columns; the next fix is then always stored', async () => {
+    it('unavailable keeps the stored fix (D74); an older fix after it is still ignored', async () => {
       const { resident, incidentId } = await incidentWithFix();
       const unavailable = await attachLocation(app, resident.id, incidentId, {
         location_source: 'unavailable',
       });
       expect(unavailable.json<Body>()).toMatchObject({
-        location_source: 'unavailable',
-        location_lat: null,
-        location_lng: null,
-        location_accuracy_m: null,
-        location_captured_at: null,
+        location_source: 'current',
+        location_lat: 1,
+        location_lng: 1,
+        location_accuracy_m: 5,
+        location_captured_at: T0,
+        location_unavailable_since: expect.any(String) as unknown,
       });
       const older = await attachLocation(app, resident.id, incidentId, fix('2020-01-01T00:00:00Z'));
       expect(older.json<Body>()).toMatchObject({
         location_source: 'current',
-        location_captured_at: '2020-01-01T00:00:00+00:00',
+        location_lat: 1,
+        location_captured_at: T0,
+        location_unavailable_since: unavailable.json<Body>().location_unavailable_since,
       });
     });
 
@@ -873,6 +903,7 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
         'location_lng',
         'location_accuracy_m',
         'location_captured_at',
+        'location_unavailable_since', // SCRUM-68 (D74)
         'updated_at',
       ];
       const snapshot = async () => {
@@ -1262,7 +1293,7 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
         [incidentId, 'current', 9.03, 38.74, 12.5, T0],
       );
       const viaApi = await attachLocation(app, resident.id, incidentId, fix(T0));
-      expect(viaApi.body).toBe(JSON.stringify(viaSql));
+      expect(withoutClosedAtText(viaApi.body)).toBe(JSON.stringify(viaSql));
     });
 
     it('each side respects the fix the other stored', async () => {

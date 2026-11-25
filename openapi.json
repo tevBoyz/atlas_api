@@ -1269,6 +1269,13 @@
               }
             ]
           },
+          "location_unavailable_since": {
+            "description": "SCRUM-68 (D74): since when the phone of the resident reports live location unavailable; null = live location is not reported unavailable. The location keys keep the last known fix (location_captured_at = when it was taken), so show it labelled \"Last known · N min ago\" with \"Location unavailable\". With no fix ever stored, location_source is unavailable and the position keys are null. The next fix clears it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "renotified_at": {
             "type": [
               "string",
@@ -1348,6 +1355,7 @@
           "location_accuracy_m",
           "location_captured_at",
           "location_source",
+          "location_unavailable_since",
           "location_sharing_ended_at",
           "incident_notes",
           "incident_notes_updated_at",
@@ -1535,6 +1543,13 @@
               }
             ]
           },
+          "location_unavailable_since": {
+            "description": "SCRUM-68 (D74): since when the phone of the resident reports live location unavailable; null = live location is not reported unavailable. The location keys keep the last known fix (location_captured_at = when it was taken), so show it labelled \"Last known · N min ago\" with \"Location unavailable\". With no fix ever stored, location_source is unavailable and the position keys are null. The next fix clears it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "renotified_at": {
             "type": [
               "string",
@@ -1602,6 +1617,7 @@
           "location_accuracy_m",
           "location_captured_at",
           "location_source",
+          "location_unavailable_since",
           "cancelled_at",
           "sent_at",
           "share_payload",
@@ -1752,6 +1768,13 @@
               }
             ]
           },
+          "location_unavailable_since": {
+            "description": "SCRUM-68 (D74): since when the phone of the resident reports live location unavailable; null = live location is not reported unavailable. The location keys keep the last known fix (location_captured_at = when it was taken), so show it labelled \"Last known · N min ago\" with \"Location unavailable\". With no fix ever stored, location_source is unavailable and the position keys are null. The next fix clears it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "renotified_at": {
             "type": [
               "string",
@@ -1819,6 +1842,7 @@
           "location_accuracy_m",
           "location_captured_at",
           "location_source",
+          "location_unavailable_since",
           "cancelled_at",
           "sent_at",
           "share_payload",
@@ -1941,6 +1965,13 @@
               }
             ]
           },
+          "location_unavailable_since": {
+            "description": "SCRUM-68 (D74): since when the phone of the resident reports live location unavailable; null = live location is not reported unavailable. The location keys keep the last known fix (location_captured_at = when it was taken), so show it labelled \"Last known · N min ago\" with \"Location unavailable\". With no fix ever stored, location_source is unavailable and the position keys are null. The next fix clears it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "renotified_at": {
             "type": [
               "string",
@@ -2008,6 +2039,7 @@
           "location_accuracy_m",
           "location_captured_at",
           "location_source",
+          "location_unavailable_since",
           "cancelled_at",
           "sent_at",
           "share_payload",
@@ -2162,6 +2194,13 @@
               }
             ]
           },
+          "location_unavailable_since": {
+            "description": "SCRUM-68 (D74): since when the phone of the resident reports live location unavailable; null = live location is not reported unavailable. The location keys keep the last known fix (location_captured_at = when it was taken), so show it labelled \"Last known · N min ago\" with \"Location unavailable\". With no fix ever stored, location_source is unavailable and the position keys are null. The next fix clears it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "renotified_at": {
             "type": [
               "string",
@@ -2237,6 +2276,7 @@
           "location_accuracy_m",
           "location_captured_at",
           "location_source",
+          "location_unavailable_since",
           "cancelled_at",
           "sent_at",
           "share_payload",
@@ -16926,6 +16966,7 @@
         "room": "user:{id} of each delivery recipient"
       },
       "incident.location": {
+        "note": "SCRUM-68 (D74): location_unavailable_since is set (since when) while the phone of the resident reports live location unavailable; the location keys then keep the last known fix (label it \"Last known · N min ago\" from location_captured_at, with \"Location unavailable\"). With no fix ever stored, location_source is \"unavailable\" and the position keys are null. The next fix clears it.",
         "payload": [
           "incident_id",
           "location_source",
@@ -16933,6 +16974,7 @@
           "location_lng",
           "location_accuracy_m",
           "location_captured_at",
+          "location_unavailable_since",
           "updated_at",
           "occurred_at"
         ],
@@ -17042,7 +17084,8 @@
           "incident_notes",
           "incident_notes_updated_at",
           "share_payload",
-          "closed_at"
+          "closed_at",
+          "location_unavailable_since"
         ],
         "payload": [
           "incident_id",

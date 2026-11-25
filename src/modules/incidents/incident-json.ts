@@ -9,7 +9,8 @@ import { sql } from 'drizzle-orm';
 
 /**
  * IncidentShared (spec §7.0): `_incident_activation_json(rec)` (final definition: baseline migration
- * 20261023140000), exactly 22 keys. The body of attach location and set notes.
+ * 20261023140000), 22 keys, plus
+ * `location_unavailable_since` (SCRUM-68, D74; jsonb orders keys, so its place in the text is fixed). The body of attach location and set notes.
  */
 export const INCIDENT_SHARED_JSON = sql`jsonb_build_object(
     'id', rec.id,
@@ -23,6 +24,7 @@ export const INCIDENT_SHARED_JSON = sql`jsonb_build_object(
     'location_accuracy_m', rec.location_accuracy_m,
     'location_captured_at', rec.location_captured_at,
     'location_source', rec.location_source,
+    'location_unavailable_since', rec.location_unavailable_since,
     'cancelled_at', rec.cancelled_at,
     'sent_at', rec.sent_at,
     'share_payload', rec.share_payload,

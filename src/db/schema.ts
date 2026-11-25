@@ -330,6 +330,10 @@ export const incidents = pgTable(
     liveSharePayload: jsonb('live_share_payload'),
     liveShareUpdatedAt: timestamp('live_share_updated_at', { withTimezone: true, mode: 'string' }),
     closedAt: timestamp('closed_at', { withTimezone: true, mode: 'string' }),
+    locationUnavailableSince: timestamp('location_unavailable_since', {
+      withTimezone: true,
+      mode: 'string',
+    }),
   },
   (table) => [
     index('incidents_circle_id_idx')
@@ -391,6 +395,10 @@ export const incidents = pgTable(
     check(
       'incidents_closed_shape',
       sql`((status = 'closed'::text) = (closed_at IS NOT NULL)) AND ((status <> 'closed'::text) OR (resolved_reason = ANY (ARRAY['safe'::text, 'ended'::text])))`,
+    ),
+    check(
+      'incidents_location_unavailable_since_shape',
+      sql`(location_unavailable_since IS NULL) OR (location_source IS NOT NULL)`,
     ),
   ],
 );

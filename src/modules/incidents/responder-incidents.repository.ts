@@ -85,6 +85,7 @@ export class ResponderIncidentsRepository {
                'location_accuracy_m', rec.location_accuracy_m,
                'location_captured_at', rec.location_captured_at,
                'location_source', rec.location_source,
+               'location_unavailable_since', rec.location_unavailable_since,
                'location_sharing_ended_at', rec.location_sharing_ended_at,
                'incident_notes', rec.incident_notes,
                'incident_notes_updated_at', rec.incident_notes_updated_at,

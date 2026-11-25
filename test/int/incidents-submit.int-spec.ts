@@ -48,6 +48,7 @@ const INCIDENT_SEND_KEYS = [
   'location_lng',
   'location_sharing_ended_at',
   'location_source',
+  'location_unavailable_since', // SCRUM-68 (D74)
   'renotified_at',
   'resident_id',
   'resolved_at',

@@ -34,7 +34,7 @@ import { connectSocket, eventually, sleep, type TestSocket } from '../support/re
  */
 type Body = Record<string, unknown>;
 
-/** The keys of `incident.updated.incident` (spec §11.5): 16 plus closed_at (SCRUM-63), never resident_id / circle_id. */
+/** The keys of `incident.updated.incident` (spec §11.5): 16 plus closed_at (SCRUM-63) and location_unavailable_since (D74), never resident_id / circle_id. */
 const UPDATED_KEYS = [
   'auto_closed',
   'closed_at',
@@ -47,6 +47,7 @@ const UPDATED_KEYS = [
   'location_lng',
   'location_sharing_ended_at',
   'location_source',
+  'location_unavailable_since', // SCRUM-68 (D74)
   'renotified_at',
   'resolved_at',
   'resolved_reason',
@@ -182,6 +183,7 @@ describe('incident broadcasts (API-100-41)', () => {
       location_lng: details.location_lng,
       location_accuracy_m: details.location_accuracy_m,
       location_captured_at: details.location_captured_at,
+      location_unavailable_since: null,
       updated_at: A_TIMESTAMP,
       occurred_at: A_TIMESTAMP,
     });
@@ -308,6 +310,66 @@ describe('incident broadcasts (API-100-41)', () => {
     // Members never got counts; the outsider got nothing at all.
     for (const socket of [s.s1, s.s2]) expect(socket.of('incident.delivery_counts')).toEqual([]);
     expect(s.out.received).toEqual([]);
+  });
+
+  it('SCRUM-68 (D74): unavailable keeps the last fix in incident.location / incident.updated; the next fix clears it', async () => {
+    const s = await scene();
+    await joinAll(s);
+    const fix = {
+      location_source: 'current',
+      location_lat: 13.4549,
+      location_lng: -16.579,
+      location_accuracy_m: 12.5,
+      location_captured_at: new Date(Date.now() - 60_000).toISOString(),
+    };
+    expect((await attachLocation(appA, s.resident.id, s.incidentId, fix)).statusCode).toBe(200);
+    const live = await s.s2.next<Body>('incident.location');
+    expect(live.location_unavailable_since).toBeNull();
+    for (const socket of [s.r, s.s1]) await socket.next<Body>('incident.location');
+    for (const socket of [s.r, s.s1, s.s2]) await socket.next<Body>('incident.updated');
+
+    const unavailable = await attachLocation(appA, s.resident.id, s.incidentId, {
+      location_source: 'unavailable',
+    });
+    expect(unavailable.statusCode).toBe(200);
+    const since = unavailable.json<Body>().location_unavailable_since;
+    expect(since).toMatch(TIMESTAMP);
+    for (const socket of [s.r, s.s1, s.s2]) {
+      // The resident and both members (on either instance) keep the last position, flagged.
+      await expect(socket.next<Body>('incident.location')).resolves.toEqual({
+        ...live,
+        location_unavailable_since: since,
+        updated_at: A_TIMESTAMP,
+        occurred_at: A_TIMESTAMP,
+      });
+      const updated = await socket.next<Body>('incident.updated');
+      expect(updated.incident).toMatchObject({
+        location_source: 'current',
+        location_lat: live.location_lat,
+        location_lng: live.location_lng,
+        location_accuracy_m: live.location_accuracy_m,
+        location_captured_at: live.location_captured_at,
+        location_unavailable_since: since,
+      });
+    }
+    const details = (await getIncidentDetails(appA, s.m1.id, s.incidentId)).json<Body>();
+    expect(details).toMatchObject({
+      location_source: 'current',
+      location_lat: live.location_lat,
+      location_captured_at: live.location_captured_at,
+      location_unavailable_since: since,
+    });
+
+    // A new fix: live again (the flag cleared) for everyone.
+    const next = { ...fix, location_lat: 13.5, location_captured_at: new Date().toISOString() };
+    expect((await attachLocation(appA, s.resident.id, s.incidentId, next)).statusCode).toBe(200);
+    for (const socket of [s.r, s.s1, s.s2]) {
+      await expect(socket.next<Body>('incident.location')).resolves.toMatchObject({
+        location_source: 'current',
+        location_lat: 13.5,
+        location_unavailable_since: null,
+      });
+    }
   });
 
   it('a refused write (rolled back) broadcasts nothing', async () => {

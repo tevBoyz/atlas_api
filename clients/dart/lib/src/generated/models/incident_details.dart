@@ -30,6 +30,7 @@ class IncidentDetails {
     required this.locationLng,
     required this.locationSharingEndedAt,
     required this.locationSource,
+    required this.locationUnavailableSince,
     required this.renotifiedAt,
     required this.residentName,
     required this.resolvedAt,
@@ -75,6 +76,10 @@ class IncidentDetails {
   final String? locationSharingEndedAt;
   @JsonKey(name: 'location_source')
   final IncidentDetailsLocationSource? locationSource;
+
+  /// SCRUM-68 (D74): since when the phone of the resident reports live location unavailable; null = live location is not reported unavailable. The location keys keep the last known fix (location_captured_at = when it was taken), so show it labelled "Last known · N min ago" with "Location unavailable". With no fix ever stored, location_source is unavailable and the position keys are null. The next fix clears it.
+  @JsonKey(name: 'location_unavailable_since')
+  final String? locationUnavailableSince;
   @JsonKey(name: 'renotified_at')
   final String? renotifiedAt;
 

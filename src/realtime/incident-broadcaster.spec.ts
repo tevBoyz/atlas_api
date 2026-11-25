@@ -52,6 +52,7 @@ function state(): IncidentBroadcastState {
     location_lng: 2,
     location_accuracy_m: 3,
     location_captured_at: T,
+    location_unavailable_since: null,
     incident_notes: null,
     incident_notes_updated_at: null,
     updated_at: T,

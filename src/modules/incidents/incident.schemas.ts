@@ -41,8 +41,19 @@ export const SUBMIT_OUTCOMES = ['created', 'promoted', 'renotified'] as const;
 export type SubmitOutcome = (typeof SUBMIT_OUTCOMES)[number];
 
 /**
- * IncidentShared (spec §7.0, `_incident_activation_json`): exactly 22 keys. The body of attach
- * location and set notes. A float stored from a PostgREST-style text value (`"NaN"`, `"Infinity"`)
+ * SCRUM-68 (D74): since when live location is reported unavailable. An `unavailable` report keeps the
+ * last fix in the five location keys.
+ */
+const locationUnavailableSinceSchema = z
+  .string()
+  .nullable()
+  .describe(
+    'SCRUM-68 (D74): since when the phone of the resident reports live location unavailable; null = live location is not reported unavailable. The location keys keep the last known fix (location_captured_at = when it was taken), so show it labelled "Last known · N min ago" with "Location unavailable". With no fix ever stored, location_source is unavailable and the position keys are null. The next fix clears it.',
+  );
+
+/**
+ * IncidentShared (spec §7.0, `_incident_activation_json`): 22 keys plus `location_unavailable_since`
+ * (SCRUM-68, D74). The body of attach location and set notes. A float stored from a PostgREST-style text value (`"NaN"`, `"Infinity"`)
  * comes back as that JSON string, as the SQL function returns it.
  */
 export const incidentSharedSchema = componentSchema(
@@ -59,6 +70,7 @@ export const incidentSharedSchema = componentSchema(
     location_accuracy_m: z.number().nullable(),
     location_captured_at: z.string().nullable(),
     location_source: locationSourceSchema.nullable(),
+    location_unavailable_since: locationUnavailableSinceSchema,
     cancelled_at: z.string().nullable(),
     sent_at: z.string().nullable(),
     share_payload: sharePayloadSchema().nullable(),
@@ -219,7 +231,7 @@ export const responderIncidentListSchema = z.array(responderIncidentSchema);
 /**
  * IncidentDetails (spec §7.4, `get_incident_details`): the 19 keys of the SQL function plus
  * `share_payload_at_activation` and `share_payload_updated_at` (SCRUM-21, D53) and
- * `emergency_services` (SCRUM-54, D60). `share_payload` is the
+ * `emergency_services` (SCRUM-54, D60), `location_unavailable_since` (SCRUM-68, D74). `share_payload` is the
  * live shared info (else the activation snapshot), `{}` when none. Never `resident_id` or `circle_id` (API-100-21 AC3).
  */
 export const incidentDetailsSchema = componentSchema(
@@ -230,6 +242,7 @@ export const incidentDetailsSchema = componentSchema(
     location_accuracy_m: z.number().nullable(),
     location_captured_at: z.string().nullable(),
     location_source: locationSourceSchema.nullable(),
+    location_unavailable_since: locationUnavailableSinceSchema,
     location_sharing_ended_at: z.string().nullable(),
     incident_notes: z.string().nullable(),
     incident_notes_updated_at: z.string().nullable(),

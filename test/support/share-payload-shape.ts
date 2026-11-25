@@ -9,6 +9,9 @@
  *   (removed here after checking it is the seeded list).
  * - SCRUM-63 (D61): the open read, the recent list and the member reads carry `closed_at` (removed
  *   here when present, after checking it is null: the SQL functions know no closed incident).
+ * - SCRUM-68 (D74): every incident body with the location keys (IncidentShared / IncidentSend and the
+ *   reads built on them, the member details, realtime) carries `location_unavailable_since` (removed
+ *   here when present, after checking it is null: the SQL functions wipe the fix instead).
  *
  * {@link asSqlSharePayloadShape} returns a deep copy with every such array joined with ", " (what the
  * old text column holds, and the one-item case equals the SQL string) and the two keys removed, after
@@ -45,6 +48,12 @@ export function asSqlSharePayloadShape<T>(value: T): T {
     if (key === 'closed_at') {
       // SCRUM-63 (D61): not in the SQL shapes; null until the incident is closed.
       if (entry !== null) throw new Error('closed_at (D61) is set on a compared body');
+      continue;
+    }
+    if (key === 'location_unavailable_since') {
+      // SCRUM-68 (D74): not in the SQL shapes; null while no unavailable report is pending.
+      if (entry !== null)
+        throw new Error('location_unavailable_since (D74) is set on a compared body');
       continue;
     }
     if (key === 'emergency_services') {
@@ -93,24 +102,51 @@ export function withoutEmergencyServicesText(text: string): string {
 /**
  * SCRUM-63 (D61) deliberate divergence: the open read (`GET /v1/me/incidents/open`) carries
  * `closed_at` (always null there: only an active incident is open), and so do the recent list and
- * the member reads; the SQL shapes do not have it. The body text without every `"closed_at":null`,
- * so the rest compares byte for byte. A body without the key is returned unchanged; a set value
+ * the member reads; the SQL shapes do not have it. The body text without every `"closed_at":null`
+ * (and, D74, every `"location_unavailable_since":null`), so the rest compares byte for byte. A body without the key is returned unchanged; a set value
  * throws.
  */
 export function withoutClosedAtText(text: string): string {
   if (/"closed_at":(?!null)/.test(text)) {
     throw new Error('closed_at (D61) is set on a compared body');
   }
-  return text.replace(/"closed_at":null,|,"closed_at":null/g, '');
+  return withoutUnavailableSinceText(text.replace(/"closed_at":null,|,"closed_at":null/g, ''));
 }
 
-/** A body without `closed_at` (D61) when it has it, after checking it is null. */
+/**
+ * SCRUM-68 (D74) deliberate divergence: every incident body with the location keys carries
+ * `location_unavailable_since`; the SQL shapes do not (an unavailable report wipes the fix there).
+ * The body text without every `"location_unavailable_since":null`, so the rest compares byte for
+ * byte. A body without the key is returned unchanged; a set value throws.
+ */
+export function withoutUnavailableSinceText(text: string): string {
+  if (/"location_unavailable_since":(?!null)/.test(text)) {
+    throw new Error('location_unavailable_since (D74) is set on a compared body');
+  }
+  return text.replace(/"location_unavailable_since":null,|,"location_unavailable_since":null/g, '');
+}
+
+/** A body without `location_unavailable_since` (D74) when it has it, after checking it is null. */
+export function withoutUnavailableSince<T extends Record<string, unknown>>(body: T): T {
+  if (!('location_unavailable_since' in body)) return body;
+  if (body.location_unavailable_since !== null) {
+    throw new Error('location_unavailable_since (D74) is set on a compared body');
+  }
+  const rest: Record<string, unknown> = { ...body };
+  delete rest.location_unavailable_since;
+  return rest as T;
+}
+
+/**
+ * A body without `closed_at` (D61) and `location_unavailable_since` (D74) when it has them, after
+ * checking they are null.
+ */
 export function withoutClosedAt<T extends Record<string, unknown>>(body: T): T {
-  if (!('closed_at' in body)) return body;
+  if (!('closed_at' in body)) return withoutUnavailableSince(body);
   if (body.closed_at !== null) throw new Error('closed_at (D61) is set on a compared body');
   const rest: Record<string, unknown> = { ...body };
   delete rest.closed_at;
-  return rest as T;
+  return withoutUnavailableSince(rest) as T;
 }
 
 /** A body without `emergency_services`, after checking it holds the seeded numbers (D60). */

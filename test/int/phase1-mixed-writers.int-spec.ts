@@ -618,6 +618,39 @@ describe('Phase 1 gate: SQL and API writers are interchangeable (API-100-23 AC3)
     };
   }
 
+  /**
+   * SCRUM-68 (D74) recorded divergence, taken out of a RAW run first: an `unavailable` ping keeps the
+   * stored fix and sets `location_unavailable_since` (the SQL function wipes the fix), and every
+   * incident body and row carries `location_unavailable_since`. Each object with the location keys
+   * is shown as the SQL shows it: when the key is set, the fix becomes `unavailable` with null
+   * position columns; the key is then removed. The D74 behaviour itself is checked by
+   * `test/int/locations-last-known-scrum68.int-spec.ts`.
+   */
+  function withoutD74Divergence<T>(value: T): T {
+    if (Array.isArray(value))
+      return value.map((item) => withoutD74Divergence(item) as unknown) as T;
+    if (!value || typeof value !== 'object') return value;
+    const out: Body = {};
+    for (const [key, entry] of Object.entries(value as Body)) {
+      out[key] = withoutD74Divergence(entry);
+    }
+    if ('location_unavailable_since' in out) {
+      if (out.location_unavailable_since !== null) {
+        out.location_source = 'unavailable';
+        for (const key of [
+          'location_lat',
+          'location_lng',
+          'location_accuracy_m',
+          'location_captured_at',
+        ]) {
+          if (key in out) out[key] = null;
+        }
+      }
+      delete out.location_unavailable_since;
+    }
+    return out as T;
+  }
+
   /** Both recorded divergences (SCRUM-63, D71) taken out of a normalized run. */
   const comparable = (mode: Mode) =>
     withoutD71Divergence(withoutScrum63Divergence(normalized[mode].steps, normalized[mode].rows));
@@ -627,7 +660,7 @@ describe('Phase 1 gate: SQL and API writers are interchangeable (API-100-23 AC3)
   it.each(MODES)('%s: the scenario runs through', async (mode) => {
     const { cast, result: raw } = await run(mode);
     results[mode] = raw;
-    const result = withoutGap59Divergence(raw);
+    const result = withoutGap59Divergence(withoutD74Divergence(raw));
     const walk = normalizer(cast, result);
     // SCRUM-21 (D52, D53): the API's list values are arrays and member details carry two more keys;
     // compared in the SQL shape (`asSqlSharePayloadShape`), everything else exactly.

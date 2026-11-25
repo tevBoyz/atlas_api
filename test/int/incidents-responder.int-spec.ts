@@ -66,6 +66,8 @@ const DETAIL_KEYS = [
   'location_lng',
   'location_sharing_ended_at',
   'location_source',
+  // SCRUM-68 (D74): since when live location is reported unavailable.
+  'location_unavailable_since',
   'share_payload',
   // SCRUM-21 (D53): the activation snapshot and when the live view last changed.
   'share_payload_at_activation',
@@ -309,7 +311,7 @@ describe('responder incident list and details (API-100-21)', () => {
       expect(errorOf(bad).details).toEqual({ field: 'id' });
     });
 
-    it('AC2, AC3: the 19 SQL keys + 2 SCRUM-21 keys + emergency_services (D60), share_payload stored or {}, no resident_id/circle_id', async () => {
+    it('AC2, AC3: the 19 SQL keys + 2 SCRUM-21 keys + emergency_services (D60) + D74, share_payload stored or {}, no resident_id/circle_id', async () => {
       const s = await scene(1, 'Resident Details');
       await client.query(
         `update public.profiles set blood_type = 'O+', share_blood_type = true where id = $1`,

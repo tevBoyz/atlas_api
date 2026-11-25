@@ -42,6 +42,8 @@ export interface IncidentBroadcastState {
   location_lng: number | string | null;
   location_accuracy_m: number | string | null;
   location_captured_at: string | null;
+  /** SCRUM-68 (D74): since when live location is reported unavailable; null = not reported. */
+  location_unavailable_since: string | null;
   incident_notes: string | null;
   incident_notes_updated_at: string | null;
   /** `incidents.updated_at`: database time of the last write of the row. */
@@ -69,7 +71,10 @@ export interface IncidentEventRow {
   };
 }
 
-/** The 16 merged keys, in the order of spec §11.5, plus `closed_at` (SCRUM-63, D61). */
+/**
+ * The 16 merged keys, in the order of spec §11.5, plus `closed_at` (SCRUM-63, D61) and
+ * `location_unavailable_since` (SCRUM-68, D74).
+ */
 const INCIDENT_UPDATED_JSON = sql`jsonb_build_object(
     'emergency_type', rec.emergency_type,
     'status', rec.status,
@@ -83,6 +88,7 @@ const INCIDENT_UPDATED_JSON = sql`jsonb_build_object(
     'location_accuracy_m', rec.location_accuracy_m,
     'location_captured_at', rec.location_captured_at,
     'location_source', rec.location_source,
+    'location_unavailable_since', rec.location_unavailable_since,
     'location_sharing_ended_at', rec.location_sharing_ended_at,
     'incident_notes', rec.incident_notes,
     'incident_notes_updated_at', rec.incident_notes_updated_at,
@@ -144,6 +150,7 @@ export class RealtimeReadsRepository {
                'auto_closed', rec.auto_closed,
                'location_sharing_ended_at', rec.location_sharing_ended_at,
                'location_source', rec.location_source,
+               'location_unavailable_since', rec.location_unavailable_since,
                'location_lat', rec.location_lat,
                'location_lng', rec.location_lng,
                'location_accuracy_m', rec.location_accuracy_m,

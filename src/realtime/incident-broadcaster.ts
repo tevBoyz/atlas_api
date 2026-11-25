@@ -52,6 +52,7 @@ export function locationPayload(state: IncidentBroadcastState) {
     location_lng: state.location_lng,
     location_accuracy_m: state.location_accuracy_m,
     location_captured_at: state.location_captured_at,
+    location_unavailable_since: state.location_unavailable_since,
     updated_at: state.updated_at,
     occurred_at: state.occurred_at,
   };

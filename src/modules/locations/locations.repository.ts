@@ -87,16 +87,32 @@ export class LocationsRepository {
   }
 
   /**
-   * The write, after the row lock and the open check. Out-of-order guard (spec rule 34): when the
-   * stored and the incoming `location_captured_at` are both set and the incoming one is older, nothing
-   * is written and undefined is returned (the caller answers with the current row). Equal or newer
-   * overwrite; `unavailable` (no captured_at) always overwrites all five columns. Returns IncidentShared.
+   * The write, after the row lock and the open check. Returns IncidentShared; undefined when nothing
+   * is written (the caller answers with the current row).
+   *
+   * - `current` / `last_known`: out-of-order guard (spec rule 34): when the stored and the incoming
+   *   `location_captured_at` are both set and the incoming one is older, nothing is written. Equal or
+   *   newer overwrite the five location columns and clear `location_unavailable_since` (live again).
+   * - `unavailable` (SCRUM-68, D74): never wipes a stored fix. The five location columns are kept
+   *   (the last known position, its accuracy, capture time and source); only
+   *   `location_unavailable_since` is set, keeping the earliest time across repeated reports. With
+   *   no fix ever stored, `location_source` becomes `unavailable` (the position columns stay null),
+   *   as before. Always written (it carries no `captured_at`, so the guard never applies).
    */
   async writeLocation(
     tx: IncidentTransaction,
     incidentId: string,
     args: AttachLocationArgs,
   ): Promise<Record<string, unknown> | undefined> {
+    if (args.source === 'unavailable') {
+      const result = await tx.execute<{ body: Record<string, unknown> }>(sql`
+        update public.incidents as rec
+           set location_source = coalesce(rec.location_source, 'unavailable'),
+               location_unavailable_since = coalesce(rec.location_unavailable_since, now())
+         where rec.id = ${incidentId}::uuid
+        returning ${INCIDENT_SHARED_JSON} as body`);
+      return result.rows[0]?.body;
+    }
     const cap = sql`${args.capturedAt}::timestamptz`;
     const result = await tx.execute<{ body: Record<string, unknown> }>(sql`
       update public.incidents as rec
@@ -104,7 +120,8 @@ export class LocationsRepository {
              location_lat = ${args.lat}::double precision,
              location_lng = ${args.lng}::double precision,
              location_accuracy_m = ${args.accuracy}::double precision,
-             location_captured_at = ${cap}
+             location_captured_at = ${cap},
+             location_unavailable_since = null
        where rec.id = ${incidentId}::uuid
          and not (rec.location_captured_at is not null
                   and ${cap} is not null

@@ -30,6 +30,7 @@ IncidentDetails _$IncidentDetailsFromJson(Map<String, dynamic> json) =>
           : IncidentDetailsLocationSource.fromJson(
               json['location_source'] as String,
             ),
+      locationUnavailableSince: json['location_unavailable_since'] as String?,
       renotifiedAt: json['renotified_at'] as String?,
       residentName: json['resident_name'] as String,
       resolvedAt: json['resolved_at'] as String?,
@@ -58,6 +59,7 @@ Map<String, dynamic> _$IncidentDetailsToJson(IncidentDetails instance) =>
       'location_lng': instance.locationLng,
       'location_sharing_ended_at': instance.locationSharingEndedAt,
       'location_source': instance.locationSource,
+      'location_unavailable_since': instance.locationUnavailableSince,
       'renotified_at': instance.renotifiedAt,
       'resident_name': instance.residentName,
       'resolved_at': instance.resolvedAt,

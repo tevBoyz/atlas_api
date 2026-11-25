@@ -27,6 +27,10 @@ import {
   submitAlert,
   submitAlertViaSql,
 } from '../support/incident-api';
+import {
+  withoutUnavailableSince,
+  withoutUnavailableSinceText,
+} from '../support/share-payload-shape';
 
 /**
  * `POST /v1/incidents/{id}/mark-safe` (API-100-19) beyond the SQL scripts: check order, the
@@ -146,7 +150,10 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
   const viaSendJson = async (incidentId: string) => {
     await client.query(`set timezone = 'UTC'`);
     const { rows } = await client.query<{ body: Body }>(
-      'select public._incident_send_json(i) as body from public.incidents i where i.id = $1',
+      // SCRUM-68 (D74): the SQL helper plus location_unavailable_since (jsonb orders the keys).
+      `select public._incident_send_json(i)
+              || jsonb_build_object('location_unavailable_since', i.location_unavailable_since) as body
+         from public.incidents i where i.id = $1`,
       [incidentId],
     );
     return rows[0].body;
@@ -356,7 +363,7 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
       const before = await snapshot(incidentId);
       const res = await markSafe(app, resident.id, incidentId);
       expect(res.statusCode).toBe(200);
-      expect(res.json<Body>()).toEqual(closed);
+      expect(withoutUnavailableSince(res.json<Body>())).toEqual(closed);
       expect(await snapshot(incidentId)).toEqual(before);
     });
   });
@@ -403,7 +410,7 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
         delivered_count: 3,
         acknowledged_count: 1,
       });
-      expect(Object.keys(res.json<Body>())).toHaveLength(24);
+      expect(Object.keys(res.json<Body>())).toHaveLength(25); // 24 + location_unavailable_since (D74)
 
       const { rows } = await client.query<Body>(
         `select status, resolved_reason, auto_closed,
@@ -924,7 +931,7 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
 
   describe('interchangeable with the SQL function', () => {
     const comparable = (body: Body) => {
-      const copy: Body = { ...body };
+      const copy: Body = withoutUnavailableSince({ ...body });
       for (const key of [
         'id',
         'resident_id',
@@ -977,7 +984,7 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
       const sql = await markSafeViaSql(client, b.resident.id, b.incidentId);
 
       expect(comparable(api.json<Body>())).toEqual(comparable(sql));
-      expect(Object.keys(api.json<Body>())).toEqual(Object.keys(sql));
+      expect(Object.keys(withoutUnavailableSince(api.json<Body>()))).toEqual(Object.keys(sql));
       expect(await rowsOf(a.incidentId)).toEqual(await rowsOf(b.incidentId));
       // SCRUM-63 (D62, recorded divergence): only the SQL function writes incident_closed here.
       expect(await closedEventCount(a.incidentId)).toBe(0);
@@ -997,7 +1004,7 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
       const sql = await callSqlAs<Body>(client, resident.id, 'public.mark_incident_safe($1)', [
         incidentId,
       ]);
-      expect(JSON.stringify(sql)).toBe(api.body);
+      expect(JSON.stringify(sql)).toBe(withoutUnavailableSinceText(api.body));
       expect(await snapshot(incidentId)).toEqual(before);
     });
 

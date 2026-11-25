@@ -43,6 +43,8 @@ Map<String, Object?> incidentDetailsJson({
   'status': status,
   // SCRUM-63 (D63): when the incident became Closed (null until then).
   'closed_at': null,
+  // SCRUM-68 (D74): since when live location is reported unavailable (null = not reported).
+  'location_unavailable_since': null,
 };
 
 /// A model's toJson() keeps nested models as objects (`emergency_services`): compare as plain JSON.

@@ -33,6 +33,8 @@ import {
 import {
   withoutEmergencyServices,
   withoutEmergencyServicesText,
+  withoutUnavailableSince,
+  withoutUnavailableSinceText,
 } from '../support/share-payload-shape';
 
 /**
@@ -240,7 +242,9 @@ describe('live note and explicit re-notify (API-100-18)', () => {
       expect(after.incident_notes).toBe(expected);
       expect(after.incident_notes_updated_at).not.toBeNull();
       expect(after.share_payload).toEqual(before.share_payload);
-      expect(res.body).toBe(JSON.stringify(await viaSql(incidentId, '_incident_activation_json')));
+      expect(withoutUnavailableSinceText(res.body)).toBe(
+        JSON.stringify(await viaSql(incidentId, '_incident_activation_json')),
+      );
     });
 
     it.each([
@@ -611,7 +615,7 @@ describe('live note and explicit re-notify (API-100-18)', () => {
         location_captured_at: '2026-11-19T10:00:00.123456Z',
       });
       const notes = await setIncidentNotes(app, resident.id, incidentId, { incident_notes: 'x' });
-      expect(notes.body).toBe(
+      expect(withoutUnavailableSinceText(notes.body)).toBe(
         JSON.stringify(await viaSql(incidentId, '_incident_activation_json')),
       );
 
@@ -806,7 +810,7 @@ describe('live note and explicit re-notify (API-100-18)', () => {
     }
 
     const comparable = (body: Body) => {
-      const copy: Body = { ...body };
+      const copy: Body = withoutUnavailableSince({ ...body });
       for (const key of [
         'id',
         'resident_id',
