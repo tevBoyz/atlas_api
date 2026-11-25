@@ -915,7 +915,12 @@ describe('POST /v1/incidents (API-100-15)', () => {
         `select event_type, detail - 'recipient_ids' as detail,
                 jsonb_array_length(coalesce(detail->'recipient_ids', '[]'::jsonb)) as recipients,
                 actor_id = i.resident_id as by_resident,
-                occurred_at = i.activated_at as at_activation
+                -- Gap 59: location_sharing_started is stored at clock_timestamp(), just after
+                -- the alert (the SQL function stores now()); both count as "at activation".
+                case when e.event_type = 'location_sharing_started'
+                     then e.occurred_at >= i.activated_at
+                          and e.occurred_at < i.activated_at + interval '10 seconds'
+                     else e.occurred_at = i.activated_at end as at_activation
            from public.incident_events e
            join public.incidents i on i.id = e.incident_id
           where e.incident_id = $1

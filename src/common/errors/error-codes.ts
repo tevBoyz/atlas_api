@@ -180,6 +180,9 @@ export const PARITY_ERROR_CODES = {
   // SCRUM-35 (D66-D68): test alerts. `POST /v1/me/circle/test-alerts` (send), the owner's status reads
   // and the member's read / seen. New codes, no SQL function behind them.
   test_alerts: ['not_authenticated', 'no_eligible_recipients', 'rate_limited', 'not_found'],
+  // SCRUM-82 (D72): `GET /v1/me/activity` (the activity log). New code, no SQL function behind it;
+  // a bad query parameter is `validation:invalid_request`.
+  activity: ['not_authenticated'],
 
   // §7.5 Login lockout (prefix `login_lockout`, not the function name)
   login_lockout: [

@@ -227,13 +227,10 @@ describe('SCRUM-60/61 activity feed events (D71)', () => {
       const member = await getIncidentEvents(app, s.milo.id, s.incidentId);
       expect(resident.statusCode).toBe(200);
       expect(member.statusCode).toBe(200);
-      // alert_sent and location_sharing_started share the submit's transaction time, so their
-      // relative order (`occurred_at, id`, random ids) is not fixed: compare them sorted by type.
-      const view = (reply: Reply) => {
-        const rows = reply.json<Body[]>().map((e) => [e.event_type, e.actor_name, e.detail]);
-        const head = rows.slice(0, 2).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-        return [...head, ...rows.slice(2)];
-      };
+      // Gap 59: location_sharing_started is stored at clock_timestamp(), so it always follows
+      // alert_sent (strict order, not sorted).
+      const view = (reply: Reply) =>
+        reply.json<Body[]>().map((e) => [e.event_type, e.actor_name, e.detail]);
       const expected = [
         [
           'alert_sent',

@@ -34,6 +34,186 @@
         ],
         "type": "object"
       },
+      "ActivityEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_name": {
+            "description": "Who did it, by display name (D71): the resident, or the member for acknowledged / responding / unable. Null when nobody did (an automatic close).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "category": {
+            "description": "\"mine\" = an alert the caller raised; \"circle\" = a circle alert of someone else.",
+            "enum": [
+              "mine",
+              "circle"
+            ],
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "preset": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "situation_worsening",
+                          "help_is_here"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "status_update: the quick update, or null for a text update."
+                  },
+                  "reason": {
+                    "description": "ended: \"safe\" (the resident marked safe) or \"ended\" (closed automatically after inactivity).",
+                    "enum": [
+                      "safe",
+                      "ended"
+                    ],
+                    "type": "string"
+                  },
+                  "text": {
+                    "description": "status_update: the free text (1-250 characters), or null for a preset.",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "status_update: {preset, text}; ended: {reason}; null for every other kind. Never location, medical or contact data."
+          },
+          "id": {
+            "description": "The underlying incident event id: unique, use it to drop duplicates when paging.",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "incident": {
+            "$ref": "#/components/schemas/ActivityIncident"
+          },
+          "kind": {
+            "description": "emergency_initiated (own alert sent; Sent), alert_received (a circle alert reached the caller; Received), location_shared (own alert, live location started; Active), acknowledged / responding / unable (a member acknowledged or set their response: on own alerts any member, on circle alerts the caller only), status_update (circle alerts: an update from the resident; detail.preset or detail.text), ended (once per alert: marked safe, or closed automatically; detail.reason).",
+            "enum": [
+              "emergency_initiated",
+              "alert_received",
+              "location_shared",
+              "acknowledged",
+              "responding",
+              "unable",
+              "status_update",
+              "ended"
+            ],
+            "type": "string"
+          },
+          "occurred_at": {
+            "description": "Server time of the event (timestamptz).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "category",
+          "occurred_at",
+          "incident",
+          "actor_name",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "ActivityIncident": {
+        "additionalProperties": false,
+        "properties": {
+          "circle_name": {
+            "description": "Circle entries: the Safety Circle's name. Null on the caller's own alerts.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emergency_type": {
+            "enum": [
+              "medical",
+              "domestic_violence",
+              "fire",
+              "burglary",
+              "other",
+              "unspecified"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "description": "The alert (open it with the existing incident reads).",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "resident_name": {
+            "description": "Circle entries: the resident's profile name, trimmed ('' when unknown). Null on the caller's own alerts.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "The alert's CURRENT state (active, resolved, closed), not the state at the entry's time.",
+            "enum": [
+              "active",
+              "resolved",
+              "activating",
+              "cancelled",
+              "closed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "emergency_type",
+          "resident_name",
+          "circle_name"
+        ],
+        "type": "object"
+      },
+      "ActivityPage": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "description": "Newest first: occurred_at descending, then id descending.",
+            "items": {
+              "$ref": "#/components/schemas/ActivityEntry"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "Pass as `before` for the next (older) page; null when there is no more.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "entries",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "AppleSignInRequest": {
         "properties": {
           "device": {
@@ -10797,6 +10977,158 @@
         "summary": "My account: email, phone, confirmations and sign-in methods",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/v1/me/activity": {
+      "get": {
+        "operationId": "listMyActivity",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "description": "\"all\" (default): the caller's own alerts and their circle alerts together; \"mine\": only alerts the caller raised (My Emergencies); \"circle\": only alerts of others in circles the caller is an active member of, inside the access window (Circle Alerts).",
+              "enum": [
+                "all",
+                "mine",
+                "circle"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "description": "The `next_cursor` of the previous page, unchanged (opaque). Missing = the newest entries.",
+              "pattern": "^[A-Za-z0-9_-]{1,200}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "description": "How many entries to return, 1-50. Default 30. Anything else is 422.",
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityPage"
+                }
+              }
+            },
+            "description": "One page, newest first (`occurred_at`, then `id`, descending). Circle entries only for alerts of circles the caller is an active member of, inside the access window. No user ids."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "activity:not_authenticated",
+                    "details": {},
+                    "message": "Sign in to continue."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing, invalid or expired access token",
+            "x-error-codes": [
+              "activity:not_authenticated"
+            ]
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation:invalid_request",
+                    "details": {},
+                    "message": "The request is not valid."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid request",
+            "x-error-codes": [
+              "validation:invalid_request"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The caller's emergency activity log (My Emergencies and Circle Alerts), newest first",
+        "tags": [
+          "activity"
         ]
       }
     },

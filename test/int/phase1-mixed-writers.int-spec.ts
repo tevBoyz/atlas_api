@@ -587,6 +587,37 @@ describe('Phase 1 gate: SQL and API writers are interchangeable (API-100-23 AC3)
     return { steps, rows: { ...r, events: r.events.filter(notResponderEvent) } };
   }
 
+  /**
+   * Gap 59 recorded divergence (approved by Dawit 2026-11-25), taken out of a RAW run before it is
+   * normalized: the API stores `location_sharing_started` at `clock_timestamp()`, just after the
+   * submit's `alert_sent` (the SQL function stores both at the transaction time), so the API run has
+   * one more distinct instant. Each event list gets the location start back at its `alert_sent`
+   * time. The strict order itself is checked by `test/int/activity-scrum82.int-spec.ts`.
+   */
+  function withoutGap59Divergence(result: RunResult): RunResult {
+    const align = (events: Body[]): Body[] => {
+      const sent = events.find((event) => event.event_type === 'alert_sent');
+      return events.map((event) =>
+        sent && event.event_type === 'location_sharing_started'
+          ? { ...event, occurred_at: sent.occurred_at }
+          : event,
+      );
+    };
+    const steps: Record<string, Outcome> = {};
+    for (const [name, outcome] of Object.entries(result.steps)) {
+      const o = outcome as { ok: boolean; body?: unknown };
+      steps[name] =
+        name.startsWith('events') && o.ok && Array.isArray(o.body)
+          ? ({ ...o, body: align(o.body as Body[]) } as Outcome)
+          : outcome;
+    }
+    const rows = result.rows as Body & { events?: Body[] };
+    return {
+      steps,
+      rows: Array.isArray(rows.events) ? { ...rows, events: align(rows.events) } : rows,
+    };
+  }
+
   /** Both recorded divergences (SCRUM-63, D71) taken out of a normalized run. */
   const comparable = (mode: Mode) =>
     withoutD71Divergence(withoutScrum63Divergence(normalized[mode].steps, normalized[mode].rows));
@@ -594,8 +625,9 @@ describe('Phase 1 gate: SQL and API writers are interchangeable (API-100-23 AC3)
   const MODES: Mode[] = ['sql', 'api', 'sql→api', 'api→sql'];
 
   it.each(MODES)('%s: the scenario runs through', async (mode) => {
-    const { cast, result } = await run(mode);
-    results[mode] = result;
+    const { cast, result: raw } = await run(mode);
+    results[mode] = raw;
+    const result = withoutGap59Divergence(raw);
     const walk = normalizer(cast, result);
     // SCRUM-21 (D52, D53): the API's list values are arrays and member details carry two more keys;
     // compared in the SQL shape (`asSqlSharePayloadShape`), everything else exactly.

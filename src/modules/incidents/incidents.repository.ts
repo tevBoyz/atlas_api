@@ -207,12 +207,25 @@ export class IncidentsRepository {
     );
   }
 
+  /**
+   * Written right after `alert_sent` in the submit transaction. Gap 59 (approved by Dawit
+   * 2026-11-25): stored at `clock_timestamp()` (like the D71 responder events), so it sorts strictly
+   * after `alert_sent` (transaction time) in every `occurred_at, id` order: "Sent" before "Location
+   * Shared" in `GET /v1/incidents/{id}/events` and `GET /v1/me/activity`, never by the random id.
+   */
   async recordLocationSharingStarted(
     tx: IncidentTransaction,
     incidentId: string,
     actorId: string,
   ): Promise<void> {
-    await this.events.record(tx, incidentId, 'location_sharing_started', actorId, sql`'{}'::jsonb`);
+    await this.events.record(
+      tx,
+      incidentId,
+      'location_sharing_started',
+      actorId,
+      sql`'{}'::jsonb`,
+      { afterEarlierEvents: true },
+    );
   }
 
   /**
