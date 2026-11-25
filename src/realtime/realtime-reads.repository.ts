@@ -5,6 +5,7 @@ import { incidentAlias, incidentMemberView } from '../common/policies';
 import { ApiConfigService } from '../config';
 import { DatabaseService } from '../db/database.service';
 import { type AvatarUrlBase, avatarUrlBase } from '../modules/circles/circles.repository';
+import { eventActorNameSql } from '../modules/incidents/incident-events.service';
 import {
   type ResponderRow,
   responderRowsSql,
@@ -62,6 +63,8 @@ export interface IncidentEventRow {
     event_type: string;
     occurred_at: string;
     actor_id: string | null;
+    /** D71: the actor's display name (`eventActorNameSql`); null when `actor_id` is null. */
+    actor_name: string | null;
     detail: Record<string, unknown>;
   };
 }
@@ -233,6 +236,7 @@ export class RealtimeReadsRepository {
                  'event_type', e.event_type,
                  'occurred_at', e.occurred_at,
                  'actor_id', e.actor_id,
+                 'actor_name', ${eventActorNameSql('e', 'rec')},
                  'detail', e.detail
                )
              ) as body

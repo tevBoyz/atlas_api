@@ -555,6 +555,42 @@ describe('Phase 1 gate: SQL and API writers are interchangeable (API-100-23 AC3)
     return { steps: outSteps, rows: { ...r, events: r.events.filter(notClosedEvent) } };
   }
 
+  /**
+   * D71 (SCRUM-60/61) recorded divergence, taken out before the runs are compared (after the
+   * SCRUM-63 one): the API's acknowledge writes a `responder_acknowledged` event (the SQL function
+   * writes none), and every event the API reads carries `actor_name`. Both are checked by
+   * `test/int/incidents-activity-scrum60-61.int-spec.ts`.
+   */
+  function withoutD71Divergence(compared: { steps: Record<string, unknown>; rows: unknown }): {
+    steps: Record<string, unknown>;
+    rows: unknown;
+  } {
+    const notResponderEvent = (event: Body) =>
+      event.event_type !== 'responder_acknowledged' && event.event_type !== 'responder_status';
+    const steps: Record<string, unknown> = {};
+    for (const [name, outcome] of Object.entries(compared.steps)) {
+      const o = outcome as { ok: boolean; body?: unknown };
+      if (name.startsWith('events') && o.ok && Array.isArray(o.body)) {
+        steps[name] = {
+          ...o,
+          body: (o.body as Body[]).filter(notResponderEvent).map((event) => {
+            const rest = { ...event };
+            delete rest.actor_name;
+            return rest;
+          }),
+        };
+      } else {
+        steps[name] = outcome;
+      }
+    }
+    const r = compared.rows as { incident: Body; deliveries: Body[]; events: Body[] };
+    return { steps, rows: { ...r, events: r.events.filter(notResponderEvent) } };
+  }
+
+  /** Both recorded divergences (SCRUM-63, D71) taken out of a normalized run. */
+  const comparable = (mode: Mode) =>
+    withoutD71Divergence(withoutScrum63Divergence(normalized[mode].steps, normalized[mode].rows));
+
   const MODES: Mode[] = ['sql', 'api', 'sql→api', 'api→sql'];
 
   it.each(MODES)('%s: the scenario runs through', async (mode) => {
@@ -633,21 +669,28 @@ describe('Phase 1 gate: SQL and API writers are interchangeable (API-100-23 AC3)
     expect(memberAlert?.detail).not.toHaveProperty('recipient_ids');
   });
 
+  it('D71: the API acknowledge recorded responder_acknowledged; API events carry actor_name', () => {
+    const steps = normalized.api.steps as Record<string, { ok: boolean; body?: unknown }>;
+    const events = steps['events (member)'].body as Body[];
+    expect(events.filter((e) => e.event_type === 'responder_acknowledged')).toEqual([
+      expect.objectContaining({ actor_id: 'member', detail: {} }),
+    ]);
+    for (const event of events) expect(typeof event.actor_name).toBe('string');
+    const rows = normalized.api.rows as { events: Body[] };
+    expect(rows.events.filter((e) => e.event_type === 'responder_acknowledged')).toHaveLength(1);
+  });
+
   it.each(['api', 'sql→api', 'api→sql'] as const)(
     '%s: every step answers as in the SQL-only run',
     (mode) => {
-      expect(withoutScrum63Divergence(normalized[mode].steps, normalized[mode].rows).steps).toEqual(
-        withoutScrum63Divergence(normalized.sql.steps, normalized.sql.rows).steps,
-      );
+      expect(comparable(mode).steps).toEqual(comparable('sql').steps);
     },
   );
 
   it.each(['api', 'sql→api', 'api→sql'] as const)(
     '%s: the same final incident, delivery and event rows as the SQL-only run',
     (mode) => {
-      expect(withoutScrum63Divergence(normalized[mode].steps, normalized[mode].rows).rows).toEqual(
-        withoutScrum63Divergence(normalized.sql.steps, normalized.sql.rows).rows,
-      );
+      expect(comparable(mode).rows).toEqual(comparable('sql').rows);
     },
   );
 

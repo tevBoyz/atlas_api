@@ -260,7 +260,13 @@ export const incidentEventSchema = componentSchema(
     id: z.uuid(),
     event_type: z
       .string()
-      .describe('See spec §5.6 (alert_sent, renotified, closure_notified, ...).'),
+      .describe(
+        'See spec §5.6: alert_sent, renotified, location_sharing_started, location_sharing_ended, ' +
+          'safe_recorded, incident_closed, closure_notified, status_update (D70: detail {preset} or ' +
+          '{text}), responder_acknowledged (D71: a member acknowledged, detail {}) and ' +
+          'responder_status (D71: a member changed their response, detail {status: "responding" | ' +
+          '"unable"}).',
+      ),
     occurred_at: z.string(),
     actor_id: z
       .string()
@@ -271,6 +277,15 @@ export const incidentEventSchema = componentSchema(
           'kept, every other hex character is replaced by "*", and the hyphens and 36-character ' +
           'shape stay (e.g. "4f3a****-****-****-****-********9c2d"), unless the actor is the ' +
           'caller, whose own id is always shown in full. Not a usable UUID when obscured.',
+      ),
+    actor_name: z
+      .string()
+      .nullable()
+      .describe(
+        'D71: the display name of the actor, the same for every caller (show it instead of any ' +
+          'id); null when actor_id is null. A member: their profile name (trimmed), else the name ' +
+          'on their membership, as the responder list. The resident: their profile name (trimmed). ' +
+          'Empty when no name is known.',
       ),
     detail: z.record(z.string(), z.unknown()),
   }),

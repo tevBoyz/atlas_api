@@ -8,6 +8,7 @@ import { DatabaseService } from '../../db/database.service';
 import { AuditService } from '../audit';
 import { type AvatarUrlBase, avatarUrlBase } from '../circles/circles.repository';
 import { IncidentDeliveriesRepository } from './incident-deliveries.repository';
+import { IncidentEventService } from './incident-events.service';
 import { requireJsonObject } from './incident-input';
 import { IncidentPostCommitRunner } from './incident-post-commit';
 import { type ResponderView, responderView } from './incident-responder-view';
@@ -49,6 +50,7 @@ export class IncidentRespondersService {
     private readonly audit: AuditService,
     private readonly postCommit: IncidentPostCommitRunner,
     config: ApiConfigService,
+    private readonly events: IncidentEventService,
   ) {
     this.avatars = avatarUrlBase(config);
   }
@@ -76,21 +78,24 @@ export class IncidentRespondersService {
 
   /**
    * The member's response, in this order:
-   * 1. lock the caller's own delivery row `FOR UPDATE` (the ONLY row lock, as acknowledge); none →
-   *    `not_found`;
+   * 0. `FOR KEY SHARE` on the caller's profile and the incident (D71 lock order, as acknowledge);
+   * 1. lock the caller's own delivery row `FOR UPDATE` (as acknowledge); none → `not_found`;
    * 2. read the incident (no lock); gone, or the caller does not pass `incident.memberView` (an
    *    `active` member whose membership started at or before the incident, rule 54) → `not_found`;
    * 3. status not `active` → 409 `not_open` (a resolved alert's statuses are frozen);
    * 4. the same status again → nothing is written (the time is kept), no audit, no broadcast;
    *    otherwise `response_status`, `response_at = now()` and, when empty, `acknowledged_at = now()`,
-   *    plus one audit row `incident.response_set`.
+   *    plus one audit row `incident.response_set` and the activity events (SCRUM-60/61, D71; actor =
+   *    the member): `responder_acknowledged` `{}` first when this call sets `acknowledged_at`, then
+   *    `responder_status` `{status}`.
    * Answers the caller's own responder row (`user_id` in full, `is_me` true).
    *
-   * Lock order: one delivery row lock and nothing after it that locks another row (the incident and
-   * the membership are read without a lock; the update changes no foreign-key column, so it takes no
-   * key-share lock on the member row; `audit_log` has no foreign key), exactly as acknowledge. Submit,
-   * re-notify, mark safe (profile → incident → deliveries) and member removal (member row →
-   * deliveries) can therefore only wait on this transaction, never the reverse.
+   * Lock order (D71): profile → incident (`FOR KEY SHARE`, the locks the event insert takes anyway)
+   * → the delivery row, then nothing that locks another row (the membership is read without a lock;
+   * the update changes no foreign-key column, so it takes no key-share lock on the member row;
+   * `audit_log` has no foreign key), exactly as acknowledge. Submit, re-notify, mark safe (profile →
+   * incident → deliveries) and member removal (member row → deliveries) therefore never wait on
+   * this transaction while it waits on them.
    */
   async respond(
     user: AuthenticatedUser,
@@ -101,6 +106,7 @@ export class IncidentRespondersService {
       this.database,
       async (tx) => {
         await tx.execute(sql`select set_config('TimeZone', 'UTC', true)`);
+        await this.deliveries.keyShareCallerAndIncident(tx, incidentId, user.id);
         const delivery = await this.repository.lockOwnDelivery(tx, incidentId, user.id);
         if (!delivery) throw new DomainError('incident_response:not_found');
         const incident = await this.repository.responseIncident(tx, incidentId, user.id);
@@ -114,7 +120,17 @@ export class IncidentRespondersService {
           await this.repository.setResponse(tx, delivery.id, status);
           if (acknowledgedNow) {
             counts = await this.deliveries.counts(tx, incidentId, incident.status);
+            await this.events.record(tx, incident.id, 'responder_acknowledged', user.id);
           }
+          // After the acknowledge of this call (same transaction time): sorts after it.
+          await this.events.record(
+            tx,
+            incident.id,
+            'responder_status',
+            user.id,
+            { status },
+            { afterEarlierEvents: acknowledgedNow },
+          );
           await this.audit.record(
             {
               action: 'incident.response_set',
@@ -135,7 +151,7 @@ export class IncidentRespondersService {
         const row = await this.repository.ownRow(tx, incidentId, user.id, this.avatars);
         // The caller passed memberView in this transaction, so their row is there.
         if (!row) throw new DomainError('incident_response:not_found');
-        return { incident, row, changed, counts };
+        return { incident, row, changed, counts, events: this.events.drain(tx) };
       },
       (sqlState) => new IncidentOperationFailedError('incident_response', sqlState),
     );
@@ -147,6 +163,8 @@ export class IncidentRespondersService {
       };
       void this.postCommit.afterResponders({ ...ref, member_user_id: user.id });
       if (done.counts) void this.postCommit.afterDeliveryCounts({ ...ref, ...done.counts });
+      // SCRUM-60/61 (D71): `responder_acknowledged` (first time only), then `responder_status`.
+      void this.postCommit.afterEvents(ref, done.events);
     }
     return responderView(done.row, { resident: false, viewerId: user.id });
   }

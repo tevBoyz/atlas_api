@@ -612,9 +612,13 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
       120_000,
     );
 
-    it('ack takes no incident lock: it completes while the incident row is held FOR UPDATE', async () => {
+    it('D71: ack key-shares the incident before its delivery row: it waits for a FOR UPDATE holder, then completes', async () => {
+      // The responder_acknowledged insert key-shares the incident (its foreign key), so ack takes
+      // that lock first (profile → incident → delivery, the order of submit, re-notify and mark
+      // safe): while a writer holds the incident it waits WITHOUT holding the delivery row.
       const s = await scene(1);
       const holder = await openTestClient();
+      let acking: Promise<{ status: number; body: Body }> | undefined;
       try {
         await holder.query('begin');
         await holder.query('select 1 from public.incidents where id = $1 for update', [
@@ -623,12 +627,22 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
         await holder.query('select 1 from public.profiles where id = $1 for update', [
           s.resident.id,
         ]);
-        const reply = await httpAck(s.members[0].id, s.incidentId);
-        expect(reply.status).toBe(200);
+        acking = httpAck(s.members[0].id, s.incidentId);
+        await waitForLockWaiters(client, 1);
+        // The waiting ack holds no delivery row: the holder can still lock it at once.
+        await holder.query(`set local lock_timeout = '2s'`);
+        await holder.query(
+          `select 1 from public.incident_deliveries
+            where incident_id = $1 and member_user_id = $2 for update`,
+          [s.incidentId, s.members[0].id],
+        );
       } finally {
         await holder.query('rollback');
         await holder.end();
       }
+      const reply = await acking;
+      expect(reply.status).toBe(200);
+      expect((await deliveryRow(s.incidentId, s.members[0].id)).acknowledged_at).not.toBeNull();
     });
 
     it('forced interleaving: renotify waits on a held delivery row, ack queues too; both finish', async () => {

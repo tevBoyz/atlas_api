@@ -156,21 +156,25 @@ export function respondersPayload(state: IncidentResponderState, viewer: Respond
  * `incident.event` as one receiver sees it, with the rules of `GET /v1/incidents/{id}/events`:
  * the resident gets the row as stored; anyone else never gets `recipient_ids` (D3) and gets
  * `actor_id` masked (D11) unless it is their own id (`viewerId`; null = a member who is not the
- * actor).
+ * actor). `actor_name` (D71) is the same for every receiver. Keys in the contract's order.
  */
 export function eventPayload(
   row: IncidentEventRow,
   view: { resident: true } | { resident: false; viewerId: string | null },
 ) {
   const { event } = row;
-  if (view.resident) {
-    return { incident_id: row.incident_id, event, occurred_at: event.occurred_at };
-  }
   const detail = { ...event.detail };
-  for (const key of RESIDENT_ONLY_DETAIL_KEYS) delete detail[key];
+  if (!view.resident) for (const key of RESIDENT_ONLY_DETAIL_KEYS) delete detail[key];
   return {
     incident_id: row.incident_id,
-    event: { ...event, actor_id: maskActorId(event.actor_id, view.viewerId ?? ''), detail },
+    event: {
+      id: event.id,
+      event_type: event.event_type,
+      occurred_at: event.occurred_at,
+      actor_id: view.resident ? event.actor_id : maskActorId(event.actor_id, view.viewerId ?? ''),
+      actor_name: event.actor_name,
+      detail,
+    },
     occurred_at: event.occurred_at,
   };
 }

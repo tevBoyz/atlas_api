@@ -153,8 +153,9 @@ export class IncidentRespondersRepository {
   }
 
   /**
-   * The caller's own delivery row, locked `FOR UPDATE`: the ONLY row lock of a response, the same
-   * single lock as acknowledge (so the two serialize on it). Undefined when there is none.
+   * The caller's own delivery row, locked `FOR UPDATE`: the only exclusive row lock of a response
+   * (after the D71 key-share locks on the caller's profile and the incident), the same as
+   * acknowledge (so the two serialize on it). Undefined when there is none.
    */
   async lockOwnDelivery(
     tx: IncidentTransaction,

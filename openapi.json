@@ -1188,6 +1188,13 @@
               "null"
             ]
           },
+          "actor_name": {
+            "description": "D71: the display name of the actor, the same for every caller (show it instead of any id); null when actor_id is null. A member: their profile name (trimmed), else the name on their membership, as the responder list. The resident: their profile name (trimmed). Empty when no name is known.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "detail": {
             "additionalProperties": {},
             "propertyNames": {
@@ -1196,7 +1203,7 @@
             "type": "object"
           },
           "event_type": {
-            "description": "See spec §5.6 (alert_sent, renotified, closure_notified, ...).",
+            "description": "See spec §5.6: alert_sent, renotified, location_sharing_started, location_sharing_ended, safe_recorded, incident_closed, closure_notified, status_update (D70: detail {preset} or {text}), responder_acknowledged (D71: a member acknowledged, detail {}) and responder_status (D71: a member changed their response, detail {status: \"responding\" | \"unable\"}).",
             "type": "string"
           },
           "id": {
@@ -1213,6 +1220,7 @@
           "event_type",
           "occurred_at",
           "actor_id",
+          "actor_name",
           "detail"
         ],
         "type": "object"
@@ -16517,8 +16525,10 @@
           "event_type",
           "occurred_at",
           "actor_id",
+          "actor_name",
           "detail"
         ],
+        "note": "One per inserted incident_events row, as GET /v1/incidents/{id}/events shows it to that receiver. actor_name (D71) is the display name of the actor (null when actor_id is null), the same for every receiver: show it instead of any id. SCRUM-60/61 (D71) event types responder_acknowledged (detail {}) and responder_status (detail {status: \"responding\" | \"unable\"}) are sent when a member acknowledges or changes their response; no push.",
         "payload": [
           "incident_id",
           "event",

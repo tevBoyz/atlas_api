@@ -135,7 +135,13 @@ export const REALTIME_CONTRACT = {
     [SERVER_EVENTS.event]: {
       room: 'incident:{id} (per receiver: recipient_ids only for the resident, actor_id masked for others except their own id)',
       payload: ['incident_id', 'event', 'occurred_at'],
-      event_keys: ['id', 'event_type', 'occurred_at', 'actor_id', 'detail'],
+      event_keys: ['id', 'event_type', 'occurred_at', 'actor_id', 'actor_name', 'detail'],
+      note:
+        'One per inserted incident_events row, as GET /v1/incidents/{id}/events shows it to that ' +
+        'receiver. actor_name (D71) is the display name of the actor (null when actor_id is null), ' +
+        'the same for every receiver: show it instead of any id. SCRUM-60/61 (D71) event types ' +
+        'responder_acknowledged (detail {}) and responder_status (detail {status: "responding" | ' +
+        '"unable"}) are sent when a member acknowledges or changes their response; no push.',
     },
     [SERVER_EVENTS.incoming]: {
       room: 'user:{id} of each delivery recipient',

@@ -15,7 +15,8 @@ import type { IncidentTransaction } from './incidents.repository';
  *
  * Adding a type: add it here (and to `ONCE_PER_INCIDENT` if it is a once-only lifecycle step). NOTE:
  * the baseline schema also has a CHECK constraint (`incident_events_type_allowed`, migration
- * 20261023140000, widened by 0020 for `status_update`) listing exactly these types, so a new type also needs an additive migration
+ * 20261023140000, widened by 0020 for `status_update` and 0021 for `responder_acknowledged` /
+ * `responder_status`) listing exactly these types, so a new type also needs an additive migration
  * that widens that constraint (and, if once-only, a new partial unique index); see the story report.
  */
 export const INCIDENT_EVENT_TYPES = {
@@ -43,6 +44,19 @@ export const INCIDENT_EVENT_TYPES = {
    * repeat. Migration 0020 widened `incident_events_type_allowed` for it.
    */
   status_update: { oncePerIncident: false },
+  /**
+   * SCRUM-60/61 (D71): a member acknowledged the alert, actor = the member, `{}`. Written by
+   * `POST /v1/incidents/{id}/acknowledge`, or by the first `POST /v1/incidents/{id}/response` (which
+   * acknowledges implicitly), only when that call sets `acknowledged_at` for the first time: at most
+   * once per member, but once per member is not once per incident. Migration 0021.
+   */
+  responder_acknowledged: { oncePerIncident: false },
+  /**
+   * SCRUM-60/61 (D71): a member's response status changed (`POST /v1/incidents/{id}/response`),
+   * actor = the member, `{status: "responding"|"unable"}`. Not written when the member sends the
+   * status they already have. May repeat. Migration 0021.
+   */
+  responder_status: { oncePerIncident: false },
 } as const;
 
 export type IncidentEventType = keyof typeof INCIDENT_EVENT_TYPES;
@@ -82,6 +96,32 @@ export interface RecordedIncidentEvent {
   event_type: IncidentEventType;
 }
 
+/**
+ * `actor_name` of the event row aliased `event` of the incident aliased `incident` (D71: the app
+ * shows names, never ids). Null when `actor_id` is null. The resident: their profile name, trimmed
+ * (the name members see on the alert), else ''. Anyone else (a member): the name the responder list
+ * shows (`responderRowsSql`): the profile name trimmed when not empty, else the name stored on the
+ * membership of their delivery row of this incident, else ''. The same for every caller.
+ */
+export function eventActorNameSql(event: string, incident: string): SQL {
+  const e = sql.raw(event);
+  const rec = sql.raw(incident);
+  return sql`case
+      when ${e}.actor_id is null then null
+      when ${e}.actor_id = ${rec}.resident_id then
+        coalesce((select trim(an_p.full_name) from public.profiles an_p where an_p.id = ${e}.actor_id), '')
+      else coalesce(
+        (select nullif(trim(an_p.full_name), '') from public.profiles an_p where an_p.id = ${e}.actor_id),
+        (select an_m.display_name
+           from public.incident_deliveries an_d
+           join public.safety_circle_members an_m on an_m.id = an_d.member_id
+          where an_d.incident_id = ${e}.incident_id
+            and an_d.member_user_id = ${e}.actor_id
+          limit 1),
+        '')
+    end`;
+}
+
 const ONCE_PREDICATE = sql.raw(
   `event_type in (${ONCE_PER_INCIDENT_EVENT_TYPES.map((type) => `'${type}'`).join(', ')})`,
 );
@@ -119,6 +159,10 @@ export class IncidentEventService {
    * A repeat of a once-only type is a no-op through `incident_events_once_per_incident_uidx`
    * (`ON CONFLICT DO NOTHING`) and returns undefined. `detail` is a JSON object, or a SQL expression
    * building one in the same statement (so ids and counts come from the transaction's own rows).
+   * `options.afterEarlierEvents` (D71) stores `clock_timestamp()` instead of the transaction time, so
+   * the event sorts after the events this transaction already wrote (the list is ordered
+   * `occurred_at, id`, and `id` is random): used for a `responder_status` written after the
+   * `responder_acknowledged` of the same call.
    */
   async record(
     tx: IncidentTransaction,
@@ -126,13 +170,17 @@ export class IncidentEventService {
     eventType: IncidentEventType,
     actorId: string | null,
     detail: SQL | Record<string, unknown> = {},
+    options: { afterEarlierEvents?: boolean } = {},
   ): Promise<RecordedIncidentEvent | undefined> {
     if (!isKnownIncidentEventType(eventType)) throw new UnknownIncidentEventTypeError(eventType);
     const detailSql = isSQLWrapper(detail) ? detail : sql`${JSON.stringify(detail)}::jsonb`;
+    const later = options.afterEarlierEvents === true;
     const result = await tx.execute<{ id: string }>(sql`
-      insert into public.incident_events (incident_id, event_type, actor_id, detail)
+      insert into public.incident_events (incident_id, event_type, actor_id, detail${
+        later ? sql`, occurred_at` : sql``
+      })
       values (${incidentId}::uuid, ${eventType}::text, ${actorId}::uuid,
-              coalesce(${detailSql}, '{}'::jsonb))
+              coalesce(${detailSql}, '{}'::jsonb)${later ? sql`, clock_timestamp()` : sql``})
       on conflict (incident_id, event_type)
         where ${ONCE_PREDICATE}
       do nothing
@@ -158,7 +206,8 @@ export class IncidentEventService {
   }
 
   /**
-   * `GET /v1/incidents/{id}/events`: the incident's events ordered `occurred_at, id`, when the caller
+   * `GET /v1/incidents/{id}/events`: the incident's events ordered `occurred_at, id`, each with its
+   * `actor_name` ({@link eventActorNameSql}, D71, the same for every caller), when the caller
    * passes `incident.eventsView` (the resident; or an active member inside the window while the
    * incident is `active`/`resolved`/`closed`, rule 54; SCRUM-63: history stays readable). A caller who is not the resident never gets
    * `recipient_ids` (epic §18 D3); `recipient_count` stays. For that caller each `actor_id` is
@@ -182,6 +231,7 @@ export class IncidentEventService {
                            'event_type', e.event_type,
                            'occurred_at', e.occurred_at,
                            'actor_id', e.actor_id,
+                           'actor_name', ${eventActorNameSql('e', 'rec')},
                            'detail', case
                                        when ${incidentResident.where({ callerId, incident })}
                                          then e.detail

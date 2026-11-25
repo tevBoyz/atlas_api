@@ -3,6 +3,7 @@ import type { ApiConfigService } from '../../config';
 import type { DatabaseService } from '../../db/database.service';
 import type { AuditService } from '../audit';
 import type { IncidentDeliveriesRepository } from './incident-deliveries.repository';
+import type { IncidentEventService } from './incident-events.service';
 import type { IncidentPostCommitRunner } from './incident-post-commit';
 import { responderView } from './incident-responder-view';
 import type { ResponderRow } from './incident-responders.repository';
@@ -98,12 +99,27 @@ function serviceWith(overrides: Record<string, jest.Mock> = {}) {
     ...overrides,
   };
   const deliveries = {
+    keyShareCallerAndIncident: jest.fn().mockResolvedValue(undefined),
     counts: jest.fn().mockResolvedValue({ delivered_count: 2, acknowledged_count: 1 }),
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   const postCommit = {
     afterResponders: jest.fn().mockResolvedValue(undefined),
     afterDeliveryCounts: jest.fn().mockResolvedValue(undefined),
+    afterEvents: jest.fn().mockResolvedValue(undefined),
+  };
+  const recorded: { id: string; incident_id: string; event_type: string }[] = [];
+  const events = {
+    record: jest.fn((_tx: object, incidentId: string, eventType: string) => {
+      const event = {
+        id: `e${recorded.length + 1}`,
+        incident_id: incidentId,
+        event_type: eventType,
+      };
+      recorded.push(event);
+      return Promise.resolve(event);
+    }),
+    drain: jest.fn(() => recorded.splice(0)),
   };
   const tx = { execute: jest.fn().mockResolvedValue({ rows: [] }) };
   const database = {
@@ -117,8 +133,9 @@ function serviceWith(overrides: Record<string, jest.Mock> = {}) {
     audit as unknown as AuditService,
     postCommit as unknown as IncidentPostCommitRunner,
     config as unknown as ApiConfigService,
+    events as unknown as IncidentEventService,
   );
-  return { service, repository, deliveries, audit, postCommit, tx };
+  return { service, repository, deliveries, audit, postCommit, tx, events };
 }
 
 describe('IncidentRespondersService.respond (D56)', () => {
@@ -182,6 +199,60 @@ describe('IncidentRespondersService.respond (D56)', () => {
       delivered_count: 2,
       acknowledged_count: 1,
     });
+  });
+
+  it('first response: responder_acknowledged, then responder_status {status}, in order (D71)', async () => {
+    const { service, events, postCommit, deliveries, repository } = serviceWith();
+    await service.respond(USER, INCIDENT_ID, 'responding');
+    expect(deliveries.keyShareCallerAndIncident).toHaveBeenCalledWith(
+      expect.anything(),
+      INCIDENT_ID,
+      ME,
+    );
+    expect(deliveries.keyShareCallerAndIncident.mock.invocationCallOrder[0]).toBeLessThan(
+      repository.lockOwnDelivery.mock.invocationCallOrder[0],
+    );
+    expect(events.record.mock.calls.map((c: unknown[]) => c.slice(1))).toEqual([
+      [INCIDENT_ID, 'responder_acknowledged', ME],
+      [INCIDENT_ID, 'responder_status', ME, { status: 'responding' }, { afterEarlierEvents: true }],
+    ]);
+    expect(postCommit.afterEvents).toHaveBeenCalledWith(
+      { incident_id: INCIDENT_ID, resident_id: 'r1', circle_id: 'c1' },
+      [
+        { id: 'e1', incident_id: INCIDENT_ID, event_type: 'responder_acknowledged' },
+        { id: 'e2', incident_id: INCIDENT_ID, event_type: 'responder_status' },
+      ],
+    );
+  });
+
+  it('a switch on an acknowledged row: only responder_status (D71)', async () => {
+    const { service, events } = serviceWith({
+      lockOwnDelivery: jest
+        .fn()
+        .mockResolvedValue({ id: 'd1', acknowledged: true, response_status: 'responding' }),
+    });
+    await service.respond(USER, INCIDENT_ID, 'unable');
+    expect(events.record.mock.calls.map((c: unknown[]) => c.slice(1))).toEqual([
+      [INCIDENT_ID, 'responder_status', ME, { status: 'unable' }, { afterEarlierEvents: false }],
+    ]);
+  });
+
+  it('the same status again or not active: no event (D71)', async () => {
+    const same = serviceWith({
+      lockOwnDelivery: jest
+        .fn()
+        .mockResolvedValue({ id: 'd1', acknowledged: true, response_status: 'unable' }),
+    });
+    await same.service.respond(USER, INCIDENT_ID, 'unable');
+    expect(same.events.record).not.toHaveBeenCalled();
+    expect(same.postCommit.afterEvents).not.toHaveBeenCalled();
+    const closed = serviceWith({
+      responseIncident: jest.fn().mockResolvedValue({ status: 'resolved', member_view: true }),
+    });
+    await expect(closed.service.respond(USER, INCIDENT_ID, 'unable')).rejects.toMatchObject({
+      code: 'incident_response:not_open',
+    });
+    expect(closed.events.record).not.toHaveBeenCalled();
   });
 
   it('a switch on an acknowledged row: no counts hook', async () => {

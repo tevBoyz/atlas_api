@@ -8,6 +8,7 @@ import {
   type DeliveryCounts,
   IncidentDeliveriesRepository,
 } from './incident-deliveries.repository';
+import { IncidentEventService } from './incident-events.service';
 import { IncidentPostCommitRunner } from './incident-post-commit';
 import { IncidentOperationFailedError, runIncidentTransaction } from './incident-transaction';
 import { auditSessionId } from './incidents.service';
@@ -25,6 +26,7 @@ export class IncidentDeliveriesService {
     private readonly repository: IncidentDeliveriesRepository,
     private readonly audit: AuditService,
     private readonly postCommit: IncidentPostCommitRunner,
+    private readonly events: IncidentEventService,
   ) {}
 
   /**
@@ -42,24 +44,28 @@ export class IncidentDeliveriesService {
   /**
    * `acknowledge_incident` (final definition: baseline migration 20261117100000), in the function's
    * order:
-   * 1. lock the caller's own delivery row `FOR UPDATE` (the ONLY row lock); none → `not_found`;
+   * 0. `FOR KEY SHARE` on the caller's profile and the incident (D71 lock order, below);
+   * 1. lock the caller's own delivery row `FOR UPDATE`; none → `not_found`;
    * 2. read the incident (no lock); gone, or the caller is not an active member whose membership
    *    started at or before the incident (`circle.activeMemberSince`) → `not_found`;
    * 3. status not `active` → `not_open`;
-   * 4. `acknowledged_at = now()` only when `delivered_at` is set and it is not acknowledged yet.
-   * A repeat writes nothing, no second audit row and no hook. Returns DeliveryCounts. A first
-   * acknowledge also raises `incident.responders` (D56) after the commit.
+   * 4. `acknowledged_at = now()` only when `delivered_at` is set and it is not acknowledged yet, with
+   *    the `responder_acknowledged` event (SCRUM-60/61, D71; actor = the member, detail `{}`).
+   * A repeat writes nothing, no event, no second audit row and no hook. Returns DeliveryCounts. A
+   * first acknowledge also raises `incident.responders` (D56) and `incident.event` after the commit.
    *
-   * Lock order: one row lock and nothing after it that locks a profile. The SQL function inserts no
-   * event, and `audit_log` has no foreign key (migration 0003), so the audit insert takes no lock on
-   * a profile; submit, re-notify and mark safe (profile → incident → deliveries) can therefore only
-   * wait on this transaction, never the reverse, and `keyShareProfile` is not needed here.
+   * Lock order (D71): the event insert takes `FOR KEY SHARE` on the caller's profile and on the
+   * incident (its foreign keys), so both are taken first: profile → incident → delivery, the order
+   * of submit, re-notify and mark safe (profile → incident → deliveries). They can therefore only
+   * wait on this transaction, or this one on them, never both. `audit_log` has no foreign key
+   * (migration 0003).
    */
   async acknowledge(user: AuthenticatedUser, incidentId: string): Promise<DeliveryCounts> {
     const operation = 'acknowledge_incident';
     const done = await runIncidentTransaction(
       this.database,
       async (tx) => {
+        await this.repository.keyShareCallerAndIncident(tx, incidentId, user.id);
         const delivery = await this.repository.lockOwnDelivery(tx, incidentId, user.id);
         if (!delivery) throw new DomainError('acknowledge_incident:not_found');
         const incident = await this.repository.ackIncident(tx, incidentId, user.id);
@@ -67,7 +73,10 @@ export class IncidentDeliveriesService {
         if (incident.status !== 'active') throw new DomainError('acknowledge_incident:not_open');
 
         const acknowledges = delivery.delivered && !delivery.acknowledged;
-        if (acknowledges) await this.repository.acknowledge(tx, delivery.id);
+        if (acknowledges) {
+          await this.repository.acknowledge(tx, delivery.id);
+          await this.events.record(tx, incident.id, 'responder_acknowledged', user.id);
+        }
         const body = await this.repository.counts(tx, incidentId, incident.status);
         if (acknowledges) {
           await this.audit.record(
@@ -85,25 +94,25 @@ export class IncidentDeliveriesService {
             tx,
           );
         }
-        return { incident, body, acknowledged: acknowledges };
+        return { incident, body, acknowledged: acknowledges, events: this.events.drain(tx) };
       },
       (sqlState) => new IncidentOperationFailedError(operation, sqlState),
     );
     if (done.acknowledged) {
-      void this.postCommit.afterDeliveryCounts({
+      const ref = {
         incident_id: done.incident.id,
         resident_id: done.incident.resident_id,
         circle_id: done.incident.circle_id,
+      };
+      void this.postCommit.afterDeliveryCounts({
+        ...ref,
         delivered_count: done.body.delivered_count,
         acknowledged_count: done.body.acknowledged_count,
       });
       // SCRUM-49 / D56: the member's responder row is now "acknowledged" for everyone watching.
-      void this.postCommit.afterResponders({
-        incident_id: done.incident.id,
-        resident_id: done.incident.resident_id,
-        circle_id: done.incident.circle_id,
-        member_user_id: user.id,
-      });
+      void this.postCommit.afterResponders({ ...ref, member_user_id: user.id });
+      // SCRUM-60/61 (D71): the `responder_acknowledged` event for the activity feed.
+      void this.postCommit.afterEvents(ref, done.events);
     }
     return done.body;
   }

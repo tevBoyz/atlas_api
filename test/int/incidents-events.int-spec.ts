@@ -101,14 +101,30 @@ describe('incident events (API-100-22)', () => {
     return { resident, circle, members, memberRows, incidentId };
   }
 
-  /** The rows as stored, oldest first (`occurred_at, id`), as the database writes them as JSON. */
+  /**
+   * The rows as stored, oldest first (`occurred_at, id`), as the database writes them as JSON, with
+   * the `actor_name` of D71 (null without an actor; the resident's profile name trimmed; a member's
+   * profile name trimmed, else their membership name).
+   */
   async function storedEvents(incidentId: string): Promise<Body[]> {
     await client.query(`set timezone = 'UTC'`);
     const { rows } = await client.query<{ body: Body[] }>(
       `select coalesce(jsonb_agg(jsonb_build_object('id', e.id, 'event_type', e.event_type,
-                'occurred_at', e.occurred_at, 'actor_id', e.actor_id, 'detail', e.detail)
+                'occurred_at', e.occurred_at, 'actor_id', e.actor_id,
+                'actor_name', case
+                  when e.actor_id is null then null
+                  when e.actor_id = i.resident_id then coalesce(trim(p.full_name), '')
+                  else coalesce(nullif(trim(p.full_name), ''), m.display_name, '')
+                end,
+                'detail', e.detail)
                 order by e.occurred_at, e.id), '[]'::jsonb) as body
-         from public.incident_events e where e.incident_id = $1`,
+         from public.incident_events e
+         join public.incidents i on i.id = e.incident_id
+         left join public.profiles p on p.id = e.actor_id
+         left join public.incident_deliveries d
+           on d.incident_id = e.incident_id and d.member_user_id = e.actor_id
+         left join public.safety_circle_members m on m.id = d.member_id
+        where e.incident_id = $1`,
       [incidentId],
     );
     return rows[0].body;
@@ -174,7 +190,7 @@ describe('incident events (API-100-22)', () => {
       });
     });
 
-    it('resident: every stored event, exactly 5 keys, ordered occurred_at then id, with recipient_ids', async () => {
+    it('resident: every stored event, exactly 6 keys, ordered occurred_at then id, with recipient_ids', async () => {
       const s = await scene(2);
       await renotifyAlert(app, s.resident.id, s.incidentId);
       await markSafe(app, s.resident.id, s.incidentId);
@@ -186,6 +202,7 @@ describe('incident events (API-100-22)', () => {
       for (const event of events) {
         expect(Object.keys(event).sort()).toEqual([
           'actor_id',
+          'actor_name',
           'detail',
           'event_type',
           'id',

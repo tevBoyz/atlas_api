@@ -95,6 +95,7 @@ function eventRow(actor: string | null, detail: Record<string, unknown> = {}): I
       event_type: 'closure_notified',
       occurred_at: T,
       actor_id: actor,
+      actor_name: actor === null ? null : actor === RESIDENT ? 'Rita' : 'Milo',
       detail,
     },
   };
@@ -146,6 +147,29 @@ describe('eventPayload (D3, D11 per receiver)', () => {
     expect(eventPayload(eventRow(null), { resident: false, viewerId: null }).event.actor_id).toBe(
       null,
     );
+  });
+
+  it('actor_name (D71) is the same for every receiver; null without an actor', () => {
+    const row = eventRow(MEMBER);
+    expect(eventPayload(row, { resident: true }).event.actor_name).toBe('Milo');
+    expect(eventPayload(row, { resident: false, viewerId: null }).event.actor_name).toBe('Milo');
+    expect(eventPayload(row, { resident: false, viewerId: MEMBER }).event.actor_name).toBe('Milo');
+    expect(eventPayload(eventRow(null), { resident: true }).event.actor_name).toBeNull();
+  });
+
+  it('a member gets exactly the contract keys, in order (D71 actor_name)', () => {
+    const payload = eventPayload(eventRow(MEMBER, detail), { resident: false, viewerId: null });
+    expect(Object.keys(payload.event)).toEqual(
+      REALTIME_CONTRACT.server_events['incident.event'].event_keys,
+    );
+    expect(Object.keys(payload.event)).toEqual([
+      'id',
+      'event_type',
+      'occurred_at',
+      'actor_id',
+      'actor_name',
+      'detail',
+    ]);
   });
 
   it('does not change the row it was given', () => {

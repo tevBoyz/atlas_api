@@ -41,6 +41,9 @@ describe('IncidentEventService (API-100-22)', () => {
       'location_sharing_ended',
       'location_sharing_started',
       'renotified',
+      // SCRUM-60/61 (D71): may repeat; migration 0021 widened incident_events_type_allowed.
+      'responder_acknowledged',
+      'responder_status',
       'safe_recorded',
       // SCRUM-44/59 (D70): may repeat; migration 0020 widened incident_events_type_allowed.
       'status_update',
@@ -104,6 +107,27 @@ describe('IncidentEventService (API-100-22)', () => {
     );
     expect(queries[0].params[3]).toBe('{"resolved_reason":"safe"}');
     expect(queries[1].sql).toContain("jsonb_build_object('recipient_count', $4::int)");
+  });
+
+  it('afterEarlierEvents (D71): stamps clock_timestamp(), so it sorts after this transaction', async () => {
+    const { tx, queries } = fakeTx();
+    await service().record(
+      tx,
+      INCIDENT_ID,
+      'responder_status',
+      ACTOR_ID,
+      { status: 'unable' },
+      {
+        afterEarlierEvents: true,
+      },
+    );
+    await service().record(tx, INCIDENT_ID, 'responder_acknowledged', ACTOR_ID);
+    const later = queries[0].sql.replace(/\s+/g, ' ');
+    expect(later).toContain(
+      'insert into public.incident_events (incident_id, event_type, actor_id, detail, occurred_at)',
+    );
+    expect(later).toContain("coalesce($4::jsonb, '{}'::jsonb), clock_timestamp())");
+    expect(queries[1].sql).not.toContain('clock_timestamp');
   });
 
   it('a skipped repeat returns undefined and is not handed to the hook', async () => {

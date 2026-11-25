@@ -34,7 +34,7 @@ holds; the API accepts Supabase tokens until Phase 6). The generated Dart client
 | `acknowledgeIncident` (`acknowledge_incident`; not called by the app, Epic 5) | `POST /v1/incidents/{id}/acknowledge` (`acknowledgeIncident`) | none | none | 200 DeliveryCounts | `acknowledge_incident:not_authenticated` (401), `:not_found` (404), `:not_open` (409) |
 | `listResponderIncidents` (`list_responder_incidents`) | `GET /v1/responder/incidents` (`listResponderIncidents`) | none | none | 200 array of `{id, resident_name, emergency_type, activated_at, status, sent_at, renotified_at, resolved_at, resolved_reason, auto_closed}` | `list_responder_incidents:not_authenticated` (401) |
 | `getIncidentDetails` (`get_incident_details`) | `GET /v1/incidents/{id}` (`getIncidentDetails`) | none | none | 200 IncidentDetails (19 keys, `share_payload` `{}` when null) | `get_incident_details:not_authenticated` (401), `:not_found` (404, also pre-join) |
-| none today (foundation for SCRUM-60/61/64/82) | `GET /v1/incidents/{id}/events` (`listIncidentEvents`) | none | none | 200 `[{id, event_type, occurred_at, actor_id, detail}]` ordered `occurred_at, id` | `incident_events:not_authenticated` (401), `incident_events:not_found` (404) |
+| none today (foundation for SCRUM-60/61/64/82) | `GET /v1/incidents/{id}/events` (`listIncidentEvents`) | none | none | 200 `[{id, event_type, occurred_at, actor_id, actor_name, detail}]` ordered `occurred_at, id` | `incident_events:not_authenticated` (401), `incident_events:not_found` (404) |
 
 Not in Phase 1: `watchIncidentRow` stays on Supabase Realtime (`postgres_changes` on `incidents`)
 until Phase 4 (API-100-39..43). API writes land in the same table, so that subscription keeps working

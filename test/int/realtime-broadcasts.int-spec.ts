@@ -282,6 +282,8 @@ describe('incident broadcasts (API-100-41)', () => {
         // Live order = insertion order of each write.
         expect(live.map((e) => e.event_type)).toEqual([
           'renotified',
+          // D71 (SCRUM-60/61): the member's first acknowledge.
+          'responder_acknowledged',
           'safe_recorded',
           'location_sharing_ended',
           'closure_notified',

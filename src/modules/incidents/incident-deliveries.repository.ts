@@ -104,8 +104,28 @@ export class IncidentDeliveriesRepository {
   }
 
   /**
+   * D71 lock order: `FOR KEY SHARE` on the caller's profile, then on the incident, taken BEFORE the
+   * delivery row lock by acknowledge and the response. These are the locks the `incident_events`
+   * insert (FKs `actor_id` → profiles, `incident_id` → incidents) takes anyway; taken first, the
+   * order is profile → incident → delivery, the order of submit, re-notify and mark safe, so a
+   * re-notify (incident `FOR UPDATE`, then the delivery rows) cannot deadlock with them. Changes no
+   * result (a missing row locks nothing), only the order.
+   */
+  async keyShareCallerAndIncident(
+    tx: IncidentTransaction,
+    incidentId: string,
+    callerId: string,
+  ): Promise<void> {
+    await tx.execute(sql`
+      select 1 from public.profiles p where p.id = ${callerId}::uuid for key share`);
+    await tx.execute(sql`
+      select 1 from public.incidents rec where rec.id = ${incidentId}::uuid for key share`);
+  }
+
+  /**
    * `select * from incident_deliveries where incident_id = $1 and member_user_id = uid for update`.
-   * The only row lock acknowledge takes. Undefined when the caller has no delivery row.
+   * The only exclusive row lock acknowledge takes (after {@link keyShareCallerAndIncident}). Undefined
+   * when the caller has no delivery row.
    */
   async lockOwnDelivery(
     tx: IncidentTransaction,
