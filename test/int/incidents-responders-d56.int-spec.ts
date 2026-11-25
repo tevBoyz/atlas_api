@@ -43,6 +43,8 @@ const KEYS = [
   'status_at',
   'is_me',
 ];
+/** SCRUM-65 (D73): the resident's rows also carry the delivery status, after `is_me`. */
+const RESIDENT_KEYS = [...KEYS, 'delivery_status', 'delivery_at', 'delivery_failed_reason'];
 
 const mask = (id: string) => `${id.slice(0, 4)}****-****-****-****-********${id.slice(-4)}`;
 
@@ -417,7 +419,7 @@ describe('responder status (SCRUM-49/50/51/55, D56)', () => {
       const asResident = await responders(s.resident.id, s.incidentId);
       expect(asResident.statusCode).toBe(200);
       const list = asResident.json<Body[]>();
-      expect(list.map((r) => Object.keys(r))).toEqual(list.map(() => KEYS));
+      expect(list.map((r) => Object.keys(r))).toEqual(list.map(() => RESIDENT_KEYS));
       expect(list.map((r) => [r.user_id, r.status, r.is_me])).toEqual([
         [b.id, 'responding', false],
         [a.id, 'responding', false],
@@ -433,6 +435,17 @@ describe('responder status (SCRUM-49/50/51/55, D56)', () => {
       });
       for (const r of list.slice(0, 4)) expect(r.status_at).toMatch(UTC_TEXT);
       expect(JSON.stringify(list)).not.toMatch(/phone|email|\+1/);
+      // SCRUM-65 (D73), no worker in this suite: the alert's outbox row is not fanned out, so the
+      // notified members are "sent"; Eve's stray row was never in an alert notice: failed no_device.
+      expect(list.map((r) => [r.delivery_status, r.delivery_at, r.delivery_failed_reason])).toEqual(
+        [
+          ['sent', null, null],
+          ['sent', null, null],
+          ['sent', null, null],
+          ['sent', null, null],
+          ['failed', null, 'no_device'],
+        ],
+      );
 
       const asMember = (await responders(d.id, s.incidentId)).json<Body[]>();
       expect(asMember.map((r) => [r.user_id, r.is_me])).toEqual([
@@ -449,6 +462,9 @@ describe('responder status (SCRUM-49/50/51/55, D56)', () => {
           const rest = { ...r };
           delete rest.user_id;
           delete rest.is_me;
+          delete rest.delivery_status;
+          delete rest.delivery_at;
+          delete rest.delivery_failed_reason;
           return rest;
         });
       expect(strip(asMember)).toEqual(strip(list));

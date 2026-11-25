@@ -6,6 +6,11 @@ import { DatabaseService } from '../../db/database.service';
 import type { Channel, SendErrorCode } from './channels/channel.types';
 import { pushTokenHash } from './device-input';
 
+/** The columns of a {@link DeliveryFinalOutcome}, returned by the status writes. */
+const FINAL_RETURNING = sql`returning id::text as delivery_id,
+                                      recipient_user_id::text as recipient_user_id, channel,
+                                      status, error_code, attempts`;
+
 /** Why a delivery was not attempted (`status = 'skipped'`). */
 export const SKIP_REASONS = [
   'channel_disabled',
@@ -23,11 +28,27 @@ export interface DeliveryRecipient {
   eligible: boolean;
 }
 
+/**
+ * SCRUM-67 (D73): a row that reached its final state (`sent` / `delivered` / `failed` / `skipped`),
+ * as the worker logs it. Ids, codes and counts only: never a token, address, phone or email.
+ */
+export interface DeliveryFinalOutcome extends Record<string, unknown> {
+  delivery_id: string;
+  recipient_user_id: string;
+  channel: Channel;
+  status: Exclude<DeliveryStatus, 'queued'>;
+  error_code: string | null;
+  attempts: number;
+}
+
 /** What the sender needs for one delivery. The token and addresses never leave the worker. */
 export interface DeliveryToSend extends Record<string, unknown> {
   id: string;
   status: DeliveryStatus;
   channel: Channel;
+  /** The incident of the row (null for a test alert). */
+  incident_id: string | null;
+  recipient_user_id: string;
   device_id: string | null;
   topic: string;
   payload: Record<string, unknown>;
@@ -54,10 +75,12 @@ export class DeliveriesRepository {
    * (BullMQ stalled-job recovery) and finds its row still `queued`: at worst one repeated push
    * (at-least-once). Domain writes (incidents, the outbox) keep the default.
    */
-  private write(statement: SQL): Promise<unknown> {
+  private write<T extends Record<string, unknown> = Record<string, unknown>>(
+    statement: SQL,
+  ): Promise<T[]> {
     return this.database.db.transaction(async (tx) => {
       await tx.execute(sql`set local synchronous_commit = off`);
-      return tx.execute(statement);
+      return (await tx.execute<T>(statement)).rows as T[];
     });
   }
 
@@ -72,6 +95,8 @@ export class DeliveriesRepository {
    * - a recipient who is no longer eligible → one `skipped` row `not_eligible` per channel.
    * `preferences` records the recipient's `alert_*_enabled` flags (recorded, not enforced, D4).
    * Idempotent (`on conflict do nothing`, unique per outbox, recipient, channel and device).
+   * A `skipped` row is final at once (`final_at` = now, SCRUM-67); returns the skipped rows THIS call
+   * inserted (a repeated run returns none), for the outcome log.
    */
   async fanOut(input: {
     outboxId: string;
@@ -81,9 +106,9 @@ export class DeliveriesRepository {
     recipients: readonly DeliveryRecipient[];
     channels: readonly Channel[];
     enabled: Readonly<Record<Channel, boolean>>;
-  }): Promise<void> {
-    if (input.recipients.length === 0 || input.channels.length === 0) return;
-    await this.write(sql`
+  }): Promise<DeliveryFinalOutcome[]> {
+    if (input.recipients.length === 0 || input.channels.length === 0) return [];
+    const inserted = await this.write<DeliveryFinalOutcome>(sql`
       with recipients as (
         select distinct on (r.user_id) r.user_id, r.eligible
           from jsonb_to_recordset(${JSON.stringify(input.recipients)}::jsonb)
@@ -167,13 +192,16 @@ export class DeliveriesRepository {
       )
       insert into public.notification_deliveries (
         outbox_id, incident_id, test_alert_id, recipient_user_id, channel, device_id, status,
-        error_code, preferences
+        error_code, preferences, final_at
       )
       select ${input.outboxId}::uuid, ${input.incidentId}::uuid,
              ${input.testAlertId ?? null}::uuid, t.user_id, t.channel, t.device_id,
-             case when t.skip is null then 'queued' else 'skipped' end, t.skip, t.preferences
+             case when t.skip is null then 'queued' else 'skipped' end, t.skip, t.preferences,
+             case when t.skip is not null then now() end
         from targets t
-      on conflict do nothing`);
+      on conflict do nothing
+      ${FINAL_RETURNING}`);
+    return inserted.filter((row) => row.status === 'skipped');
   }
 
   /** The `queued` rows of an outbox row (after fan-out; also those of an earlier partial run). */
@@ -190,6 +218,7 @@ export class DeliveriesRepository {
   async loadForSend(id: string): Promise<DeliveryToSend | undefined> {
     const result = await this.database.db.execute<DeliveryToSend>(sql`
       select d.id::text as id, d.status, d.channel, d.device_id::text as device_id,
+             d.incident_id::text as incident_id, d.recipient_user_id::text as recipient_user_id,
              o.topic, o.payload,
              case when dv.revoked_at is null then dv.push_provider end as push_provider,
              case when dv.revoked_at is null then dv.push_token end as push_token,
@@ -205,44 +234,64 @@ export class DeliveriesRepository {
     return result.rows[0];
   }
 
-  /** `sent` / `delivered` with the provider's message id. */
+  /**
+   * `sent` / `delivered` with the provider's message id; `final_at` = `sent_at` (SCRUM-67). Returns
+   * the final row, or undefined when it was not `queued` any more (nothing written).
+   */
   async markSent(
     id: string,
     status: 'sent' | 'delivered',
     providerMessageId: string | null,
-  ): Promise<void> {
-    await this.write(sql`
+  ): Promise<DeliveryFinalOutcome | undefined> {
+    const rows = await this.write<DeliveryFinalOutcome>(sql`
       update public.notification_deliveries
          set status = ${status}::text,
              provider_message_id = ${providerMessageId}::text,
              error_code = null,
              attempts = attempts + 1,
              sent_at = now(),
+             final_at = now(),
              updated_at = now()
        where id = ${id}::uuid
-         and status = 'queued'`);
+         and status = 'queued'
+      ${FINAL_RETURNING}`);
+    return rows[0];
   }
 
-  /** A failed attempt. `final` writes `failed`; otherwise the row stays `queued` (to be retried). */
-  async recordFailure(id: string, errorCode: SendErrorCode, final: boolean): Promise<void> {
-    await this.write(sql`
+  /**
+   * A failed attempt. `final` writes `failed` with `final_at` = now (SCRUM-67); otherwise the row
+   * stays `queued` (to be retried). Returns the row when it became final now.
+   */
+  async recordFailure(
+    id: string,
+    errorCode: SendErrorCode,
+    final: boolean,
+  ): Promise<DeliveryFinalOutcome | undefined> {
+    const rows = await this.write<DeliveryFinalOutcome>(sql`
       update public.notification_deliveries
          set status = case when ${final}::boolean then 'failed' else 'queued' end,
              error_code = ${errorCode}::text,
              attempts = attempts + 1,
+             final_at = case when ${final}::boolean then now() end,
              updated_at = now()
        where id = ${id}::uuid
-         and status = 'queued'`);
+         and status = 'queued'
+      ${FINAL_RETURNING}`);
+    return rows.find((row) => row.status === 'failed');
   }
 
-  async markSkipped(id: string, reason: SkipReason): Promise<void> {
-    await this.write(sql`
+  /** `skipped` with its reason and `final_at` = now (SCRUM-67); the row, when written now. */
+  async markSkipped(id: string, reason: SkipReason): Promise<DeliveryFinalOutcome | undefined> {
+    const rows = await this.write<DeliveryFinalOutcome>(sql`
       update public.notification_deliveries
          set status = 'skipped',
              error_code = ${reason}::text,
+             final_at = now(),
              updated_at = now()
        where id = ${id}::uuid
-         and status = 'queued'`);
+         and status = 'queued'
+      ${FINAL_RETURNING}`);
+    return rows[0];
   }
 
   /**

@@ -70,8 +70,9 @@ describe('stage 7.6: db/rollback/0012_down.sql restores the pre-0012 state (D42)
     // revoke every Supabase role grant; 0015, D56: two columns only; 0016, D59/D60: one column and
     // one app_config row; 0017, D61/D62: one column, widened checks, an index and two app_config
     // rows; 0018, D66-D68: two locked-down tables, one column, a check, an index and two app_config
-    // rows; 0019, D69: one nullable column; 0020, D70, and 0021, D71: one widened check each), so
-    // the snapshot comparison below is unchanged, and they stay recorded through the rollback.
+    // rows; 0019, D69: one nullable column; 0020, D70, and 0021, D71: one widened check each; 0022,
+    // D73: two nullable columns, a check and a trigger whose function no Supabase role may execute),
+    // so the snapshot comparison below is unchanged, and they stay recorded through the rollback.
     expect(await runMigrations(client, resolve('db/migrations'), silent)).toEqual([
       '0012_retire_supabase_app_paths',
       '0013_membership_end_status',
@@ -83,6 +84,7 @@ describe('stage 7.6: db/rollback/0012_down.sql restores the pre-0012 state (D42)
       '0019_user_devices_push_token_invalid_hash',
       '0020_incident_events_status_update',
       '0021_incident_events_responder',
+      '0022_notification_deliveries_final_at',
     ]);
     expect(await supabasePrivilegesLeft(client)).toEqual([]);
     expect(await realtimeMembersLeft(client)).toEqual([]);

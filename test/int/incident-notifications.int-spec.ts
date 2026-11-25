@@ -194,7 +194,12 @@ describe('incident notifications, channels disabled (the default) (API-100-48)',
     expect((await markSafe(app, resident.id, incidentId)).statusCode).toBe(200);
     expect((await markSafe(app, resident.id, incidentId)).statusCode).toBe(200);
 
-    const rows = await outboxOf(client, incidentId);
+    // SCRUM-71 (D73): the resident's "alert not delivered" notices (push is off here, so every
+    // member is failed no_device) are written by the worker at its own pace: covered by
+    // alert-delivery-scrum65-71.int-spec.ts, left out here.
+    const rows = (await outboxOf(client, incidentId)).filter(
+      (r) => r.topic !== 'incident.delivery_failed',
+    );
     expect(rows.map((r) => r.topic)).toEqual([
       'incident.created',
       'incident.renotified',

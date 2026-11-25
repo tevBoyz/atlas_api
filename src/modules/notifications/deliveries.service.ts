@@ -22,8 +22,10 @@ import {
   type SendResult,
 } from './channels/channel.types';
 import { pushMessageOf, pushText } from './channels/push-content';
+import { AlertDeliveryOutcomes, isAlertDeliveryTopic } from './alert-delivery-outcomes';
 import {
   DeliveriesRepository,
+  type DeliveryFinalOutcome,
   type DeliveryRecipient,
   type DeliveryToSend,
 } from './deliveries.repository';
@@ -48,6 +50,7 @@ export class DeliveryPlanner {
     private readonly queues: JobQueues,
     private readonly channels: ChannelSenders,
     config: ApiConfigService,
+    @Inject(ROOT_LOGGER) private readonly logger: Logger,
   ) {
     // AC3: up to NOTIFICATIONS_RETRY_ATTEMPTS retries (default 3) after the first attempt,
     // exponential backoff from NOTIFICATIONS_RETRY_BASE_DELAY_MS (2 s, 4 s, 8 s by default).
@@ -57,7 +60,8 @@ export class DeliveryPlanner {
 
   /**
    * Returns how many delivery jobs were (re)queued. The rows belong to `incidentId` (incident
-   * notices) or to `testAlertId` (SCRUM-35 test alerts), never both.
+   * notices) or to `testAlertId` (SCRUM-35 test alerts), never both. Each row skipped at fan-out is
+   * final at once and logged as one outcome line (SCRUM-67, {@link logFinalOutcome}).
    */
   async fanOut(
     row: OutboxRow,
@@ -66,7 +70,7 @@ export class DeliveryPlanner {
     channels: readonly Channel[],
     testAlertId: string | null = null,
   ): Promise<number> {
-    await this.repository.fanOut({
+    const skipped = await this.repository.fanOut({
       outboxId: row.id,
       incidentId,
       testAlertId,
@@ -78,6 +82,7 @@ export class DeliveryPlanner {
         email: this.channels.isEnabled('email'),
       },
     });
+    for (const outcome of skipped) logFinalOutcome(this.logger, outcome, row.topic, incidentId);
     const queued = await this.repository.queuedIds(row.id);
     await Promise.all(
       queued.map((delivery) =>
@@ -98,6 +103,32 @@ export class DeliveryPlanner {
   }
 }
 
+/**
+ * SCRUM-67 (D73): ONE structured info line per final outcome of a delivery row (sent, delivered,
+ * failed after the retries, or skipped), with exactly these keys: `delivery_id`, `topic` (the outbox
+ * kind), `channel`, `status`, `error_code`, `attempts`, `incident_id` (null for a test alert). Never
+ * a token, address, phone, email, name or text.
+ */
+export function logFinalOutcome(
+  logger: Logger,
+  outcome: DeliveryFinalOutcome,
+  topic: string,
+  incidentId: string | null,
+): void {
+  logger.info(
+    {
+      delivery_id: outcome.delivery_id,
+      topic,
+      channel: outcome.channel,
+      status: outcome.status,
+      error_code: outcome.error_code,
+      attempts: outcome.attempts,
+      incident_id: incidentId,
+    },
+    'delivery outcome',
+  );
+}
+
 /** `+` and digits: `auth.users.phone` is stored without the `+` (an API phone has it, D47). */
 function e164(phone: string): string {
   const digits = phone.replace(/\D/g, '');
@@ -116,6 +147,12 @@ function e164(phone: string): string {
  * - Other permanent failures: `failed` at once. Transient ones: retried with exponential backoff
  *   (AC3); the last attempt writes `failed` with the last `error_code`.
  *
+ * - Every final outcome is logged once ({@link logFinalOutcome}, SCRUM-67). A row of an alert notice
+ *   (`incident.created` / `incident.renotified`) then re-checks its member's delivery status
+ *   ({@link AlertDeliveryOutcomes}, SCRUM-65 / 71): the resident's responder row is refreshed and a
+ *   member who is now `failed` is reported to the resident once. A repeat of a job whose alert row is
+ *   already final re-runs that check (idempotent), so a check lost to an error is retried.
+ *
  * Errors thrown to BullMQ carry an error code only (never a token, address or SQL parameter).
  */
 @Injectable()
@@ -126,14 +163,20 @@ export class DeliverySender implements JobProcessor {
     private readonly repository: DeliveriesRepository,
     private readonly channels: ChannelSenders,
     @Inject(ROOT_LOGGER) private readonly logger: Logger,
+    private readonly alerts: AlertDeliveryOutcomes,
   ) {}
 
   async process(job: Job): Promise<void> {
     const { delivery_id: id } = job.data as DeliveryJobData;
     const delivery = await this.guard(() => this.repository.loadForSend(id));
-    if (!delivery || delivery.status !== 'queued') return;
+    if (!delivery) return;
+    if (delivery.status !== 'queued') {
+      await this.afterFinal(delivery, undefined);
+      return;
+    }
     if (!this.channels.isEnabled(delivery.channel)) {
-      await this.guard(() => this.repository.markSkipped(id, 'channel_disabled'));
+      const outcome = await this.guard(() => this.repository.markSkipped(id, 'channel_disabled'));
+      await this.afterFinal(delivery, outcome);
       return;
     }
 
@@ -146,14 +189,16 @@ export class DeliverySender implements JobProcessor {
     }
     if ('skip' in result) {
       const reason = result.skip;
-      await this.guard(() => this.repository.markSkipped(id, reason));
+      const outcome = await this.guard(() => this.repository.markSkipped(id, reason));
+      await this.afterFinal(delivery, outcome);
       return;
     }
     const status = result.status;
     if (status === 'sent' || status === 'delivered') {
       const providerId = result.provider_message_id;
-      await this.guard(() => this.repository.markSent(id, status, providerId));
-      this.logAccepted(delivery);
+      const outcome = await this.guard(() => this.repository.markSent(id, status, providerId));
+      if (outcome) this.logAccepted(delivery);
+      await this.afterFinal(delivery, outcome);
       return;
     }
 
@@ -168,7 +213,8 @@ export class DeliverySender implements JobProcessor {
     }
     const permanent = isPermanentFailure(code);
     const final = permanent || job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
-    await this.guard(() => this.repository.recordFailure(id, code, final));
+    const outcome = await this.guard(() => this.repository.recordFailure(id, code, final));
+    if (final) await this.afterFinal(delivery, outcome);
     if (permanent) throw new PermanentJobFailure(code);
     throw new JobFailedError(code);
   }
@@ -226,6 +272,23 @@ export class DeliverySender implements JobProcessor {
         latency_ms: Number.isNaN(at) ? null : Math.max(0, Date.now() - at),
       },
       'delivery accepted by the provider',
+    );
+  }
+
+  /**
+   * A row is final: log its outcome when this job wrote it (`outcome`), then, for a row of an alert
+   * notice, re-check the member's delivery status (SCRUM-65 / 71). A failure of that check becomes a
+   * code-only error (the job is retried; the retry finds the row final and runs the check again).
+   */
+  private async afterFinal(
+    delivery: DeliveryToSend,
+    outcome: DeliveryFinalOutcome | undefined,
+  ): Promise<void> {
+    if (outcome) logFinalOutcome(this.logger, outcome, delivery.topic, delivery.incident_id);
+    const incidentId = delivery.incident_id;
+    if (!incidentId || !isAlertDeliveryTopic(delivery.topic)) return;
+    await this.guard(() =>
+      this.alerts.afterMemberOutcome(incidentId, [delivery.recipient_user_id]),
     );
   }
 

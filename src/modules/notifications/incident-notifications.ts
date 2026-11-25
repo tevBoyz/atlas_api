@@ -15,7 +15,8 @@ import type {
   IncidentEventRecordedEvent,
   IncidentPostCommitHook,
 } from '../incidents/incident-post-commit';
-import type { Channel } from './channels/channel.types';
+import { AlertDeliveryOutcomes, isAlertDeliveryTopic } from './alert-delivery-outcomes';
+import { type Channel, DELIVERY_FAILED_TOPIC } from './channels/channel.types';
 import { DeliveryPlanner } from './deliveries.service';
 
 /**
@@ -185,6 +186,11 @@ export class IncidentNotificationsHook implements IncidentPostCommitHook {
  * `skipped` `not_eligible`. Preferences are recorded on the rows but not enforced: an SOS always
  * goes through (D4). With the channel disabled (the default) every row is `skipped`
  * `channel_disabled`.
+ *
+ * SCRUM-65 / 71 (D73): after an ALERT notice (`incident.created` / `incident.renotified`) was fanned
+ * out, each eligible recipient's delivery status is re-checked ({@link AlertDeliveryOutcomes}): rows
+ * skipped at fan-out (no device, push off) are final at once, so such a member is `failed` now; a
+ * re-notify's new `queued` rows turn `failed` back into `sent`.
  */
 @Injectable()
 export class IncidentNotificationsHandler implements OutboxTopicHandler {
@@ -193,6 +199,7 @@ export class IncidentNotificationsHandler implements OutboxTopicHandler {
   constructor(
     private readonly database: DatabaseService,
     private readonly planner: DeliveryPlanner,
+    private readonly alerts: AlertDeliveryOutcomes,
   ) {}
 
   async handle(row: OutboxRow): Promise<void> {
@@ -214,6 +221,39 @@ export class IncidentNotificationsHandler implements OutboxTopicHandler {
                         where rec.id = ${incidentId}::uuid), false) as eligible
         from (select distinct value::uuid as user_id
                 from jsonb_array_elements_text(${JSON.stringify(recipients)}::jsonb)) as r`);
+    await this.planner.fanOut(row, incidentId, result.rows, INCIDENT_CHANNELS);
+    if (isAlertDeliveryTopic(row.topic)) {
+      const eligible = result.rows.filter((r) => r.eligible).map((r) => r.user_id);
+      await this.alerts.afterMemberOutcome(incidentId, eligible);
+    }
+  }
+}
+
+/**
+ * Worker side of the resident's "alert not delivered" notice (SCRUM-71, D73; topic
+ * `incident.delivery_failed`, written by {@link AlertDeliveryOutcomes}): one push to the resident's
+ * devices (every device with a token, as every notice), on the incident channel (D26: push only).
+ * The only recipient is the incident's resident, read again now; they are eligible only while the
+ * incident is still `active` (a notice is never sent after the alert ended: recorded `skipped`
+ * `not_eligible`). Its rows never count for a member's delivery status (not an alert topic).
+ */
+@Injectable()
+export class DeliveryFailedNotificationsHandler implements OutboxTopicHandler {
+  readonly topics = [DELIVERY_FAILED_TOPIC] as const;
+
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly planner: DeliveryPlanner,
+  ) {}
+
+  async handle(row: OutboxRow): Promise<void> {
+    const incidentId = row.aggregate_id;
+    if (!incidentId) return;
+    const result = await this.database.db.execute<{ user_id: string; eligible: boolean }>(sql`
+      select rec.resident_id::text as user_id, rec.status = 'active' as eligible
+        from public.incidents rec
+       where rec.id = ${incidentId}::uuid`);
+    if (result.rows.length === 0) return;
     await this.planner.fanOut(row, incidentId, result.rows, INCIDENT_CHANNELS);
   }
 }

@@ -176,12 +176,41 @@ export const REALTIME_CONTRACT = {
         'status_at',
         'is_me',
       ],
+      resident_responder_keys: [
+        'user_id',
+        'display_name',
+        'avatar_url',
+        'status',
+        'acknowledged_at',
+        'status_at',
+        'is_me',
+        'delivery_status',
+        'delivery_at',
+        'delivery_failed_reason',
+      ],
       note:
         'SCRUM-49/50/51/55 (D56): sent after a member acknowledged for the first time or set or ' +
         'changed their response (responding / unable). responder is the row of that member exactly ' +
         'as GET /v1/incidents/{id}/responders shows it to the receiver; replace the row with the ' +
         'same user_id (the masked id is stable per member). Not sent for a repeat that changed ' +
-        'nothing. After a reconnect, re-fetch the list over REST.',
+        "nothing. After a reconnect, re-fetch the list over REST. SCRUM-65 (D73): the resident's " +
+        'copy (room incident:{id}:resident) has resident_responder_keys (the 3 delivery keys after ' +
+        'is_me); members get exactly responder_keys. The resident also gets it (alone) whenever a ' +
+        "member's delivery status of the alert may have changed (sent / delivered / failed).",
+    },
+    [SERVER_EVENTS.deliveryFailed]: {
+      room: "incident:{id}:resident (the resident's sockets of the incident only; never a member)",
+      payload: ['incident_id', 'member', 'reason', 'occurred_at'],
+      member_keys: ['user_id', 'display_name'],
+      note:
+        'SCRUM-71 (D73): a member did not receive the alert: every push attempt failed after the ' +
+        'retries (reason "failed"), or nothing could be sent (reason "no_device": no device with ' +
+        'notifications, or push switched off). Sent once per member per incident (a later failure ' +
+        'after a re-notify is not reported again), only while the incident is active. member.user_id ' +
+        "is the full id (as on the resident's responder list). The resident also gets a push " +
+        '(topic incident.delivery_failed, title "Alert not delivered", body "<display name> ' +
+        'didn\'t receive your alert"). Not replayed after a reconnect: the responder list ' +
+        '(delivery_status) is the state.',
     },
     [SERVER_EVENTS.membershipEnded]: {
       room: 'user:{id} of the member who was removed or left (all their sockets; D49)',

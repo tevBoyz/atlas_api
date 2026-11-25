@@ -3,6 +3,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { maskActorId } from '../modules/incidents/incident-actor-mask';
 import { type ResponderViewer, responderView } from '../modules/incidents/incident-responder-view';
 import { RESIDENT_ONLY_DETAIL_KEYS } from '../modules/incidents/incident-events.service';
+import type { MemberDeliveryFailedReason } from '../modules/incidents/incident-delivery-status';
 import type {
   IncidentClosedEvent,
   IncidentDeliveryCountsEvent,
@@ -152,6 +153,29 @@ export function respondersPayload(state: IncidentResponderState, viewer: Respond
   };
 }
 
+/** SCRUM-71 (D73): what `incident.delivery_failed` reports (the resident is told once per member). */
+export interface IncidentDeliveryFailedEvent {
+  incident_id: string;
+  resident_id: string;
+  member_user_id: string;
+  display_name: string;
+  reason: MemberDeliveryFailedReason;
+  occurred_at: string;
+}
+
+/**
+ * `incident.delivery_failed` (SCRUM-71, D73), to the resident only: which member did not receive the
+ * alert (full user id, as on the resident's responder list, and the display name) and why.
+ */
+export function deliveryFailedPayload(event: IncidentDeliveryFailedEvent) {
+  return {
+    incident_id: event.incident_id,
+    member: { user_id: event.member_user_id, display_name: event.display_name },
+    reason: event.reason,
+    occurred_at: event.occurred_at,
+  };
+}
+
 /**
  * `incident.event` as one receiver sees it, with the rules of `GET /v1/incidents/{id}/events`:
  * the resident gets the row as stored; anyone else never gets `recipient_ids` (D3) and gets
@@ -225,6 +249,9 @@ export function updatePayload(row: IncidentEventRow) {
  * - `incident.responders` (D56) after a member's first acknowledge or a response change, per
  *   receiver the same way: the resident full ids, the member's own sockets their own row in full,
  *   every other member the row with the user id masked;
+ * - `incident.responders` again, to the resident's sockets only, when a member's delivery status of
+ *   the alert may have changed (SCRUM-65, D73; from the worker), and `incident.delivery_failed` to the
+ *   resident's sockets only when a member did not receive the alert (SCRUM-71, D73);
  * - `incident.update` (SCRUM-44/59, D70) to `incident:{id}` after the resident sent a status update
  *   (right after that event's `incident.event`);
  * - `incident.closed` (SCRUM-63) after the close sweeper closed the incident, to the audience of
@@ -370,6 +397,33 @@ export class IncidentBroadcaster implements IncidentPostCommitHook {
       respondersPayload(state, { resident: false, viewerId: member }),
       [residentRoom],
     );
+  }
+
+  /**
+   * SCRUM-65 (D73), from the worker: a member's alert push rows changed (one became final, or a
+   * notice was fanned out), so their delivery status may have changed. The resident's sockets
+   * (`incident:{id}:resident`) get the member's row as the resident sees it (with the delivery
+   * keys). Members get nothing: their view of the row did not change. Nothing when the member is no
+   * longer on the list.
+   */
+  async afterDeliveryStatus(event: { incident_id: string; member_user_id: string }): Promise<void> {
+    const state = await this.reads.responder(event.incident_id, event.member_user_id);
+    if (!state) return;
+    this.gateway.emit(
+      [incidentResidentRoom(state.incident_id)],
+      SERVER_EVENTS.responders,
+      respondersPayload(state, { resident: true }),
+    );
+  }
+
+  /** SCRUM-71 (D73): `incident.delivery_failed` to the resident's sockets of the incident only. */
+  afterDeliveryFailed(event: IncidentDeliveryFailedEvent): Promise<void> {
+    this.gateway.emit(
+      [incidentResidentRoom(event.incident_id)],
+      SERVER_EVENTS.deliveryFailed,
+      deliveryFailedPayload(event),
+    );
+    return Promise.resolve();
   }
 
   async afterEvent(event: IncidentEventRecordedEvent): Promise<void> {

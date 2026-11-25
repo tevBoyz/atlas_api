@@ -213,6 +213,10 @@ export const incidentDeliveries = pgTable(
     acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true, mode: 'string' }),
     responseStatus: text('response_status'),
     responseAt: timestamp('response_at', { withTimezone: true, mode: 'string' }),
+    deliveryFailedNotifiedAt: timestamp('delivery_failed_notified_at', {
+      withTimezone: true,
+      mode: 'string',
+    }),
   },
   (table) => [
     index('incident_deliveries_incident_id_idx').using('btree', table.incidentId.asc().nullsLast()),

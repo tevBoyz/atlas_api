@@ -1,6 +1,7 @@
 import {
   closedPayload,
   deliveryCountsPayload,
+  deliveryFailedPayload,
   eventPayload,
   IncidentBroadcaster,
   incomingPayload,
@@ -81,6 +82,9 @@ function responderState(): IncidentResponderState {
       status: 'responding',
       acknowledged_at: T,
       status_at: T,
+      delivery_status: 'delivered',
+      delivery_at: T,
+      delivery_failed_reason: null,
     },
     occurred_at: T,
   };
@@ -370,6 +374,56 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
       is_me: false,
     });
     expect(sent(2)).toMatchObject({ user_id: MEMBER, is_me: true });
+    // D73: only the resident's copy carries the delivery keys.
+    expect(sent(0)).toMatchObject({ delivery_status: 'delivered', delivery_at: T });
+    expect(sent(1)).not.toHaveProperty('delivery_status');
+    expect(sent(2)).not.toHaveProperty('delivery_status');
+  });
+
+  it("delivery status (D73): the member's row to the resident's sockets only, with the delivery keys", async () => {
+    const { broadcaster, calls, emit, reads } = setup();
+    await broadcaster.afterDeliveryStatus({ incident_id: INCIDENT, member_user_id: MEMBER });
+    expect(reads.responder).toHaveBeenCalledWith(INCIDENT, MEMBER);
+    expect(calls()).toEqual([[[`incident:${INCIDENT}:resident`], 'incident.responders', []]]);
+    expect((emit.mock.calls[0] as [string[], string, unknown])[2]).toEqual({
+      incident_id: INCIDENT,
+      responder: {
+        user_id: MEMBER,
+        display_name: 'Milo',
+        avatar_url: null,
+        status: 'responding',
+        acknowledged_at: T,
+        status_at: T,
+        is_me: false,
+        delivery_status: 'delivered',
+        delivery_at: T,
+        delivery_failed_reason: null,
+      },
+      occurred_at: T,
+    });
+    reads.responder.mockResolvedValue(undefined);
+    emit.mockClear();
+    await broadcaster.afterDeliveryStatus({ incident_id: INCIDENT, member_user_id: MEMBER });
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("delivery failed (D73): incident.delivery_failed to the resident's sockets only", async () => {
+    const { broadcaster, calls, emit } = setup();
+    await broadcaster.afterDeliveryFailed({
+      incident_id: INCIDENT,
+      resident_id: RESIDENT,
+      member_user_id: MEMBER,
+      display_name: 'Milo',
+      reason: 'failed',
+      occurred_at: T,
+    });
+    expect(calls()).toEqual([[[`incident:${INCIDENT}:resident`], 'incident.delivery_failed', []]]);
+    expect((emit.mock.calls[0] as [string[], string, unknown])[2]).toEqual({
+      incident_id: INCIDENT,
+      member: { user_id: MEMBER, display_name: 'Milo' },
+      reason: 'failed',
+      occurred_at: T,
+    });
   });
 
   it('responders (D56): a member no longer on the list emits nothing', async () => {
@@ -449,10 +503,28 @@ describe('the published contract (x-realtime) matches the payloads', () => {
     );
   });
 
-  it('incident.responders', () => {
-    const payload = respondersPayload(responderState(), { resident: true });
-    expect(Object.keys(payload)).toEqual(events['incident.responders'].payload);
-    expect(Object.keys(payload.responder)).toEqual(events['incident.responders'].responder_keys);
+  it('incident.responders: member keys; the resident also the delivery keys (D73)', () => {
+    const member = respondersPayload(responderState(), { resident: false, viewerId: '' });
+    expect(Object.keys(member)).toEqual(events['incident.responders'].payload);
+    expect(Object.keys(member.responder)).toEqual(events['incident.responders'].responder_keys);
+    const resident = respondersPayload(responderState(), { resident: true });
+    expect(Object.keys(resident)).toEqual(events['incident.responders'].payload);
+    expect(Object.keys(resident.responder)).toEqual(
+      events['incident.responders'].resident_responder_keys,
+    );
+  });
+
+  it('incident.delivery_failed (D73)', () => {
+    const payload = deliveryFailedPayload({
+      incident_id: INCIDENT,
+      resident_id: RESIDENT,
+      member_user_id: MEMBER,
+      display_name: 'Milo',
+      reason: 'no_device',
+      occurred_at: T,
+    });
+    expect(Object.keys(payload)).toEqual(events['incident.delivery_failed'].payload);
+    expect(Object.keys(payload.member)).toEqual(events['incident.delivery_failed'].member_keys);
   });
 
   it('incident.update', () => {

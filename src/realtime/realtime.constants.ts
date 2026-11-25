@@ -43,6 +43,11 @@ export const SERVER_EVENTS = {
   sharedInfoUpdated: 'incident.shared_info_updated',
   /** One member's responder row changed: acknowledged, responding or unable (D56). */
   responders: 'incident.responders',
+  /**
+   * To the resident's sockets of the incident only: a member did not receive the alert, after the
+   * retries or because nothing could be sent (SCRUM-71, D73). Once per member per incident.
+   */
+  deliveryFailed: 'incident.delivery_failed',
   /** The resident sent a status update: a quick preset or free text (SCRUM-44/59, D70). */
   update: 'incident.update',
   /** The incident became Closed: after the wrap-up, or automatically after inactivity (D61, D62). */

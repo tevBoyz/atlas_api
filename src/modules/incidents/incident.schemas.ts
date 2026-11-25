@@ -307,8 +307,9 @@ export const incidentResponseRequestSchema = z.object({
 
 /**
  * One notified member on the responder list (SCRUM-49/50/51/55, D56), and the body of
- * `POST /v1/incidents/{id}/response` (the caller's own row). Exactly these 7 keys: never a phone,
- * email or other profile field.
+ * `POST /v1/incidents/{id}/response` (the caller's own row). A member gets exactly the 7 keys; the
+ * resident also gets the 3 delivery keys (SCRUM-65, D73). Never a phone, email or other profile
+ * field.
  */
 export const responderSchema = componentSchema(
   'Responder',
@@ -346,6 +347,30 @@ export const responderSchema = componentSchema(
         'When the current status was set: the response time for responding / unable, the acknowledge time for acknowledged, null for no_response.',
       ),
     is_me: z.boolean().describe("True on the caller's own row."),
+    delivery_status: z
+      .enum(['sent', 'delivered', 'failed'])
+      .optional()
+      .describe(
+        "RESIDENT ONLY (SCRUM-65, D73; absent on a member's rows): the alert's delivery to this member. " +
+          'delivered = the push service accepted the alert (or a re-notify) for at least one of their ' +
+          'devices; sent = still being sent or retried; failed = every attempt failed after its retries, ' +
+          'or nothing could be sent (no device with notifications, push switched off). A re-notify ' +
+          'recomputes it (failed can become delivered).',
+      ),
+    delivery_at: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        'RESIDENT ONLY (D73): delivered = the first acceptance; failed = when the last attempt became final (null when nothing was ever sent); sent = null.',
+      ),
+    delivery_failed_reason: z
+      .enum(['no_device', 'failed'])
+      .nullable()
+      .optional()
+      .describe(
+        'RESIDENT ONLY (D73): failed = the push service did not accept it after the retries; no_device = nothing could be sent (no device with notifications or push switched off); null unless delivery_status is failed.',
+      ),
   }),
 );
 

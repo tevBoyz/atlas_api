@@ -175,6 +175,8 @@ export 'models/profile_setup_result_member_status.dart';
 export 'models/readiness_unavailable_failed.dart';
 export 'models/recent_incident_emergency_type.dart';
 export 'models/recent_incident_status.dart';
+export 'models/responder_delivery_failed_reason.dart';
+export 'models/responder_delivery_status.dart';
 export 'models/responder_status.dart';
 export 'models/responder_incident_emergency_type.dart';
 export 'models/responder_incident_status.dart';

@@ -153,8 +153,13 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
     expect(latency[0].latency_ms as number).toBeLessThan(5_000);
     // The outbox job (job id = outbox id) and the delivery job (job id = delivery id) completed.
     const queues = app.get(JobQueues);
-    expect(await (await queues.queue(OUTBOX_QUEUE).getJob(sent.outbox_id))?.getState()).toBe(
-      'completed',
+    // SCRUM-65/71: after its fan-out the outbox job re-checks each member's delivery status, so it
+    // may still be finishing when the first delivery is already sent.
+    await waitFor(
+      async () =>
+        (await (await queues.queue(OUTBOX_QUEUE).getJob(sent.outbox_id))?.getState()) ===
+        'completed',
+      10_000,
     );
     expect(await (await queues.queue(DELIVERY_QUEUE).getJob(sent.id))?.getState()).toBe(
       'completed',
@@ -174,9 +179,11 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
     expect(took).toBeGreaterThanOrEqual(14_000 - 500);
     expect(took).toBeLessThan(60_000);
     expect(push().calls.filter((c) => c.token === failingToken).length).toBeGreaterThanOrEqual(4);
-    const logged = workerLogs.lines
-      .filter((line) => line.job_id === failed!.id)
-      .map((line) => line.msg);
+    // The row is final before the job's last error is logged (SCRUM-65/71: the member's delivery
+    // status is re-checked in between), so wait for the fourth line.
+    const jobLines = () => workerLogs.lines.filter((line) => line.job_id === failed!.id);
+    await waitFor(() => jobLines().length >= 4, 10_000);
+    const logged = jobLines().map((line) => line.msg);
     expect(logged).toEqual([
       'job failed, will retry',
       'job failed, will retry',

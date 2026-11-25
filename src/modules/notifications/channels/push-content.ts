@@ -1,4 +1,7 @@
 import {
+  DELIVERY_FAILED_TOPIC,
+  type DeliveryFailedPushMessage,
+  isDeliveryFailedMessage,
   isStatusUpdateMessage,
   isTestAlertMessage,
   type PushMessage,
@@ -16,7 +19,8 @@ import {
  * whatever else the payload holds, and only when they have the expected type: for an incident the
  * five incident values; for a status update (SCRUM-44/59, D70) the incident id, the resident's name,
  * the time and the preset or the text; for a test alert (SCRUM-35, D67) the test alert id, the
- * owner's name and the time.
+ * owner's name and the time; for the resident's "alert not delivered" notice (SCRUM-71, D73) the
+ * incident id and the member's display name.
  */
 export function pushMessageOf(
   topic: string,
@@ -36,6 +40,13 @@ export function pushMessageOf(
   }
   const incidentId = text(payload.incident_id);
   if (!incidentId) return undefined;
+  if (topic === DELIVERY_FAILED_TOPIC) {
+    return {
+      topic: DELIVERY_FAILED_TOPIC,
+      incident_id: incidentId,
+      member_name: text(payload.member_name),
+    };
+  }
   if (topic === STATUS_UPDATE_TOPIC) {
     // D70: exactly one of a known preset or the free text.
     const preset = (STATUS_UPDATE_PRESETS as readonly unknown[]).includes(payload.preset)
@@ -118,6 +129,7 @@ export function pushText(
 ): { title: string; body: string } {
   if (isTestAlertMessage(message)) return testAlertText(message, timeZone);
   if (isStatusUpdateMessage(message)) return statusUpdateText(message, timeZone);
+  if (isDeliveryFailedMessage(message)) return deliveryFailedText(message);
   const title = message.resident_name ?? 'Atlas';
   const type = message.emergency_type
     ? (TYPE_LABELS[message.emergency_type] ?? 'Emergency')
@@ -177,6 +189,22 @@ function statusUpdateText(
   return { title: message.resident_name ?? 'Atlas', body: time ? `${body} · ${time}` : body };
 }
 
+/** SCRUM-71 (D73): the title of the resident's "alert not delivered" push. */
+export const DELIVERY_FAILED_TITLE = 'Alert not delivered';
+/** SCRUM-71 (D73): the member in the body when their display name is blank. */
+export const DELIVERY_FAILED_FALLBACK_MEMBER = 'A Safety Circle member';
+
+/**
+ * SCRUM-71 (D73): `Alert not delivered` / `<display name> didn't receive your alert`. No time, no
+ * other personal data.
+ */
+function deliveryFailedText(message: DeliveryFailedPushMessage): { title: string; body: string } {
+  return {
+    title: DELIVERY_FAILED_TITLE,
+    body: `${message.member_name ?? DELIVERY_FAILED_FALLBACK_MEMBER} didn't receive your alert`,
+  };
+}
+
 /** SCRUM-35 (D67): the title of every test-alert notice. */
 export const TEST_ALERT_TITLE = 'TEST ALERT — NOT AN EMERGENCY';
 /** SCRUM-35 (D67): the owner name in the body when the owner's profile name is blank. */
@@ -198,10 +226,13 @@ function testAlertText(
 /**
  * An emergency alert (created or sent again) or a resident's status update during the alert (D70:
  * the same urgency, channel and TTL as an alert), as opposed to the closing notice (D55) and the
- * test alert (D67).
+ * test alert (D67) and the resident's "alert not delivered" notice (D73: not urgent, as the closing
+ * notice: 1 h TTL, APNs `active`, the `atlas_emergency` channel every incident notice uses).
  */
 export function isAlertTopic(topic: string): boolean {
-  return topic !== 'incident.resolved' && topic !== TEST_ALERT_TOPIC;
+  return (
+    topic !== 'incident.resolved' && topic !== TEST_ALERT_TOPIC && topic !== DELIVERY_FAILED_TOPIC
+  );
 }
 
 /** D55: Android notification channel the app creates for every incident notice. */
@@ -231,7 +262,8 @@ export function pushTtlSeconds(topic: string): number {
 
 /**
  * Provider data keys (FCM data and APNs custom keys are strings). Incident notices: the five keys
- * (D54). Status updates (D70): exactly `topic` and `incident_id`. Test alerts (D67): exactly
+ * (D54). Status updates (D70) and the "alert not delivered" notice (D73): exactly `topic` and
+ * `incident_id`. Test alerts (D67): exactly
  * `topic`, `test_alert_id` and `owner_name`.
  */
 export function pushData(message: PushNotice): Record<string, string> {
@@ -242,8 +274,9 @@ export function pushData(message: PushNotice): Record<string, string> {
       owner_name: message.owner_name ?? '',
     };
   }
-  // D70: exactly `topic` and `incident_id` (a tap opens the incident); never the text.
-  if (isStatusUpdateMessage(message)) {
+  // D70: exactly `topic` and `incident_id` (a tap opens the incident); never the text. D73: the
+  // resident's "alert not delivered" notice the same (never the member's name or id).
+  if (isStatusUpdateMessage(message) || isDeliveryFailedMessage(message)) {
     return { topic: message.topic, incident_id: message.incident_id };
   }
   return incidentData(message);

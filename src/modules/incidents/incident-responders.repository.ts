@@ -8,6 +8,7 @@ import {
   incidentResident,
 } from '../../common/policies';
 import { type AvatarUrlBase, avatarUrlSql } from '../circles/circles.repository';
+import { type MemberDelivery, memberDeliverySql } from './incident-delivery-status';
 import type { IncidentTransaction } from './incidents.repository';
 
 /** What a notified member can answer (SCRUM-50 / 51, D56). */
@@ -22,7 +23,7 @@ export type ResponderStatus = (typeof RESPONDER_STATUSES)[number];
  * One responder as stored (the user id in full). {@link responderView} turns it into what one caller
  * may see (`user_id` masked for members, `is_me`).
  */
-export interface ResponderRow extends Record<string, unknown> {
+export interface ResponderRow extends Record<string, unknown>, MemberDelivery {
   user_id: string;
   display_name: string;
   avatar_url: string | null;
@@ -59,6 +60,9 @@ export interface ResponseIncidentRow extends Record<string, unknown> {
  * - `status`: `response_status` when set, else `acknowledged` when `acknowledged_at` is set, else
  *   `no_response`; `status_at`: `response_at` for a response, `acknowledged_at` for acknowledged,
  *   null for no response;
+ * - `delivery_status`, `delivery_at`, `delivery_failed_reason` (SCRUM-65, D73): the member's delivery
+ *   status of the alert ({@link memberDeliverySql}); {@link responderView} shows them to the
+ *   resident only;
  * - order (SCRUM-58): responding, acknowledged, unable, no response; each oldest `status_at` first,
  *   then `delivered_at`, then the user id (a stable order).
  * `onlyUserId` narrows it to that member's row (zero or one element).
@@ -89,7 +93,7 @@ export function responderRowsSql(
                  'status', rs.status,
                  'acknowledged_at', rd.acknowledged_at,
                  'status_at', rs.status_at
-               ) as body,
+               ) || ${memberDeliverySql(sql`rd.incident_id`, sql`rd.member_user_id`)} as body,
                case rs.status
                  when 'responding' then 0
                  when 'acknowledged' then 1

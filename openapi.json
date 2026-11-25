@@ -3956,6 +3956,37 @@
               "null"
             ]
           },
+          "delivery_at": {
+            "description": "RESIDENT ONLY (D73): delivered = the first acceptance; failed = when the last attempt became final (null when nothing was ever sent); sent = null.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delivery_failed_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "no_device",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "RESIDENT ONLY (D73): failed = the push service did not accept it after the retries; no_device = nothing could be sent (no device with notifications or push switched off); null unless delivery_status is failed."
+          },
+          "delivery_status": {
+            "description": "RESIDENT ONLY (SCRUM-65, D73; absent on a member's rows): the alert's delivery to this member. delivered = the push service accepted the alert (or a re-notify) for at least one of their devices; sent = still being sent or retried; failed = every attempt failed after its retries, or nothing could be sent (no device with notifications, push switched off). A re-notify recomputes it (failed can become delivered).",
+            "enum": [
+              "sent",
+              "delivered",
+              "failed"
+            ],
+            "type": "string"
+          },
           "display_name": {
             "description": "The member's profile name (trimmed), else the name stored on their membership.",
             "type": "string"
@@ -16851,6 +16882,20 @@
         ],
         "room": "user:{resident_id}"
       },
+      "incident.delivery_failed": {
+        "member_keys": [
+          "user_id",
+          "display_name"
+        ],
+        "note": "SCRUM-71 (D73): a member did not receive the alert: every push attempt failed after the retries (reason \"failed\"), or nothing could be sent (reason \"no_device\": no device with notifications, or push switched off). Sent once per member per incident (a later failure after a re-notify is not reported again), only while the incident is active. member.user_id is the full id (as on the resident's responder list). The resident also gets a push (topic incident.delivery_failed, title \"Alert not delivered\", body \"<display name> didn't receive your alert\"). Not replayed after a reconnect: the responder list (delivery_status) is the state.",
+        "payload": [
+          "incident_id",
+          "member",
+          "reason",
+          "occurred_at"
+        ],
+        "room": "incident:{id}:resident (the resident's sockets of the incident only; never a member)"
+      },
       "incident.event": {
         "event_keys": [
           "id",
@@ -16925,11 +16970,23 @@
         "room": "incident:{id}, user:{id} of each delivery recipient and user:{resident_id} (D48; once per socket)"
       },
       "incident.responders": {
-        "note": "SCRUM-49/50/51/55 (D56): sent after a member acknowledged for the first time or set or changed their response (responding / unable). responder is the row of that member exactly as GET /v1/incidents/{id}/responders shows it to the receiver; replace the row with the same user_id (the masked id is stable per member). Not sent for a repeat that changed nothing. After a reconnect, re-fetch the list over REST.",
+        "note": "SCRUM-49/50/51/55 (D56): sent after a member acknowledged for the first time or set or changed their response (responding / unable). responder is the row of that member exactly as GET /v1/incidents/{id}/responders shows it to the receiver; replace the row with the same user_id (the masked id is stable per member). Not sent for a repeat that changed nothing. After a reconnect, re-fetch the list over REST. SCRUM-65 (D73): the resident's copy (room incident:{id}:resident) has resident_responder_keys (the 3 delivery keys after is_me); members get exactly responder_keys. The resident also gets it (alone) whenever a member's delivery status of the alert may have changed (sent / delivered / failed).",
         "payload": [
           "incident_id",
           "responder",
           "occurred_at"
+        ],
+        "resident_responder_keys": [
+          "user_id",
+          "display_name",
+          "avatar_url",
+          "status",
+          "acknowledged_at",
+          "status_at",
+          "is_me",
+          "delivery_status",
+          "delivery_at",
+          "delivery_failed_reason"
         ],
         "responder_keys": [
           "user_id",

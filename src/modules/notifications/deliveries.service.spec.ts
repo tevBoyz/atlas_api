@@ -5,17 +5,33 @@ import { JobFailedError, jobErrorCode, PermanentJobFailure } from '../../jobs/jo
 import type { ChannelSenders } from './channels/channel-senders';
 import type { SendResult } from './channels/channel.types';
 import type { DeliveriesRepository, DeliveryToSend } from './deliveries.repository';
+import type { AlertDeliveryOutcomes } from './alert-delivery-outcomes';
 import { DeliverySender } from './deliveries.service';
 
 const ID = '33333333-3333-4333-8333-333333333333';
 const DEVICE = '44444444-4444-4444-8444-444444444444';
 const TOKEN = 'fake-unit-token-SHOULD-NOT-LEAK';
+const MEMBER = '55555555-5555-4555-8555-555555555555';
+
+/** What the status writes answer: the row as it became final. */
+function outcome(status: string, error_code: string | null, attempts: number) {
+  return {
+    delivery_id: ID,
+    recipient_user_id: MEMBER,
+    channel: 'push',
+    status,
+    error_code,
+    attempts,
+  };
+}
 
 function delivery(overrides: Partial<DeliveryToSend> = {}): DeliveryToSend {
   return {
     id: ID,
     status: 'queued',
     channel: 'push',
+    incident_id: 'i-1',
+    recipient_user_id: MEMBER,
     device_id: DEVICE,
     topic: 'incident.created',
     payload: { incident_id: 'i-1', emergency_type: 'fire', resident_name: 'R', occurred_at: 't' },
@@ -31,9 +47,13 @@ function delivery(overrides: Partial<DeliveryToSend> = {}): DeliveryToSend {
 function setup(row: DeliveryToSend | undefined, answer: SendResult | Error, enabled = true) {
   const repository = {
     loadForSend: jest.fn().mockResolvedValue(row),
-    markSent: jest.fn().mockResolvedValue(undefined),
-    markSkipped: jest.fn().mockResolvedValue(undefined),
-    recordFailure: jest.fn().mockResolvedValue(undefined),
+    markSent: jest.fn((_id: string, status: string) => Promise.resolve(outcome(status, null, 1))),
+    markSkipped: jest.fn((_id: string, reason: string) =>
+      Promise.resolve(outcome('skipped', reason, 0)),
+    ),
+    recordFailure: jest.fn((_id: string, code: string, final: boolean) =>
+      Promise.resolve(final ? outcome('failed', code, 4) : undefined),
+    ),
     clearPushToken: jest.fn().mockResolvedValue(undefined),
   };
   const send = jest.fn(() =>
@@ -48,14 +68,18 @@ function setup(row: DeliveryToSend | undefined, answer: SendResult | Error, enab
   const logger = { info: jest.fn(), warn: jest.fn() };
   /** The logger's info lines as `[fields, message]`. */
   const infoLines = () => logger.info.mock.calls as [Record<string, unknown>, string][];
+  const alerts = { afterMemberOutcome: jest.fn().mockResolvedValue(undefined) };
   const sender = new DeliverySender(
     repository as unknown as DeliveriesRepository,
     channels as unknown as ChannelSenders,
     logger as unknown as Logger,
+    alerts as unknown as AlertDeliveryOutcomes,
   );
   const job = (attemptsMade = 0, attempts = 4) =>
     ({ data: { delivery_id: ID }, attemptsMade, opts: { attempts } }) as unknown as Job;
-  return { sender, repository, send, job, logger, infoLines };
+  /** The SCRUM-67 outcome lines. */
+  const outcomeLines = () => infoLines().filter((call) => call[1] === 'delivery outcome');
+  return { sender, repository, send, job, logger, infoLines, outcomeLines, alerts };
 }
 
 const SENT: SendResult = { provider_message_id: 'fake-1', status: 'sent' };
@@ -221,6 +245,137 @@ describe('DeliverySender (API-100-47)', () => {
     const { sender, repository, job } = setup(delivery({ payload: {} }), SENT);
     await expect(sender.process(job())).rejects.toBeInstanceOf(PermanentJobFailure);
     expect(repository.recordFailure).toHaveBeenCalledWith(ID, 'invalid_request', true);
+  });
+
+  describe('SCRUM-67 (D73): one outcome line per final outcome', () => {
+    const KEYS = [
+      'delivery_id',
+      'topic',
+      'channel',
+      'status',
+      'error_code',
+      'attempts',
+      'incident_id',
+    ];
+
+    it('sent: exactly the seven keys, ids and codes only', async () => {
+      const { sender, job, outcomeLines, logger } = setup(
+        delivery({ payload: { incident_id: 'i-1', resident_name: 'Rita Resident' } }),
+        SENT,
+      );
+      await sender.process(job());
+      expect(outcomeLines()).toHaveLength(1);
+      expect(Object.keys(outcomeLines()[0][0])).toEqual(KEYS);
+      expect(outcomeLines()[0][0]).toEqual({
+        delivery_id: ID,
+        topic: 'incident.created',
+        channel: 'push',
+        status: 'sent',
+        error_code: null,
+        attempts: 1,
+        incident_id: 'i-1',
+      });
+      const text = JSON.stringify(logger.info.mock.calls);
+      for (const secret of [TOKEN, 'Rita Resident', '12015550123', 'member@example.test']) {
+        expect(text).not.toContain(secret);
+      }
+    });
+
+    it('failed after the retries, skipped, and a permanent failure each log one line', async () => {
+      const last = setup(delivery(), failedWith('timeout'));
+      await last.sender.process(last.job(3, 4)).catch(() => undefined);
+      expect(last.outcomeLines().map((c) => c[0])).toEqual([
+        expect.objectContaining({ status: 'failed', error_code: 'timeout', attempts: 4 }),
+      ]);
+      const skipped = setup(delivery({ push_token: null }), SENT);
+      await skipped.sender.process(skipped.job());
+      expect(skipped.outcomeLines().map((c) => c[0])).toEqual([
+        expect.objectContaining({ status: 'skipped', error_code: 'no_device', attempts: 0 }),
+      ]);
+      const permanent = setup(delivery(), failedWith('unregistered'));
+      await permanent.sender.process(permanent.job(0)).catch(() => undefined);
+      expect(permanent.outcomeLines()).toHaveLength(1);
+      for (const { outcomeLines } of [last, skipped, permanent]) {
+        expect(Object.keys(outcomeLines()[0][0])).toEqual(KEYS);
+      }
+    });
+
+    it('no line for an attempt that will be retried, nor for a row another job finished', async () => {
+      const retry = setup(delivery(), failedWith('provider_unavailable'));
+      await retry.sender.process(retry.job(0)).catch(() => undefined);
+      expect(retry.outcomeLines()).toEqual([]);
+      const raced = setup(delivery(), SENT);
+      raced.repository.markSent.mockResolvedValue(undefined as never);
+      await raced.sender.process(raced.job());
+      expect(raced.outcomeLines()).toEqual([]);
+      const repeat = setup(delivery({ status: 'failed' }), SENT);
+      await repeat.sender.process(repeat.job());
+      expect(repeat.outcomeLines()).toEqual([]);
+    });
+  });
+
+  describe('SCRUM-65 / 71 (D73): an alert row that became final re-checks its member', () => {
+    it.each(['incident.created', 'incident.renotified'])(
+      '%s: sent, skipped, failed',
+      async (topic) => {
+        for (const [row, answer, attempt] of [
+          [delivery({ topic }), SENT, 0],
+          [delivery({ topic, push_token: null }), SENT, 0],
+          [delivery({ topic }), failedWith('timeout'), 3],
+        ] as const) {
+          const { sender, job, alerts } = setup(row, answer);
+          await sender.process(job(attempt, 4)).catch(() => undefined);
+          expect(alerts.afterMemberOutcome).toHaveBeenCalledTimes(1);
+          expect(alerts.afterMemberOutcome).toHaveBeenCalledWith('i-1', [MEMBER]);
+        }
+      },
+    );
+
+    it('not while a retry is still to come', async () => {
+      const { sender, job, alerts } = setup(delivery(), failedWith('provider_unavailable'));
+      await sender.process(job(0)).catch(() => undefined);
+      expect(alerts.afterMemberOutcome).not.toHaveBeenCalled();
+    });
+
+    it.each(['incident.status_update', 'incident.resolved', 'incident.delivery_failed'])(
+      'never for %s rows (not the alert)',
+      async (topic) => {
+        const { sender, job, alerts } = setup(
+          delivery({
+            topic,
+            payload: { incident_id: 'i-1', preset: 'help_is_here', member_name: 'M' },
+          }),
+          SENT,
+        );
+        await sender.process(job());
+        expect(alerts.afterMemberOutcome).not.toHaveBeenCalled();
+      },
+    );
+
+    it('never for a test alert row (no incident)', async () => {
+      const { sender, job, alerts } = setup(
+        delivery({
+          incident_id: null,
+          topic: 'circle.test_alert',
+          payload: { test_alert_id: 't' },
+        }),
+        SENT,
+      );
+      await sender.process(job());
+      expect(alerts.afterMemberOutcome).not.toHaveBeenCalled();
+    });
+
+    it('a repeat of a final alert row re-runs the check (idempotent); a check error is retried', async () => {
+      const repeat = setup(delivery({ status: 'failed' }), SENT);
+      await repeat.sender.process(repeat.job());
+      expect(repeat.alerts.afterMemberOutcome).toHaveBeenCalledWith('i-1', [MEMBER]);
+      const broken = setup(delivery(), SENT);
+      broken.alerts.afterMemberOutcome.mockRejectedValue(
+        Object.assign(new Error('x'), { code: '40001' }),
+      );
+      const error = await broken.sender.process(broken.job()).catch((e: unknown) => e);
+      expect(jobErrorCode(error)).toBe('sqlstate_40001');
+    });
   });
 
   it('a database error becomes a code-only job error', async () => {

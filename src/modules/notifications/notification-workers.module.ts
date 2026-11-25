@@ -12,14 +12,19 @@ import { IncidentCloseSweeper } from '../incidents/incident-close-sweeper';
 import { IncidentLifecycleWorkerModule } from '../incidents/incident-lifecycle-worker.module';
 import { ChannelSenders } from './channels/channel-senders';
 import { DeliveriesRepository } from './deliveries.repository';
+import { AlertDeliveryOutcomes } from './alert-delivery-outcomes';
 import { DeliveryPlanner, DeliverySender } from './deliveries.service';
-import { IncidentNotificationsHandler } from './incident-notifications';
+import {
+  DeliveryFailedNotificationsHandler,
+  IncidentNotificationsHandler,
+} from './incident-notifications';
 import { TestAlertNotificationsHandler } from './test-alert-notifications';
 
 /**
  * What the worker process runs (API-100-45 AC3): the outbox consumer with the topic handlers, the
  * channel adapters (API-100-46), the delivery records and retries (API-100-47) and the incident
- * notices (API-100-48) and the test alerts (SCRUM-35, D67). The job workers also run the incident close sweep (SCRUM-63, D62) of
+ * notices (API-100-48), the alert delivery status and the resident's "alert not delivered" notice
+ * (SCRUM-65 / 71, D73) and the test alerts (SCRUM-35, D67). The job workers also run the incident close sweep (SCRUM-63, D62) of
  * `IncidentLifecycleWorkerModule`.
  */
 @Module({
@@ -29,15 +34,22 @@ import { TestAlertNotificationsHandler } from './test-alert-notifications';
     DeliveriesRepository,
     DeliveryPlanner,
     DeliverySender,
+    AlertDeliveryOutcomes,
     IncidentNotificationsHandler,
+    DeliveryFailedNotificationsHandler,
     TestAlertNotificationsHandler,
     {
       provide: OUTBOX_TOPIC_HANDLERS,
-      inject: [IncidentNotificationsHandler, TestAlertNotificationsHandler],
+      inject: [
+        IncidentNotificationsHandler,
+        DeliveryFailedNotificationsHandler,
+        TestAlertNotificationsHandler,
+      ],
       useFactory: (
         incidents: IncidentNotificationsHandler,
+        deliveryFailed: DeliveryFailedNotificationsHandler,
         testAlerts: TestAlertNotificationsHandler,
-      ): OutboxTopicHandler[] => [incidents, testAlerts],
+      ): OutboxTopicHandler[] => [incidents, deliveryFailed, testAlerts],
     },
     OutboxDispatcher,
     {

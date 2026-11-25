@@ -848,3 +848,48 @@ describe('SCRUM-44/59 (D70): status update notices', () => {
     expect(fake.sent[0].text).toEqual({ title: 'Tess Resident', body: 'Door locked · 4:48 PM' });
   });
 });
+
+describe('SCRUM-71 (D73): the resident\'s "alert not delivered" notice', () => {
+  const NOW = Date.parse('2026-11-20T10:00:01Z');
+  const payload = {
+    incident_id: 'i-1',
+    member_name: 'Ned49 Test',
+    reason: 'no_device',
+    occurred_at: '2026-11-20T10:00:00+00:00',
+    recipient_user_ids: ['r-1'],
+  };
+
+  it('message: the incident id and the member name only', () => {
+    expect(pushMessageOf('incident.delivery_failed', payload)).toEqual({
+      topic: 'incident.delivery_failed',
+      incident_id: 'i-1',
+      member_name: 'Ned49 Test',
+    });
+    expect(pushMessageOf('incident.delivery_failed', { member_name: 'x' })).toBeUndefined();
+  });
+
+  it('text: "Alert not delivered" / "<name> didn\'t receive your alert"; a blank name has a fallback', () => {
+    const message = pushMessageOf('incident.delivery_failed', payload)!;
+    expect(pushText(message, 'Asia/Tokyo')).toEqual({
+      title: 'Alert not delivered',
+      body: "Ned49 Test didn't receive your alert",
+    });
+    const blank = pushMessageOf('incident.delivery_failed', { ...payload, member_name: '' })!;
+    expect(pushText(blank).body).toBe("A Safety Circle member didn't receive your alert");
+  });
+
+  it('data: exactly topic and incident_id; delivered like the closing notice (not an alert)', () => {
+    const message = pushMessageOf('incident.delivery_failed', payload)!;
+    expect(pushData(message)).toEqual({ topic: 'incident.delivery_failed', incident_id: 'i-1' });
+    expect(pushTtlSeconds('incident.delivery_failed')).toBe(3600);
+    const body = fcmMessage({ provider: 'fcm', token: DEVICE_TOKEN }, message, NOW) as {
+      android: { ttl: string; notification: { channel_id: string } };
+    };
+    expect(body.android.ttl).toBe('3600s');
+    expect(body.android.notification.channel_id).toBe(ANDROID_CHANNEL_ID);
+    expect(apnsAps({ provider: 'apns', token: DEVICE_TOKEN }, message)).toMatchObject({
+      'interruption-level': 'active',
+    });
+    expect(JSON.stringify(body)).not.toContain('r-1');
+  });
+});

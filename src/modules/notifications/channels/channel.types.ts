@@ -101,8 +101,27 @@ export interface StatusUpdatePushMessage {
   text: string | null;
 }
 
-/** Any push the adapters send: an incident notice, a status update or a test alert. */
-export type PushNotice = PushMessage | StatusUpdatePushMessage | TestAlertPushMessage;
+/** SCRUM-71 (D73): the outbox / push topic of the resident's "alert not delivered" notice. */
+export const DELIVERY_FAILED_TOPIC = 'incident.delivery_failed';
+
+/**
+ * The content of the resident's "alert not delivered" push (SCRUM-71, D73): the incident id and the
+ * display name of the member who did not receive the alert, plus the topic. Nothing else.
+ */
+export interface DeliveryFailedPushMessage {
+  topic: typeof DELIVERY_FAILED_TOPIC;
+  incident_id: string;
+  member_name: string | null;
+}
+
+/** Any push the adapters send: an incident notice, a status update, a test alert or (D73) a notice. */
+export type PushNotice =
+  PushMessage | StatusUpdatePushMessage | TestAlertPushMessage | DeliveryFailedPushMessage;
+
+/** True for the resident's "alert not delivered" notice (SCRUM-71, D73). */
+export function isDeliveryFailedMessage(message: PushNotice): message is DeliveryFailedPushMessage {
+  return message.topic === DELIVERY_FAILED_TOPIC && 'member_name' in message;
+}
 
 /** True for a resident's status update (SCRUM-44/59, D70). */
 export function isStatusUpdateMessage(message: PushNotice): message is StatusUpdatePushMessage {

@@ -14,7 +14,8 @@ import { IncidentStateService } from './incident-state.service';
  * The incident lifecycle in the worker process (`WORKER=1`, SCRUM-63, D62): the close sweeper (a
  * job processor of `incident-lifecycle`) with the state service, the event writer, the audit log and
  * the realtime broadcasts it needs. Its broadcasts reach the API's sockets through
- * {@link WorkerRealtimeEmitter} (the Socket.IO Redis adapter). No notification is sent.
+ * {@link WorkerRealtimeEmitter} (the Socket.IO Redis adapter). No notification is sent. The
+ * broadcaster is also used by the alert delivery status (SCRUM-65 / 71, D73).
  */
 @Module({
   imports: [AuditModule],
@@ -33,6 +34,6 @@ import { IncidentStateService } from './incident-state.service';
     },
     IncidentCloseSweeper,
   ],
-  exports: [IncidentCloseSweeper, WorkerRealtimeEmitter],
+  exports: [IncidentCloseSweeper, WorkerRealtimeEmitter, IncidentBroadcaster],
 })
 export class IncidentLifecycleWorkerModule {}

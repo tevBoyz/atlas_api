@@ -22,7 +22,20 @@ const row = (userId: string, status: ResponderRow['status'] = 'responding'): Res
   status,
   acknowledged_at: T,
   status_at: T,
+  delivery_status: 'failed',
+  delivery_at: T,
+  delivery_failed_reason: 'no_device',
 });
+
+const MEMBER_KEYS = [
+  'user_id',
+  'display_name',
+  'avatar_url',
+  'status',
+  'acknowledged_at',
+  'status_at',
+  'is_me',
+];
 
 describe('responseStatusFromBody (D56)', () => {
   it.each(['responding', 'unable'])('accepts %s', (status) => {
@@ -52,24 +65,23 @@ describe('responseStatusFromBody (D56)', () => {
 });
 
 describe('responderView (D56 masking, as D11)', () => {
-  it('the resident sees full ids and is_me false', () => {
-    expect(responderView(row(OTHER), { resident: true })).toEqual({
-      ...row(OTHER),
-      is_me: false,
-    });
+  it('the resident sees full ids, is_me false and (D73) the 3 delivery keys after is_me', () => {
+    const view = responderView(row(OTHER), { resident: true });
+    expect(view).toEqual({ ...row(OTHER), is_me: false });
+    expect(Object.keys(view)).toEqual([
+      ...MEMBER_KEYS,
+      'delivery_status',
+      'delivery_at',
+      'delivery_failed_reason',
+    ]);
   });
 
-  it('a member sees another member masked; exactly the 7 keys in order', () => {
+  it('a member sees another member masked; exactly the 7 keys in order (no delivery keys, D73)', () => {
     const view = responderView(row(OTHER), { resident: false, viewerId: ME });
-    expect(Object.keys(view)).toEqual([
-      'user_id',
-      'display_name',
-      'avatar_url',
-      'status',
-      'acknowledged_at',
-      'status_at',
-      'is_me',
-    ]);
+    expect(Object.keys(view)).toEqual(MEMBER_KEYS);
+    expect(Object.keys(responderView(row(ME), { resident: false, viewerId: ME }))).toEqual(
+      MEMBER_KEYS,
+    );
     expect(view.user_id).toBe('4f3a****-****-****-****-********9c2d');
     expect(view.is_me).toBe(false);
   });
@@ -172,8 +184,15 @@ describe('IncidentRespondersService.respond (D56)', () => {
 
   it('first response: writes, audits ids only, responders + counts hooks (it acknowledged)', async () => {
     const { service, repository, audit, postCommit } = serviceWith();
+    // A member's own row: the 7 keys, never the resident-only delivery keys (D73).
+    const { delivery_status, delivery_at, delivery_failed_reason, ...memberRow } = row(ME);
+    expect([delivery_status, delivery_at, delivery_failed_reason]).toEqual([
+      'failed',
+      T,
+      'no_device',
+    ]);
     await expect(service.respond(USER, INCIDENT_ID, 'responding')).resolves.toEqual({
-      ...row(ME),
+      ...memberRow,
       is_me: true,
     });
     expect(repository.setResponse).toHaveBeenCalledWith(expect.anything(), 'd1', 'responding');
