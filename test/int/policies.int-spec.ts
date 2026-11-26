@@ -83,18 +83,20 @@ async function insertFixtures(t: TestTransaction): Promise<void> {
   const q = (text: string, values: unknown[] = []) => t.client.query(text, values);
 
   const phones: Record<string, string | null> = {
-    resident: '12015550190',
-    member: '12015550191',
-    pending: '12015550192',
-    outsider: '12015550193',
+    resident: '+12015550190',
+    member: '+12015550191',
+    pending: '+12015550192',
+    outsider: '+12015550193',
   };
   for (const [name, userId] of Object.entries(users)) {
     await q(
-      `insert into auth.users (instance_id, id, aud, role, email, phone, email_confirmed_at,
-                               created_at, updated_at)
-       values ('00000000-0000-0000-0000-000000000000', $1, 'authenticated', 'authenticated',
-               $2, $3, now(), now(), now())`,
-      [userId, `policy-${name}-${userId.slice(0, 8)}@example.test`, phones[name] ?? null],
+      `insert into public.users (id, email, email_confirmed_at, phone, phone_confirmed_at)
+       values ($1, $2, now(), $3::text, case when $3::text is null then null else now() end)`,
+      [
+        userId,
+        `policy-${name.toLowerCase()}-${userId.slice(0, 8)}@example.test`,
+        phones[name] ?? null,
+      ],
     );
     await q(
       `insert into public.profiles (id, full_name, date_of_birth, profile_setup_completed_at)
@@ -343,71 +345,6 @@ describe('Authorization policies against local Postgres (API-100-09)', () => {
     });
   });
 
-  describe('parity with the SQL helpers for every caller × incident', () => {
-    it('matches _is_active_circle_member_since, _can_view_incident_events, RLS and delivery counts rules', async () => {
-      let compared = 0;
-      for (const callerId of Object.values(users)) {
-        // _can_view_incident_events reads auth.uid() from the request claims (transaction-local).
-        await t.db.execute(
-          sql`select set_config('request.jwt.claims', ${JSON.stringify({ sub: callerId, role: 'authenticated' })}, true)`,
-        );
-        const result = await t.db.execute<{
-          id: string;
-          since: boolean;
-          events: boolean;
-          member_rls: boolean;
-          counts: boolean;
-          member_circle: boolean;
-        }>(sql`
-          select i.id,
-                 coalesce(public._is_active_circle_member_since(i.circle_id, ${callerId}::uuid, i.activated_at), false) as since,
-                 public._can_view_incident_events(i.id) as events,
-                 (i.circle_id is not null and i.status in ('active', 'resolved')
-                  and public._is_active_circle_member_since(i.circle_id, ${callerId}::uuid, i.activated_at)
-                  and i.resident_id <> ${callerId}::uuid) as member_rls,
-                 (i.resident_id = ${callerId}::uuid
-                  or (i.circle_id is not null and i.status = 'active'
-                      and public._is_active_circle_member_since(i.circle_id, ${callerId}::uuid, i.activated_at))) as counts,
-                 coalesce(public._is_active_circle_member(i.circle_id, ${callerId}::uuid), false) as member_circle,
-                 i.circle_id, i.activated_at::text as activated_at
-            from public.incidents i
-           where i.id in (${sql.join(
-             Object.values(inc).map((v) => sql`${v}::uuid`),
-             sql`, `,
-           )})`);
-        for (const row of result.rows as unknown as Array<Record<string, unknown>>) {
-          const incidentId = row.id as string;
-          expect({
-            incidentId,
-            callerId,
-            since: await circleActiveMemberSince.check(t.db, {
-              circleId: row.circle_id as string | null,
-              callerId,
-              at: row.activated_at as string,
-            }),
-            events: await byId(incidentEventsView, incidentId, callerId),
-            member_rls: await byId(incidentMemberView, incidentId, callerId),
-            counts: await byId(incidentCountsView, incidentId, callerId),
-            member_circle: await circleActiveMember.check(t.db, {
-              circleId: row.circle_id as string | null,
-              callerId,
-            }),
-          }).toEqual({
-            incidentId,
-            callerId,
-            since: row.since,
-            events: row.events,
-            member_rls: row.member_rls === true,
-            counts: row.counts === true,
-            member_circle: row.member_circle,
-          });
-          compared += 1;
-        }
-      }
-      expect(compared).toBe(Object.keys(users).length * Object.keys(inc).length);
-    });
-  });
-
   describe('circles (AC5: circle A member gets nothing from circle B)', () => {
     it('active member of circle 1 gets nothing from circle 2', async () => {
       expect(await byId(incidentMemberView, inc.z, users.member)).toBe(false);
@@ -481,8 +418,8 @@ describe('Authorization policies against local Postgres (API-100-09)', () => {
       expect(await profileSelf.check(t.db, { profileId: null, callerId: users.early })).toBe(false);
     });
 
-    it('invite.recipient: phone invite needs the caller Auth phone (normalized)', async () => {
-      // Auth stores 12015550191 (no "+"); the invite row has +12015550191.
+    it('invite.recipient: phone invite needs the caller account phone (confirmed, normalized)', async () => {
+      // The account (public.users) holds +12015550191, confirmed; so does the invite row.
       expect(await inviteRecipient.checkById(t.db, rows.phoneInvite, users.member)).toBe(true);
       expect(await inviteRecipient.checkById(t.db, rows.phoneInvite, users.outsider)).toBe(false);
       expect(await inviteRecipient.checkById(t.db, rows.phoneInvite, users.early)).toBe(false); // no phone
@@ -494,7 +431,7 @@ describe('Authorization policies against local Postgres (API-100-09)', () => {
       expect(await inviteRecipient.checkById(t.db, rows.pending, users.outsider)).toBe(false);
     });
 
-    it('invite.recipient: explicit Auth phone operand', async () => {
+    it('invite.recipient: explicit phone operand (normalized)', async () => {
       expect(
         await inviteRecipient.check(t.db, {
           callerId: users.outsider,

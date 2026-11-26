@@ -30,11 +30,8 @@ const USABLE_EMAIL = sql`(nullif(lower(btrim(coalesce(u.email::text, ''))), '') 
   and lower(btrim(u.email::text)) ~ '^[^@\\s]+@[^@\\s]+$')`;
 
 /**
- * `public.login_lockouts`, the SAME table the SQL lockout functions use (spec §4.9, §6.8), so the
- * old app and the API share one counter per account during the dual-token window and the Supabase
- * access-token hook still sees locks made by API sign-ins. The rules are those of
- * `login_lockout_status`, `record_login_failure` and `clear_login_failures` (migrations
- * 20261020080000, 20261021100000), statement for statement:
+ * `public.login_lockouts` (spec §4.9, §6.8): one counter per account. The rules (first written for
+ * the retired SQL lockout functions, removed by 0025 / D76):
  *
  * - key (rule 44): email sign-in → `lower(trim(email))`; phone sign-in → the account's usable email
  *   when the phone belongs to an account that has one, else the E.164 number;
@@ -43,10 +40,8 @@ const USABLE_EMAIL = sql`(nullif(lower(btrim(coalesce(u.email::text, ''))), '') 
  * - a failure while locked changes nothing (no extension, rule 42); otherwise +1, and the 5th
  *   locks until now + 15 minutes.
  *
- * Accounts are looked up in the API's `users` table (the SQL reads `auth.users`; migrated users have
- * the same email, phone and ids, API-100-58). The row is created with `on conflict do nothing`
- * before it is locked, so two first failures in parallel both count (the SQL insert can fail one of
- * them with a unique violation).
+ * Accounts are looked up in the API's `users` table. The row is created with `on conflict do
+ * nothing` before it is locked, so two first failures in parallel both count.
  */
 @Injectable()
 export class LockoutRepository {

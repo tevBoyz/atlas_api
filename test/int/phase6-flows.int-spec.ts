@@ -19,10 +19,9 @@ import {
 } from '../support/auth-api';
 import { openTestClient } from '../support/database';
 import { fakePushToken } from '../support/device-api';
-import { createUser } from '../support/fixtures';
 
 /**
- * API-100-59 AC3: the checklist. Every app flow of spec §8.1-§8.8 (plus D8's exchange) walked step
+ * API-100-59 AC3: the checklist. Every app flow of spec §8.1-§8.8 walked step
  * for step against the API, in the order the app's `AtlasAuth` / `SessionStore` performs it.
  */
 describe('Phase 6 gate: the auth flows of spec §8 against the API (API-100-59 AC3)', () => {
@@ -218,17 +217,5 @@ describe('Phase 6 gate: the auth flows of spec §8 against the API (API-100-59 A
       refresh_token: refreshed.refresh_token,
     });
     expect(errorOf(refreshAgain).code).toBe('auth:session_expired');
-  });
-
-  it('D8 exchange: a signed-in user of the old app moves without signing in again', async () => {
-    const legacy = await createUser(client);
-    const res = await post(
-      app,
-      '/v1/auth/exchange',
-      { device: DEVICE },
-      await authHeader(legacy.id, { claims: { session_id: randomUUID() } }),
-    );
-    expect(res.statusCode).toBe(200);
-    expect(res.json<SessionBody>().user.id).toBe(legacy.id);
   });
 });

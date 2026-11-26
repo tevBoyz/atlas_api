@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
+import { SignJWT } from 'jose';
 import type { Client } from 'pg';
 
 import { AccessTokenSigner } from '../../src/modules/auth/access-tokens';
-import { createTestApp, withTestConfig } from '../../src/testing/test-app';
+import { createTestApp } from '../../src/testing/test-app';
 import { authHeader } from '../../src/testing/test-tokens';
 import { openTestClient } from '../support/database';
 import { createUser, type UserFixture } from '../support/fixtures';
@@ -14,10 +15,10 @@ import { connectSocket } from '../support/realtime-client';
 /**
  * API-100-51 against a real database: the guard accepts the API's own access tokens on every route
  * (REST and the realtime handshake) while the session is live, refuses them once
- * `device_sessions.revoked_at` is set or the user is disabled, publishes the public keys, and accepts
- * Supabase tokens only while SUPABASE_JWT_ACCEPT=true.
+ * `device_sessions.revoked_at` is set or the user is disabled, publishes the public keys, and refuses
+ * Supabase-issued tokens (retired with the old backend, D76).
  */
-describe('own access tokens and the dual-token guard (API-100-51)', () => {
+describe('own access tokens and the guard (API-100-51, D76)', () => {
   let app: NestFastifyApplication;
   let client: Client;
   let signer: AccessTokenSigner;
@@ -106,7 +107,7 @@ describe('own access tokens and the dual-token guard (API-100-51)', () => {
     expect((await openIncident(`Bearer ${token}`)).statusCode).toBe(401);
   });
 
-  it('AC3: Supabase tokens are accepted while SUPABASE_JWT_ACCEPT=true (set by the test setup; the default is false since D40)', async () => {
+  it('AC3: the test token factory signs own tokens the guard accepts', async () => {
     const res = await openIncident((await authHeader(user.id)).authorization);
     expect(res.statusCode).toBe(200);
   });
@@ -129,32 +130,19 @@ describe('own access tokens and the dual-token guard (API-100-51)', () => {
     });
   });
 
-  describe('SUPABASE_JWT_ACCEPT=false', () => {
-    let closed: NestFastifyApplication;
-
-    beforeAll(async () => {
-      ({ app: closed } = await createTestApp({}, withTestConfig({ SUPABASE_JWT_ACCEPT: 'false' })));
-    });
-
-    afterAll(async () => {
-      await closed.close();
-    });
-
-    it('refuses Supabase tokens and still accepts own tokens', async () => {
-      const supabase = await closed.inject({
-        method: 'GET',
-        url: '/v1/me/incidents/open',
-        headers: await authHeader(user.id),
-      });
-      expect(supabase.statusCode).toBe(401);
-      const sid = await newSession();
-      const { token } = await closed.get(AccessTokenSigner).issue(user.id, sid);
-      const own = await closed.inject({
-        method: 'GET',
-        url: '/v1/me/incidents/open',
-        headers: { authorization: `Bearer ${token}` },
-      });
-      expect(own.statusCode).toBe(200);
-    });
+  it('D76: a Supabase-shaped HS256 access token is refused (401), own tokens still pass', async () => {
+    const supabaseLike = await new SignJWT({ role: 'authenticated', session_id: randomUUID() })
+      .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+      .setIssuer('http://127.0.0.1:54321/auth/v1')
+      .setAudience('authenticated')
+      .setSubject(user.id)
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(new TextEncoder().encode('x'.repeat(40)));
+    const res = await openIncident(`Bearer ${supabaseLike}`);
+    expect(res.statusCode).toBe(401);
+    const sid = await newSession();
+    const { token } = await signer.issue(user.id, sid);
+    expect((await openIncident(`Bearer ${token}`)).statusCode).toBe(200);
   });
 });

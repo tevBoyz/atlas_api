@@ -11,7 +11,7 @@ import { resolve } from 'node:path';
  *   would read as "no restriction". RLS is not the API's authorization (that lives in code).
  * - Drops `.op("...")` operator classes: drizzle-kit mislabels them on multi-column indexes, and
  *   every index uses the default class anyway.
- * - Adds the read-only `auth.users` subset the API may read and points FKs at it.
+ * - Leaves out Supabase's `auth` schema: the API never reads `auth.users` (D76).
  */
 
 const RAW = resolve('.drizzle-introspect/schema.ts');
@@ -27,23 +27,9 @@ const HEADER = `/**
  *   activated_at). NEVER write \`activatedAt\` on safety_circle_members: the trigger only ignores
  *   client-chosen values for the anon/authenticated roles, and the API role is neither.
  * - RLS policies are intentionally omitted (authorization is enforced in code, AGENTS.md rule 5).
- * - \`authUsers\` is READ-ONLY: Supabase Auth owns auth.users.
+ * - Accounts live in \`public.users\` (API-owned, read with SQL); the foreign keys to it are
+ *   omitted here, and Supabase's \`auth.users\` is never read (D76).
  */
-`;
-
-const AUTH_USERS = `
-const auth = pgSchema('auth');
-
-/** auth.users (Supabase Auth). READ-ONLY subset used by the API (spec §4.1). */
-export const authUsers = auth.table('users', {
-  id: uuid().primaryKey().notNull(),
-  email: varchar({ length: 255 }),
-  /** Stored by GoTrue without the leading "+" in some cases: always normalize to E.164. */
-  phone: text(),
-  emailConfirmedAt: timestamp('email_confirmed_at', { withTimezone: true, mode: 'string' }),
-  phoneConfirmedAt: timestamp('phone_confirmed_at', { withTimezone: true, mode: 'string' }),
-  createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }),
-});
 `;
 
 export function assembleSchema(raw: string): string {
@@ -57,7 +43,6 @@ export function assembleSchema(raw: string): string {
       .map((n) => n.trim())
       .filter((n) => n.length > 0 && n !== 'pgPolicy'),
   );
-  for (const needed of ['pgSchema', 'uuid', 'text', 'timestamp', 'varchar']) names.add(needed);
   const sortedNames = [...names].sort();
   body = body.replace(
     importMatch[0],
@@ -66,7 +51,11 @@ export function assembleSchema(raw: string): string {
 
   body = body.replace(/^\tpgPolicy\([\s\S]*?\}\),\n/gm, '');
   body = body.replace(/\.op\("[a-z0-9_]+"\)/g, '');
-  body = body.replace(/foreignColumns: \[users\.id\]/g, 'foreignColumns: [authUsers.id]');
+  // Foreign keys to the account table (baseline: auth.users; since 0010: public.users) are omitted.
+  body = body.replace(
+    /^\tforeignKey\(\{\n[^}]*?foreignColumns: \[users\.id\][^}]*?\}\)(?:\.on\w+\("[^"]*"\))*,\n/gm,
+    '',
+  );
   // Extra-config callbacks left empty (policies only) are dropped; unused `table` params removed.
   body = body.replace(/\}, \(table\) => \[\n([\s\S]*?)^\]\);/gm, (_match, entries: string) => {
     if (entries.trim() === '') return '});';
@@ -78,7 +67,7 @@ export function assembleSchema(raw: string): string {
   }
 
   const firstTable = body.indexOf('export const ');
-  return `${HEADER}${body.slice(0, firstTable).trimEnd()}\n${AUTH_USERS}\n${body.slice(firstTable)}`;
+  return `${HEADER}${body.slice(0, firstTable).trimEnd()}\n\n${body.slice(firstTable)}`;
 }
 
 if (require.main === module) {

@@ -4,8 +4,7 @@ import type { Client } from 'pg';
 import { authHeader } from '../../src/testing/test-tokens';
 
 /**
- * Profile routes (API-100-34 to 37) and their direct-table / SQL counterparts, for integration and
- * parity tests. `userId: null` sends no token.
+ * Profile routes (API-100-34 to 37), for integration tests. `userId: null` sends no token.
  */
 const headersFor = async (userId: string | null) => (userId ? await authHeader(userId) : {});
 
@@ -154,51 +153,31 @@ export const preferencesBody = (overrides: Record<string, unknown> = {}) => ({
 });
 
 /**
- * Runs `statement` as the `authenticated` role with `userId`'s JWT claims in UTC: the app's direct
- * table path through PostgREST and RLS (spec §7.8). Committed unless it throws.
+ * The stored row as JSON text (`row_to_json`, session time zone UTC), as the table owner. The
+ * profile read must equal it (keys, order, values and text).
  */
-export async function asAppUser<T extends Record<string, unknown> = Record<string, unknown>>(
-  client: Client,
-  userId: string,
-  statement: string,
-  params: unknown[] = [],
-): Promise<T[]> {
+export async function profileRowJson(client: Client, userId: string): Promise<string | null> {
   await client.query('begin');
   try {
-    await client.query(
-      `select set_config('request.jwt.claim.sub', $1, true),
-              set_config('request.jwt.claims', $2, true),
-              set_config('TimeZone', 'UTC', true)`,
-      [userId, JSON.stringify({ sub: userId, role: 'authenticated' })],
+    await client.query(`select set_config('TimeZone', 'UTC', true)`);
+    const { rows } = await client.query<{ body: string }>(
+      'select row_to_json(p)::text as body from public.profiles p where p.id = $1',
+      [userId],
     );
-    await client.query('set local role authenticated');
-    const { rows } = await client.query<T>(statement, params);
     await client.query('commit');
-    return rows;
+    return rows[0]?.body ?? null;
   } catch (error) {
     await client.query('rollback');
     throw error;
   }
 }
 
-/** The app's `fetchOwn` today: `select *` of the own row through RLS, as PostgREST's JSON text. */
-export async function profileViaRls(client: Client, userId: string): Promise<string | null> {
-  const rows = await asAppUser<{ body: string }>(
-    client,
-    userId,
-    'select row_to_json(p)::text as body from public.profiles p where p.id = $1',
-    [userId],
-  );
-  return rows[0]?.body ?? null;
-}
-
-/** An `auth.users` row without a profile (a user before Personal Info). */
+/** An account (`public.users`) without a profile (a user before Personal Info). */
 export async function createAuthUser(client: Client, id: string): Promise<void> {
   await client.query(
-    `insert into auth.users (instance_id, id, aud, role, email, email_confirmed_at,
-                             raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
-     values ('00000000-0000-0000-0000-000000000000', $1, 'authenticated', 'authenticated',
-             $2, now(), '{"provider":"email"}'::jsonb, '{}'::jsonb, now(), now())`,
+    `insert into public.users (id, email, email_confirmed_at) values ($1, $2, now())
+     on conflict (id) do update set email = excluded.email,
+                                    email_confirmed_at = excluded.email_confirmed_at`,
     [id, `user-${id}@example.test`],
   );
 }

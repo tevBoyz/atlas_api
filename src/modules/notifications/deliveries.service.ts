@@ -129,7 +129,7 @@ export function logFinalOutcome(
   );
 }
 
-/** `+` and digits: `auth.users.phone` is stored without the `+` (an API phone has it, D47). */
+/** `+` and digits (the stored phone is E.164; any other spelling is normalized, D47). */
 function e164(phone: string): string {
   const digits = phone.replace(/\D/g, '');
   return `+${digits}`;

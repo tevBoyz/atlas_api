@@ -22,7 +22,7 @@ import { isPublicRoute } from './route-access';
  * `<fn>:not_authenticated` from its `@Operation('<fn>')` (AC4). Every non-public route declares
  * one: the route contract check fails the boot otherwise (`route-contract.ts`).
  *
- * The guard reads no table: `auth.users` / `profiles` checks belong to each operation.
+ * The guard reads only the session (`device_sessions`): `users` / `profiles` checks belong to each operation.
  */
 @Injectable()
 export class AuthGuard implements CanActivate {

@@ -39,8 +39,6 @@ const PRODUCTION = {
   DATABASE_URL: 'postgresql://fake:fake@localhost:5432/atlas',
   REDIS_URL: 'redis://localhost:6379',
   SUPABASE_URL: 'https://example.supabase.co',
-  SUPABASE_JWT_SECRET: 'fake-jwt-secret-0123456789-abcdefghij',
-  SUPABASE_JWT_ISSUER: 'https://example.supabase.co/auth/v1',
   SUPABASE_STORAGE_SERVICE_KEY: 'fake-storage-key',
   AUTH_JWT_KEYS: JSON.stringify([AUTH_KEY]),
   AUTH_JWT_ACTIVE_KID: 'k1',

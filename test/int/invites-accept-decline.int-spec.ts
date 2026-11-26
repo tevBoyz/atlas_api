@@ -13,7 +13,6 @@ import {
   getCapacity,
   listMembers,
   lookupInvite,
-  sqlAs,
 } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
@@ -26,7 +25,7 @@ import {
   type UserFixture,
 } from '../support/fixtures';
 import {
-  compareWithSql,
+  callWithRows,
   insertExpiredMember,
   insertMember,
   insertOverCapacity,
@@ -77,18 +76,14 @@ describe('accept and decline (API-100-30)', () => {
     ).rows;
 
   const compareAccept = (caller: UserFixture, token: string, circleIds: string[]) =>
-    compareWithSql(client, {
+    callWithRows(client, {
       callerId: caller.id,
-      sqlCall: 'public.accept_circle_invite($1)',
-      params: [token],
       circleIds,
       api: () => acceptInvite(app, caller.id, token),
     });
   const compareDecline = (caller: UserFixture, token: string, circleIds: string[]) =>
-    compareWithSql(client, {
+    callWithRows(client, {
       callerId: caller.id,
-      sqlCall: 'public.decline_circle_invite($1)',
-      params: [token],
       circleIds,
       api: () => declineInvite(app, caller.id, token),
     });
@@ -217,7 +212,7 @@ describe('accept and decline (API-100-30)', () => {
       }
     });
 
-    it('error codes in the SQL order, each against accept_circle_invite, nothing written', async () => {
+    it('error codes in order, nothing written', async () => {
       const { owner, circle } = await ownerWithCircle();
       const ben = await createUser(client, { phone: true });
       const benRow = await addActiveMember(client, circle, ben);
@@ -227,7 +222,6 @@ describe('accept and decline (API-100-30)', () => {
 
       const blank = await acceptInvite(app, dan.id, '%20', { raw: true });
       expectCode(blank, 404, 'accept_circle_invite:not_found');
-      expect(await sqlErrorOf(dan, '  ')).toBe('accept_circle_invite:not_found');
 
       const states: Array<[string, () => Promise<string>, UserFixture, number, string]> = [
         ['unknown', () => Promise.resolve(fakeInviteToken()), dan, 404, 'not_found'],
@@ -302,8 +296,8 @@ describe('accept and decline (API-100-30)', () => {
       ];
       for (const [name, tokenOf, caller, status, suffix] of states) {
         const token = await tokenOf();
-        const { reply, sqlError } = await compareAccept(caller, token, [circle.id]);
-        expect({ name, sqlError }).toEqual({ name, sqlError: `accept_circle_invite:${suffix}` });
+        const { reply, apiError } = await compareAccept(caller, token, [circle.id]);
+        expect({ name, apiError }).toEqual({ name, apiError: `accept_circle_invite:${suffix}` });
         expect({ name, status: reply.statusCode }).toEqual({ name, status });
         // Free the slot for the next case (the circle has 5 places).
         await client.query(
@@ -446,7 +440,7 @@ describe('accept and decline (API-100-30)', () => {
       expectCode(again.reply, 409, 'decline_circle_invite:canceled');
     });
 
-    it('errors in the SQL order, each against decline_circle_invite', async () => {
+    it('errors in order', async () => {
       const { circle } = await ownerWithCircle();
       const ben = await createUser(client, { phone: true });
       const benRow = await addActiveMember(client, circle, ben);
@@ -483,8 +477,8 @@ describe('accept and decline (API-100-30)', () => {
         ],
       ];
       for (const [name, tokenOf, caller, status, suffix] of states) {
-        const { reply, sqlError } = await compareDecline(caller, await tokenOf(), [circle.id]);
-        expect({ name, sqlError }).toEqual({ name, sqlError: `decline_circle_invite:${suffix}` });
+        const { reply, apiError } = await compareDecline(caller, await tokenOf(), [circle.id]);
+        expect({ name, apiError }).toEqual({ name, apiError: `decline_circle_invite:${suffix}` });
         expect({ name, status: reply.statusCode }).toEqual({ name, status });
       }
     });
@@ -519,55 +513,4 @@ describe('accept and decline (API-100-30)', () => {
       expect(reply.statusCode).toBe(200);
     });
   });
-
-  // --- the SQL and the API follow each other ----------------------------------------------------
-
-  describe('API ↔ SQL on the same rows', () => {
-    it('SQL accept, then API accept by the same user: same body, no write', async () => {
-      const { circle } = await ownerWithCircle();
-      const joiner = await createUser(client);
-      const link = await insertMember(client, circle.id);
-      const viaSql = await sqlAs<Body>(client, joiner.id, 'public.accept_circle_invite($1)', [
-        link.token,
-      ]);
-      const stored = await memberRow(client, link.id);
-      const reply = await acceptInvite(app, joiner.id, link.token);
-      expect(reply.body).toBe(JSON.stringify(viaSql));
-      expect(await memberRow(client, link.id)).toEqual(stored);
-    });
-
-    it('API accept, then SQL accept by the same user: same body', async () => {
-      const { circle } = await ownerWithCircle();
-      const joiner = await createUser(client);
-      const link = await insertMember(client, circle.id);
-      const reply = await acceptInvite(app, joiner.id, link.token);
-      const viaSql = await sqlAs<Body>(client, joiner.id, 'public.accept_circle_invite($1)', [
-        link.token,
-      ]);
-      expect(reply.body).toBe(JSON.stringify(viaSql));
-    });
-
-    it('SQL preview claims, API accepts; API declines, SQL decline answers canceled', async () => {
-      const { circle } = await ownerWithCircle();
-      const joiner = await createUser(client);
-      const link = await insertMember(client, circle.id);
-      await sqlAs(client, joiner.id, 'public.preview_circle_invite($1)', [link.token]);
-      expect((await acceptInvite(app, joiner.id, link.token)).statusCode).toBe(200);
-      const other = await insertMember(client, circle.id);
-      const outsider = await createUser(client);
-      expect((await declineInvite(app, outsider.id, other.token)).statusCode).toBe(200);
-      await expect(
-        sqlAs(client, outsider.id, 'public.decline_circle_invite($1)', [other.token]),
-      ).rejects.toThrow('decline_circle_invite:canceled');
-    });
-  });
-
-  async function sqlErrorOf(user: UserFixture, token: string): Promise<string | undefined> {
-    try {
-      await sqlAs(client, user.id, 'public.accept_circle_invite($1)', [token]);
-      return undefined;
-    } catch (error) {
-      return (error as Error).message;
-    }
-  }
 });

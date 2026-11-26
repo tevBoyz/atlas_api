@@ -2,13 +2,7 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
-import {
-  errorOf,
-  listJoinedCircles,
-  listMyInvites,
-  sqlAs,
-  sqlRolledBack,
-} from '../support/circle-api';
+import { errorOf, listJoinedCircles, listMyInvites } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
   addActiveMember,
@@ -17,14 +11,7 @@ import {
   createUser,
   type UserFixture,
 } from '../support/fixtures';
-import {
-  compareWithSql,
-  insertExpiredMember,
-  insertMember,
-  memberRow,
-  withoutJoinedApiFields,
-  withoutOwnerAvatarUrl,
-} from '../support/invite-rows';
+import { callWithRows, insertExpiredMember, insertMember, memberRow } from '../support/invite-rows';
 
 /**
  * API-100-31: `GET /v1/me/invites` (`list_my_circle_invites`, spec §7.3, §11.3 I10) and
@@ -119,22 +106,16 @@ describe('incoming invitations and joined circles (API-100-31)', () => {
     return reply.json<Body[]>();
   };
   const compareList = (caller: UserFixture, circleIds: string[]) =>
-    compareWithSql(client, {
+    callWithRows(client, {
       callerId: caller.id,
-      sqlCall: 'public.list_my_circle_invites()',
-      params: [],
       circleIds,
       api: () => listMyInvites(app, caller.id),
-      apiOnlyFields: withoutOwnerAvatarUrl,
     });
   const compareJoined = (caller: UserFixture, circleIds: string[]) =>
-    compareWithSql(client, {
+    callWithRows(client, {
       callerId: caller.id,
-      sqlCall: 'public.list_my_joined_circles()',
-      params: [],
       circleIds,
       api: () => listJoinedCircles(app, caller.id),
-      apiOnlyFields: withoutJoinedApiFields,
     });
 
   // --- GET /v1/me/invites -----------------------------------------------------------------------
@@ -219,13 +200,9 @@ describe('incoming invitations and joined circles (API-100-31)', () => {
     expect(audit.rowCount).toBe(0);
   });
 
-  it('matches the Auth phone normalized (no +, spaces) and lists nothing by phone without an Auth phone', async () => {
+  it('matches the account’s confirmed phone; lists nothing by phone without one (D47)', async () => {
     const phone = phoneNumber();
     const invitee = await createUser(client, { phone });
-    await client.query(`update auth.users set phone = $2 where id = $1`, [
-      invitee.id,
-      `  ${phone.slice(1)} `,
-    ]);
     const { circle } = await ownerWithCircle();
     const row = await insertMember(client, circle.id, { phone });
     expect((await invitesOf(invitee)).map((x) => x.member_id)).toEqual([row.id]);
@@ -295,19 +272,14 @@ describe('incoming invitations and joined circles (API-100-31)', () => {
       await insertMember(client, circles[3].circle.id, { phone, invitedSql: at('10:00:00.05') }),
       await insertMember(client, circles[4].circle.id, { phone, invitedSql: at('09:59:59.9') }),
     ];
-    // What the SQL function returns for the same state (rolled back; it claims too).
-    const sql = await sqlRolledBack<Body[]>(client, invitee.id, 'public.list_my_circle_invites()');
     const ids = (await invitesOf(invitee)).map((x) => x.member_id as string);
     const tied = [rows[0].id, rows[1].id].sort();
-    // The SQL sorts the JSON TEXT of invited_at (ICU en-US here): a whole-second value sorts above
-    // the fractional values of the same second. The API uses the same expression, so the same order.
+    // The order is by the JSON TEXT of invited_at (ICU en-US here): a whole-second value sorts
+    // above the fractional values of the same second.
     expect(ids).toEqual([rows[2].id, ...tied, rows[3].id, rows[4].id]);
-    const sqlIds = (sql.body ?? []).map((x) => x.member_id as string);
-    expect(sqlIds.filter((id) => !tied.includes(id))).toEqual([rows[2].id, rows[3].id, rows[4].id]);
-    expect(new Set(sqlIds.slice(1, 3))).toEqual(new Set(tied));
   });
 
-  it('answers what the SQL function answers and claims the same rows (interchangeable)', async () => {
+  it('claims the caller’s rows once; repeated lists answer the same', async () => {
     const phone = phoneNumber();
     const invitee = await createUser(client, { fullName: 'Same Answer', phone });
     const a = await ownerWithCircle('Same A');
@@ -322,16 +294,15 @@ describe('incoming invitations and joined circles (API-100-31)', () => {
     });
     const circles = [a.circle.id, b.circle.id, c.circle.id];
     const first = await compareList(invitee, circles);
-    expect((first.sqlBody as Body[]).length).toBe(4);
-    // After the API claimed, the SQL (and the API again) see the same.
-    await compareList(invitee, circles);
-    // A claim by the SQL function, then the API: same rows, same answer.
+    expect((first.body as Body[]).length).toBe(4);
+    // After the claim, the next list answers the same.
+    expect((await compareList(invitee, circles)).reply.body).toBe(first.reply.body);
+    // A new row is claimed by the next list.
     const d = await ownerWithCircle('Same D');
     const fresh = await insertMember(client, d.circle.id, { phone });
-    await sqlAs(client, invitee.id, 'public.list_my_circle_invites()');
+    expect(((await compareList(invitee, [...circles, d.circle.id])).body as Body[]).length).toBe(5);
     expect((await memberRow(client, fresh.id)).user_id).toBe(invitee.id);
-    await compareList(invitee, [...circles, d.circle.id]);
-    // A caller with nothing: [] from both.
+    // A caller with nothing: [].
     const nobody = await createUser(client);
     const empty = await compareList(nobody, []);
     expect(empty.reply.body).toBe('[]');
@@ -469,8 +440,5 @@ describe('incoming invitations and joined circles (API-100-31)', () => {
     await setUpdatedAt([rows[2].id], "timestamptz '2026-11-18 09:00:00.25+00'");
     const ids = (await listJoinedCircles(app, user.id)).json<Body[]>().map((e) => e.member_id);
     expect(ids).toEqual([...[rows[0].id, rows[1].id].sort(), rows[2].id]);
-    const sql = await sqlRolledBack<Body[]>(client, user.id, 'public.list_my_joined_circles()');
-    expect(new Set((sql.body ?? []).map((e) => e.member_id))).toEqual(new Set(ids));
-    expect((sql.body ?? [])[2].member_id).toBe(rows[2].id);
   });
 });

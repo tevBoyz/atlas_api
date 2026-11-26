@@ -4,21 +4,13 @@ import { decodeJwt, decodeProtectedHeader, importJWK, SignJWT } from 'jose';
 
 import { AccessTokenSigner } from '../../modules/auth/access-tokens';
 import { throwawayJwk } from '../../testing/test-auth-keys';
-import { signTestToken } from '../../testing/test-tokens';
 import { AtlasKeyRing } from './atlas-key-ring';
 import { ACCESS_TOKEN_TYPE, AtlasTokenVerifier } from './atlas-token-verifier';
-import { DualTokenVerifier } from './dual-token-verifier';
 import type { SessionState, SessionStatusReader } from './session-status';
-import { SupabaseTokenVerifier } from './supabase-token-verifier';
 import { TokenRejectedError } from './token-verifier';
-import {
-  TEST_JWT_AUDIENCE,
-  TEST_JWT_ISSUER,
-  TEST_JWT_SECRET,
-} from '../../testing/test-auth-config';
 
 /**
- * API-100-51: own access tokens (AC1), key rotation (AC2), the dual-token guard (AC3) and keys only
+ * API-100-51: own access tokens (AC1), key rotation (AC2), what the guard refuses (AC3) and keys only
  * from config (AC4). Keys are generated at runtime; nothing here is real key material.
  */
 const ISSUER = 'atlas-api';
@@ -97,7 +89,7 @@ describe('own access tokens (API-100-51)', () => {
       const sessions = new FakeSessions();
       await expect(
         new AtlasTokenVerifier(ring([p256], 'p1'), sessions, 30).verify(token),
-      ).resolves.toMatchObject({ id: user, issuer: 'atlas', sessionId: session });
+      ).resolves.toMatchObject({ id: user, sessionId: session });
     });
 
     it('the key ring publishes public parts only, active key first', () => {
@@ -178,7 +170,6 @@ describe('own access tokens (API-100-51)', () => {
     it('accepts a live session and reads it once', async () => {
       await expect(verifier.verify(await craft({}))).resolves.toEqual({
         id: user,
-        issuer: 'atlas',
         sessionId: session,
         email: null,
         phone: null,
@@ -243,58 +234,18 @@ describe('own access tokens (API-100-51)', () => {
     });
   });
 
-  describe('AC3: dual-token verifier', () => {
-    const keyRing = ring([k1], 'k1');
-    const supabase = new SupabaseTokenVerifier({
-      secret: TEST_JWT_SECRET,
-      issuer: TEST_JWT_ISSUER,
-      audience: TEST_JWT_AUDIENCE,
-      clockSkewSeconds: 30,
-    });
-
-    function dual(accept: boolean, untilMs?: number, now = Date.now()) {
-      const used: [string, string][] = [];
-      const verifier = new DualTokenVerifier(
-        ISSUER,
-        new AtlasTokenVerifier(keyRing, new FakeSessions(), 30),
-        supabase,
-        { accept, untilMs },
-        { record: (issuer, id) => used.push([issuer, id]) },
-        () => now,
-      );
-      return { verifier, used };
-    }
-
-    it('routes by issuer and records each accepted token', async () => {
-      const { verifier, used } = dual(true);
-      const own = (await signer(keyRing).issue(user, session)).token;
-      const supa = await signTestToken({ claims: { sub: user } });
-      await expect(verifier.verify(own)).resolves.toMatchObject({ issuer: 'atlas' });
-      await expect(verifier.verify(supa)).resolves.toMatchObject({ issuer: 'supabase' });
-      expect(used).toEqual([
-        ['atlas', user],
-        ['supabase', user],
-      ]);
-    });
-
-    it('refuses Supabase tokens when SUPABASE_JWT_ACCEPT=false or after SUPABASE_JWT_ACCEPT_UNTIL', async () => {
-      const supa = await signTestToken({ claims: { sub: user } });
-      expect(await rejection(dual(false).verifier.verify(supa))).toBe('supabase_not_accepted');
-      const now = Date.now();
-      expect(await rejection(dual(true, now - 1, now).verifier.verify(supa))).toBe(
-        'supabase_not_accepted',
-      );
-      await expect(dual(true, now + 60_000, now).verifier.verify(supa)).resolves.toMatchObject({
-        issuer: 'supabase',
-      });
-      // Own tokens are unaffected.
-      const own = (await signer(keyRing).issue(user, session)).token;
-      await expect(dual(false).verifier.verify(own)).resolves.toMatchObject({ issuer: 'atlas' });
-    });
-
-    it('an own-issuer token signed by someone else is still refused (iss only picks the verifier)', async () => {
-      const forged = await signTestToken({ claims: { sub: user, iss: ISSUER } });
-      expect(await rejection(dual(true).verifier.verify(forged))).toBe('malformed');
+  describe('AC3: Supabase access tokens are retired (D76)', () => {
+    it('a Supabase-shaped HS256 token is refused as malformed', async () => {
+      const verifier = new AtlasTokenVerifier(ring([k1], 'k1'), new FakeSessions(), 30);
+      const supabaseLike = await new SignJWT({ role: 'authenticated', session_id: randomUUID() })
+        .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+        .setIssuer('http://127.0.0.1:54321/auth/v1')
+        .setAudience('authenticated')
+        .setSubject(user)
+        .setIssuedAt()
+        .setExpirationTime('1h')
+        .sign(new TextEncoder().encode('x'.repeat(40)));
+      expect(await rejection(verifier.verify(supabaseLike))).toBe('malformed');
     });
   });
 });

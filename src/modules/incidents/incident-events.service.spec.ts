@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { type SQL, sql } from 'drizzle-orm';
@@ -157,7 +157,9 @@ describe('IncidentEventService (API-100-22)', () => {
       jest.requireActual<typeof import('node:child_process')>('node:child_process');
     const files = execSync('git ls-files src', { encoding: 'utf8' })
       .split('\n')
-      .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'));
+      .filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'))
+      // Tracked files deleted in the working tree (not committed yet) are skipped.
+      .filter((file) => existsSync(resolve(file)));
     const offenders = files.filter((file) =>
       /(update\s+public\.incident_events|delete\s+from\s+public\.incident_events|update\(incidentEvents\)|delete\(incidentEvents\))/i.test(
         readFileSync(resolve(file), 'utf8'),

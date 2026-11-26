@@ -6,7 +6,6 @@ import { DatabaseService } from '../../db/database.service';
 import { AuditService } from '../audit/audit.service';
 import { fail, meetsPasswordPolicy } from './auth-input';
 import { runAuthTransaction } from './auth-transaction';
-import { LegacyUsers } from './legacy-users';
 import { PASSWORD_HASHER, type PasswordHasher } from './password-hasher';
 import { SessionsRepository } from './sessions.repository';
 import { UsersRepository } from './users.repository';
@@ -29,7 +28,6 @@ export class PasswordChangeService {
     private readonly users: UsersRepository,
     private readonly sessionRows: SessionsRepository,
     private readonly audit: AuditService,
-    private readonly legacy: LegacyUsers,
     @Inject(PASSWORD_HASHER) private readonly hasher: PasswordHasher,
   ) {}
 
@@ -38,8 +36,7 @@ export class PasswordChangeService {
     currentPassword: string,
     newPassword: unknown,
   ): Promise<void> {
-    await this.legacy.migrateById(caller.id);
-    const keep = caller.issuer === 'atlas' ? caller.sessionId : null;
+    const keep = caller.sessionId;
     await runAuthTransaction(this.database, async (tx) => {
       const user = await this.users.byId(tx, caller.id, true);
       if (!user) throw new DomainError('auth:not_authenticated');

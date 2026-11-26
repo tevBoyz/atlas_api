@@ -16,16 +16,17 @@ import { PRODUCTION_TEMPLATE_DATABASE } from '../support/stack';
 
 /**
  * Stage 7.6, API-100-62 (D42, migration 0012): the production state of a freshly migrated
- * database, BEFORE the test harness re-grant (`test/support/test-harness-grants.ts`) every other
- * suite gets. This file works on a clone of `PRODUCTION_TEMPLATE_DATABASE`:
+ * database (every suite runs on this state since the test-only re-grant was removed with the parity
+ * suite, D76). This file works on a clone of `PRODUCTION_TEMPLATE_DATABASE`:
  * - no table / column privilege of anon / authenticated / PUBLIC on any `public` relation (AC2);
- * - no EXECUTE of anon / authenticated / PUBLIC on the `public` functions, which still exist (AC1);
+ * - no EXECUTE of anon / authenticated / PUBLIC on the `public` functions; the old Supabase-era
+ *   SQL functions and RLS policies are gone (0025, D76);
  * - incidents / incident_events are not in the `supabase_realtime` publication;
  * - no anon / authenticated write policy on the `avatars` Storage objects; public read kept (AC4);
  * - the old Supabase-style calls are refused, and the API (owner role) works end to end: sign-up,
  *   profile, circle, invite + join, SOS, responder list, mark safe.
  */
-describe('stage 7.6: production state after 0012 (D42)', () => {
+describe('stage 7.6: production state after 0012 (D42) and 0025 (D76)', () => {
   let client: Client;
 
   beforeAll(async () => {
@@ -52,10 +53,6 @@ describe('stage 7.6: production state after 0012 (D42)', () => {
               has_table_privilege('authenticated', 'public.profiles', 'select') as auth_profiles,
               has_table_privilege('authenticated', 'public.incidents', 'select') as auth_incidents,
               has_table_privilege('authenticated', 'public.app_config', 'select') as auth_config,
-              has_function_privilege('authenticated', 'public.submit_emergency_alert(text)',
-                                     'execute') as auth_submit,
-              has_function_privilege('anon', 'public.lookup_circle_invite(text)',
-                                     'execute') as anon_lookup,
               has_function_privilege('anon', 'public.set_profiles_updated_at()',
                                      'execute') as public_trigger_fn`,
     );
@@ -64,20 +61,33 @@ describe('stage 7.6: production state after 0012 (D42)', () => {
       auth_profiles: false,
       auth_incidents: false,
       auth_config: false,
-      auth_submit: false,
-      anon_lookup: false,
       public_trigger_fn: false,
     });
   });
 
-  it('the old SQL functions still exist (dropped in a later release, AC1)', async () => {
+  it('0025 (D76): the old SQL functions and RLS policies are gone; the trigger plumbing stays', async () => {
     const { rows } = await client.query<{ n: number }>(
       `select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public'
           and p.proname in ('submit_emergency_alert', 'mark_incident_safe', 'accept_circle_invite',
                             'lookup_circle_invite', 'complete_profile_setup')`,
     );
-    expect(rows[0].n).toBe(5);
+    expect(rows[0].n).toBe(0);
+    const policies = await client.query<{ n: number }>(
+      `select count(*)::int as n from pg_policies where schemaname = 'public'`,
+    );
+    expect(policies.rows[0].n).toBe(0);
+    const kept = await client.query<{ n: number }>(
+      `select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'
+          and p.proname in ('set_incidents_updated_at', 'enforce_safety_circle_member_capacity',
+                            'api_ensure_user_row_trigger', 'audit_log_refuse_change')`,
+    );
+    expect(kept.rows[0].n).toBe(4);
+    const row = await client.query(
+      `select 1 from public.app_config where key = 'client_incidents_backend'`,
+    );
+    expect(row.rowCount).toBe(0);
   });
 
   it('0012 recorded what it removed (for db/rollback/0012_down.sql)', async () => {
@@ -147,16 +157,16 @@ describe('stage 7.6: production state after 0012 (D42)', () => {
   });
 
   it.each([
-    ['authenticated', `select public.submit_emergency_alert('fire')`],
-    ['authenticated', 'select * from public.profiles'],
-    ['authenticated', 'select * from public.incidents'],
-    ['anon', `select public.lookup_circle_invite('x')`],
-    ['anon', 'select * from public.safety_circles'],
-  ])('a Supabase-style call as %s is refused: %s', async (role, sql) => {
+    ['authenticated', `select public.submit_emergency_alert('fire')`, '42883'],
+    ['authenticated', 'select * from public.profiles', '42501'],
+    ['authenticated', 'select * from public.incidents', '42501'],
+    ['anon', `select public.lookup_circle_invite('x')`, '42883'],
+    ['anon', 'select * from public.safety_circles', '42501'],
+  ])('a Supabase-style call as %s is refused: %s', async (role, sql, code) => {
     await client.query('begin');
     try {
       await client.query(`set local role ${role}`);
-      await expect(client.query(sql)).rejects.toMatchObject({ code: '42501' });
+      await expect(client.query(sql)).rejects.toMatchObject({ code });
     } finally {
       await client.query('rollback');
     }

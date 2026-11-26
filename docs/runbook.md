@@ -75,7 +75,10 @@ One build, two process types (same image, `node dist/main.js`):
   written into the repo). Run it before starting the new build (additive migrations are safe for the
   running build).
 - Never run tests, seeds or experiments against a hosted database. `db:seed` is local only.
-- Current state: 0001-0012 applied on `atlas_staging` (0012 = the only non-additive migration, D42).
+- Current state: see `HANDOFF.md` (staging is synced after each push). Non-additive migrations:
+  0012 (D42) and 0025 (D76, the old SQL backend removed). **0025 on staging:** only after Dawit
+  pushes, with a backup or snapshot of `atlas_staging` first; the Supabase Auth custom access token
+  hook must be off (it calls a function 0025 drops; it was switched off with 7.6).
 
 ### 2.4 Rollback of 0012 (retired Supabase paths)
 
@@ -90,6 +93,19 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/rollback/0012_down.sql
 Then re-enable the Supabase Auth settings in the dashboard if the old app must work again. Checks
 before and after: `docs/phase7_handoff.md` §7.6 (107 privilege rows, two publication members, four
 Storage policies after a rollback). Keep 0012 applied otherwise.
+
+### 2.4b Rollback of 0025 (old SQL backend removed, D76)
+
+`db/rollback/0025_down.sql` recreates the 69 functions, the 18 RLS policies and the
+`client_incidents_backend` row exactly as they were after 0012, and unrecords 0025 (one
+transaction, safe to run twice). To roll back 0012 as well, run this first. Only with Dawit's OK:
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/rollback/0025_down.sql
+```
+
+The API does not need anything 0025 removed, so a rollback only matters to restore the old
+database objects themselves.
 
 ### 2.5 Signing keys (`AUTH_JWT_KEYS`) rotation
 
@@ -193,7 +209,7 @@ location sharing start / stop is in `incident_events` (the activity feed), not i
 | 10 | CI: a deliberately red run to prove the gate blocks; deployment checks | team | HANDOFF "Still open for later" |
 | 11 | Worker on its own instance | team | section 2.1 |
 | 12 | The "PRODUCTION" comments in `api/.env` resolved (Dawit edits that file) | Dawit | |
-| 13 | `AUTH_TEST_MAILBOX_ENABLED=false`, `OPENAPI_ENABLED` decided, `SUPABASE_JWT_ACCEPT=false` in production | team | the config refuses the test mailbox in production |
-| 14 | One release after 0012: a migration that drops the old SQL functions (story 62 AC1) | api agent | then the parity suites that call them retire with them |
+| 13 | `AUTH_TEST_MAILBOX_ENABLED=false`, `OPENAPI_ENABLED` decided in production (`SUPABASE_JWT_*` no longer exist, D76) | team | the config refuses the test mailbox in production |
+| 14 | ~~One release after 0012: a migration that drops the old SQL functions (story 62 AC1)~~ Done: 0025 (D76), parity retired | api agent | staging gets 0025 after Dawit's push (backup first) |
 | 15 | The old prototype Supabase project deleted (Dawit) | Dawit | nothing reads it |
 | 16 | Store listings (needed by the App Links fallback) | Dawit | |

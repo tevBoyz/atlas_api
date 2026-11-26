@@ -8,10 +8,8 @@ import { SHARE_FLAGS } from '../../src/modules/profiles/profile.schemas';
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
 import { errorOf } from '../support/circle-api';
 import { openTestClient } from '../support/database';
-import { createUser } from '../support/fixtures';
+import { goneUser } from '../support/test-sessions';
 import {
-  addMedicalItem,
-  asAppUser,
   createAuthUser,
   emergencyInfoBody,
   getProfile,
@@ -218,7 +216,7 @@ describe('profile writes (API-100-35)', () => {
 
     it('a token whose user no longer exists → 401 profiles:not_authenticated (no 23503)', async () => {
       expectError(
-        await putPersonalInfo(app, randomUUID(), personalInfoBody()),
+        await putPersonalInfo(app, await goneUser(client), personalInfoBody()),
         401,
         'profiles:not_authenticated',
       );
@@ -476,103 +474,5 @@ describe('profile writes (API-100-35)', () => {
       }
       expect(after.created_at).toEqual(before.created_at);
     });
-  });
-
-  describe('parity with today’s direct table writes (RLS, spec §7.8)', () => {
-    /** The stored row without the columns that differ by design (timestamps the server now owns). */
-    const comparable = async (id: string) => {
-      const stored = await row(id);
-      const out: Body = {};
-      for (const column of PROFILE_COLUMNS) {
-        // `medical_info_updated_at` is owned by the API (SCRUM-21, D51): the app's writes never set it.
-        if (
-          ['id', 'created_at', 'updated_at', 'medical_info_updated_at', ...SERVER_OWNED].includes(
-            column,
-          )
-        ) {
-          continue;
-        }
-        out[column] = stored[column];
-      }
-      return out;
-    };
-
-    it('the same values give the same stored row through the API and through the app’s writes', async () => {
-      const viaApp = await newAuthUser();
-      const viaApi = await newAuthUser();
-      const personal = personalInfoBody({ full_name: 'Same Name' });
-      const emergency = emergencyInfoBody({ emergency_notes: null, share_allergies: true });
-      const prefs = preferencesBody();
-
-      // Today's app: UPSERT on id, then two UPDATEs, each with its client-side completion time.
-      await asAppUser(
-        client,
-        viaApp,
-        `insert into public.profiles (id, full_name, date_of_birth, gender, avatar_path, personal_info_completed_at)
-         values ($1, $2, $3, $4, $5, now())
-         on conflict (id) do update set full_name = excluded.full_name, date_of_birth = excluded.date_of_birth,
-           gender = excluded.gender, avatar_path = excluded.avatar_path,
-           personal_info_completed_at = excluded.personal_info_completed_at`,
-        [
-          viaApp,
-          personal.full_name,
-          personal.date_of_birth,
-          personal.gender,
-          `${viaApp}/avatar.jpg`,
-        ],
-      );
-      const emergencyColumns = Object.keys(emergency);
-      await asAppUser(
-        client,
-        viaApp,
-        `update public.profiles set ${emergencyColumns.map((c, i) => `${c} = $${i + 2}`).join(', ')},
-           emergency_info_completed_at = now() where id = $1`,
-        [viaApp, ...emergencyColumns.map((c) => (emergency as Body)[c])],
-      );
-      const prefColumns = Object.keys(prefs);
-      await asAppUser(
-        client,
-        viaApp,
-        `update public.profiles set ${prefColumns.map((c, i) => `${c} = $${i + 2}`).join(', ')},
-           preferences_completed_at = now() where id = $1`,
-        [viaApp, ...prefColumns.map((c) => (prefs as Body)[c])],
-      );
-
-      await putPersonalInfo(app, viaApi, { ...personal, avatar_path: `${viaApi}/avatar.jpg` });
-      await putEmergencyInfo(app, viaApi, emergency);
-      // SCRUM-21 (D51): through the API, allergies and conditions are items; the old text columns
-      // then hold what the app's direct write stored.
-      await addMedicalItem(app, viaApi, 'allergies', { text: emergency.allergies });
-      await addMedicalItem(app, viaApi, 'medical-conditions', {
-        text: emergency.medical_conditions,
-      });
-      await putPreferences(app, viaApi, prefs);
-
-      const a = await comparable(viaApp);
-      const b = await comparable(viaApi);
-      expect({ ...b, avatar_path: (b.avatar_path as string).replace(viaApi, 'uid') }).toEqual({
-        ...a,
-        avatar_path: (a.avatar_path as string).replace(viaApp, 'uid'),
-      });
-    });
-  });
-
-  it('a profile written by the app’s direct path is read and updated by the API (and back)', async () => {
-    const user = await createUser(client, { fullName: 'Mixed Writer' });
-    await asAppUser(
-      client,
-      user.id,
-      `update public.profiles set allergies = 'Pollen' where id = $1`,
-      [user.id],
-    );
-    expect((await getProfile(app, user.id)).json<Body>().allergies).toBe('Pollen');
-    await patchSharingFlags(app, user.id, { share_allergies: true });
-    const back = await asAppUser<{ share_allergies: boolean }>(
-      client,
-      user.id,
-      'select share_allergies from public.profiles where id = $1',
-      [user.id],
-    );
-    expect(back[0].share_allergies).toBe(true);
   });
 });

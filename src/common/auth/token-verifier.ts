@@ -3,8 +3,8 @@ import type { AuthenticatedUser } from './authenticated-user';
 /**
  * Verifies a bearer access token and returns the caller (API-100-08 AC5).
  *
- * Behind an interface so own tokens (API-100-51) and the dual-token window (API-100-59) are added
- * without touching the guard: `DualTokenVerifier` picks the implementation per token.
+ * Behind an interface so the guard does not depend on the implementation: `AtlasTokenVerifier`
+ * (the API's own tokens, API-100-51) is the only one since the Supabase tokens were retired (D76).
  *
  * Contract:
  * - resolves with the caller for a valid token;
@@ -36,9 +36,7 @@ export type TokenRejectionReason =
   | 'anonymous'
   | 'invalid_subject'
   // Own tokens (API-100-51): the session is revoked or unknown, or the user is disabled.
-  | 'session_revoked'
-  // Dual-token window (API-100-59): Supabase tokens are no longer accepted.
-  | 'supabase_not_accepted';
+  | 'session_revoked';
 
 /** The token is not acceptable (→ 401 `<fn>:not_authenticated`). Never carries the token. */
 export class TokenRejectedError extends Error {

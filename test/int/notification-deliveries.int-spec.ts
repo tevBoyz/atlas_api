@@ -14,6 +14,7 @@ import type { Channel } from '../../src/modules/notifications/channels/channel.t
 import {
   FAKE_FAIL_TOKEN_PREFIX,
   FAKE_UNREGISTERED_TOKEN_PREFIX,
+  type FakeEmailSender,
   FakePushSender,
   type FakeSmsSender,
 } from '../../src/modules/notifications/channels/fake-senders';
@@ -228,7 +229,7 @@ describe('notification deliveries and retries (API-100-47)', () => {
     }
   });
 
-  it('SMS uses the confirmed API phone, else the auth.users phone; an unconfirmed API phone is no_address (gap 16, D47)', async () => {
+  it('SMS uses the account’s confirmed phone; an unconfirmed phone is no_address (gap 16, D47, D76)', async () => {
     const sms = () => worker.get(ChannelSenders).sms as FakeSmsSender;
     const apiAccount = async (phone: string, confirmed: boolean): Promise<string> => {
       const id = randomUUID();
@@ -244,6 +245,16 @@ describe('notification deliveries and retries (API-100-47)', () => {
     const confirmed = await apiAccount(confirmedPhone, true);
     const unconfirmed = await apiAccount(unconfirmedPhone, false);
     const migrated = await createUser(client, { phone: true });
+    // A phone left only in Supabase's auth.users is never read (D76): no_address.
+    const authOnly = await apiAccount('+447700900953', false);
+    await client.query('update public.users set phone = null where id = $1', [authOnly]);
+    await client.query(
+      `insert into auth.users (instance_id, id, aud, role, email, phone, phone_confirmed_at,
+                               created_at, updated_at)
+       values ('00000000-0000-0000-0000-000000000000', $1, 'authenticated', 'authenticated',
+               $2, '447700900954', now(), now(), now())`,
+      [authOnly, `auth-only-${authOnly}@example.test`],
+    );
     secrets.push(confirmedPhone, unconfirmedPhone);
     const sentBefore = sms().sent.length;
 
@@ -252,20 +263,64 @@ describe('notification deliveries and retries (API-100-47)', () => {
         { user_id: confirmed, eligible: true },
         { user_id: unconfirmed, eligible: true },
         { user_id: migrated.id, eligible: true },
+        { user_id: authOnly, eligible: true },
       ],
       ['sms'],
     );
-    const rows = await settled(outboxId, 3);
+    const rows = await settled(outboxId, 4);
     const of = (id: string) => rows.find((row) => row.recipient_user_id === id);
     expect(of(confirmed)).toMatchObject({ status: 'sent', error_code: null });
     expect(of(unconfirmed)).toMatchObject({ status: 'skipped', error_code: 'no_address' });
     expect(of(migrated.id)).toMatchObject({ status: 'sent' });
+    expect(of(authOnly)).toMatchObject({ status: 'skipped', error_code: 'no_address' });
     expect(
       sms()
         .sent.slice(sentBefore)
         .map((m) => m.to)
         .sort(),
     ).toEqual([confirmedPhone, migrated.phone].sort());
+  });
+
+  it('gap 21 (D76): an email alert goes to the account’s email from public.users', async () => {
+    const email = () => worker.get(ChannelSenders).email as FakeEmailSender;
+    // An account made by the API's own sign-up: public.users only, no auth.users row at all.
+    const id = randomUUID();
+    const address = `gap21-${id}@example.test`;
+    await client.query(
+      `insert into public.users (id, email, email_confirmed_at, metadata)
+       values ($1, $2, now(), '{}'::jsonb)`,
+      [id, address],
+    );
+    expect((await client.query('select 1 from auth.users where id = $1', [id])).rowCount).toBe(0);
+    // An account without any email: no_address, even when auth.users holds one (never read).
+    const noEmail = randomUUID();
+    await client.query(`insert into public.users (id, metadata) values ($1, '{}'::jsonb)`, [
+      noEmail,
+    ]);
+    await client.query(
+      `insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+       values ('00000000-0000-0000-0000-000000000000', $1, 'authenticated', 'authenticated',
+               $2, now(), now())`,
+      [noEmail, `auth-only-${noEmail}@example.test`],
+    );
+    const sentBefore = email().sent.length;
+
+    const outboxId = await notify(
+      [
+        { user_id: id, eligible: true },
+        { user_id: noEmail, eligible: true },
+      ],
+      ['email'],
+    );
+    const rows = await settled(outboxId, 2);
+    const of = (userId: string) => rows.find((row) => row.recipient_user_id === userId);
+    expect(of(id)).toMatchObject({ status: 'sent', error_code: null });
+    expect(of(noEmail)).toMatchObject({ status: 'skipped', error_code: 'no_address' });
+    expect(
+      email()
+        .sent.slice(sentBefore)
+        .map((m) => m.to),
+    ).toEqual([address]);
   });
 
   it('idempotent by outbox id: a second fan-out of the same row adds no row and sends nothing', async () => {

@@ -1111,17 +1111,6 @@
         ],
         "type": "object"
       },
-      "ExchangeRequest": {
-        "properties": {
-          "device": {
-            "$ref": "#/components/schemas/DeviceInfo"
-          }
-        },
-        "required": [
-          "device"
-        ],
-        "type": "object"
-      },
       "Gender": {
         "enum": [
           "female",
@@ -5049,185 +5038,6 @@
         ]
       }
     },
-    "/v1/auth/exchange": {
-      "post": {
-        "operationId": "exchangeSupabaseSession",
-        "parameters": [
-          {
-            "description": "The app installation id (the same UUID as for `PUT /v1/me/devices/current`). Links the new session to that device, so signing out clears its push token.",
-            "in": "header",
-            "name": "X-Atlas-Installation-Id",
-            "required": false,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExchangeRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Session"
-                }
-              }
-            },
-            "description": "An API session for the user of the Supabase access token sent as the bearer. Keep using the Supabase session no longer: this API session replaces it."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "auth:not_authenticated",
-                    "details": {},
-                    "message": "Sign in to continue."
-                  }
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Missing, invalid or expired access token",
-            "x-error-codes": [
-              "auth:not_authenticated"
-            ]
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "auth:exchange_not_allowed",
-                    "details": {},
-                    "message": "This session cannot be moved."
-                  }
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Not allowed",
-            "x-error-codes": [
-              "auth:exchange_not_allowed",
-              "auth:user_disabled"
-            ]
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "auth:session_already_exchanged",
-                    "details": {},
-                    "message": "This session was already moved. Sign in again."
-                  }
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Conflict",
-            "x-error-codes": [
-              "auth:session_already_exchanged"
-            ]
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "auth:invalid_device",
-                    "details": {},
-                    "message": "The device details are not valid."
-                  }
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Invalid request",
-            "x-error-codes": [
-              "auth:invalid_device",
-              "validation:invalid_request"
-            ]
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "rate_limit:exceeded",
-                    "details": {},
-                    "message": "Too many requests. Try again later."
-                  }
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Too many requests",
-            "headers": {
-              "Retry-After": {
-                "description": "Seconds to wait before retrying.",
-                "schema": {
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              }
-            },
-            "x-error-codes": [
-              "rate_limit:exceeded"
-            ]
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "internal:error",
-                    "details": {},
-                    "message": "Something went wrong. Try again later."
-                  }
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Unexpected error",
-            "x-error-codes": [
-              "internal:error"
-            ]
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "Move a signed-in Supabase session to an API session (once, at the app switch)",
-        "tags": [
-          "auth"
-        ]
-      }
-    },
     "/v1/auth/lockout-status": {
       "get": {
         "operationId": "loginLockoutStatus",
@@ -5534,7 +5344,7 @@
         "operationId": "signOut",
         "responses": {
           "204": {
-            "description": "Signed out on this device. With a Supabase access token (dual-token window) there is no API session to end: 204, nothing changes."
+            "description": "Signed out on this device."
           },
           "401": {
             "content": {

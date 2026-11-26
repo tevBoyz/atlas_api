@@ -4,6 +4,8 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { TestingModule } from '@nestjs/testing';
 import type { Client } from 'pg';
 
+import { JobQueues } from '../../src/jobs/job-queues.service';
+import { OUTBOX_QUEUE } from '../../src/jobs/jobs.constants';
 import { IncidentCloseSweeper } from '../../src/modules/incidents/incident-close-sweeper';
 import { AlertDeliveryOutcomes } from '../../src/modules/notifications/alert-delivery-outcomes';
 import { FAKE_FAIL_TOKEN_PREFIX } from '../../src/modules/notifications/channels/fake-senders';
@@ -152,6 +154,22 @@ describe('incident audit trail (SCRUM-74, D75)', () => {
       );
       expect(r).toEqual({ total: rows, open: 0 });
     });
+    // SCRUM-65/71: after its fan-out each outbox job re-checks the members' delivery status (and may
+    // hold the incident row for that); wait until those jobs are done too, so nothing the worker
+    // still does overlaps the next step (e.g. the sweeper skips a locked row).
+    const outboxIds = await query<{ id: string }>(
+      `select distinct d.outbox_id::text as id
+         from public.notification_deliveries d
+         join public.notification_outbox o on o.id = d.outbox_id
+        where d.incident_id = $1 and o.topic in ('incident.created', 'incident.renotified')`,
+      [incidentId],
+    );
+    const outbox = worker.get(JobQueues).queue(OUTBOX_QUEUE);
+    await waitLong(async () => {
+      for (const { id } of outboxIds) {
+        expect(await (await outbox.getJob(id))?.getState()).toBe('completed');
+      }
+    });
   }
 
   describe('every AC item writes its audit row', () => {
@@ -278,7 +296,8 @@ describe('incident audit trail (SCRUM-74, D75)', () => {
         expect(outcome.detail.channel).toBe('push');
       }
       const text = JSON.stringify(outcomes);
-      expect(text).not.toMatch(/fake-|token|Ada|Fay|Ned|medical/i);
+      // Names case-sensitive: the ids are lowercase hex, where "ada" can occur by chance.
+      expect(text).not.toMatch(/fake-|token|Ada|Fay|Ned|medical/);
     });
 
     it('the delivery_failed notice: once per failed member, ids and the reason only', async () => {

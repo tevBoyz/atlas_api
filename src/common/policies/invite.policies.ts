@@ -16,11 +16,11 @@ import {
  * `invite.recipient(row)` (spec §11.4, §6.3 rule 18; SQL `_circle_invite_recipient_ok` and
  * `_normalize_e164`, migration 20261019170000):
  * - a claimed row (`user_id` set) is only for that user;
- * - a phone invite (`phone` set) needs the caller's Auth phone, normalized, to be non-null and equal
+ * - a phone invite (`phone` set) needs the caller's account phone, normalized, to be non-null and equal
  *   to the row phone normalized;
  * - a link invite (`phone` null) accepts any holder of the current token.
- * The caller's phone is {@link callerPhoneSql} (D47: the API account's CONFIRMED phone, else
- * `auth.users.phone` as `_auth_user_phone` reads it), never from the token. Lookup status
+ * The caller's phone is {@link callerPhoneSql} (D47, D76: the account's CONFIRMED phone in
+ * `public.users`), never from the token. Lookup status
  * (pending/expired/...) is the operation's job, not this rule's.
  */
 
@@ -71,18 +71,14 @@ export function isInviteRecipient(
 }
 
 /**
- * D47 (gap 16): the caller's phone for invite matching and SMS, as stored (not normalized):
- * `public.users.phone` when `phone_confirmed_at` is set (accounts made or changed by the API's own
- * auth, Phase 6), else `auth.users.phone` (migrated / Supabase accounts, exactly what the SQL
- * `_auth_user_phone` reads). An unconfirmed API phone never matches; a user with neither gets null.
- * The SQL functions read `auth.users` only (a deliberate divergence, D47). `uid` is a uuid SQL
- * expression.
+ * D47 (gap 16), D76: the caller's phone for invite matching and SMS, as stored (not normalized):
+ * `public.users.phone` when `phone_confirmed_at` is set. An unconfirmed phone never matches; a user
+ * without one gets null. The API reads only `public.users` (never Supabase's `auth.users`, D76).
+ * `uid` is a uuid SQL expression.
  */
 export function callerPhoneSql(uid: SQL): SQL {
-  return sql`coalesce(
-    (select nullif(btrim(cp_u.phone), '') from public.users cp_u
-      where cp_u.id = ${uid} and cp_u.phone_confirmed_at is not null),
-    (select cp_a.phone from auth.users cp_a where cp_a.id = ${uid}))`;
+  return sql`(select nullif(btrim(cp_u.phone), '') from public.users cp_u
+      where cp_u.id = ${uid} and cp_u.phone_confirmed_at is not null)`;
 }
 
 export interface InviteMemberRef {

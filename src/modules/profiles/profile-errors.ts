@@ -6,7 +6,7 @@ import { DomainError, type ErrorCode } from '../../common/errors';
  * so this is a backstop for a writer that changed the row in between, or a schema that changed.
  *
  * - 23514 (check violation): the constraint names the field (spec §4.2 constraint names);
- * - 23503 on `profiles_id_fkey`: the token's user has no `auth.users` row (deleted account) →
+ * - 23503 on `profiles_id_fkey`: the token's user has no `users` row (deleted account) →
  *   `profiles:not_authenticated` (401), as an unknown user;
  * - 22007 / 22008 (date input): `profiles:invalid_date_of_birth`;
  * - 23505 on a medical list's `*_user_text_uidx` (SCRUM-21): `profiles:duplicate_medical_item`.

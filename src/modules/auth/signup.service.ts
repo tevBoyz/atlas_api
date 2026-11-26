@@ -9,7 +9,6 @@ import { AuthLimits } from './auth-limits';
 import { AuthLinksRepository } from './auth-links.repository';
 import { AuthMessenger, type LinkKind } from './auth-messenger';
 import { type AuthTx, runAuthTransaction } from './auth-transaction';
-import { LegacyUsers } from './legacy-users';
 import { PASSWORD_HASHER, type PasswordHasher } from './password-hasher';
 import type { ClientContext } from './sessions.repository';
 import { type SessionJson, SessionsService } from './sessions.service';
@@ -48,7 +47,6 @@ export class SignupService {
     private readonly messenger: AuthMessenger,
     private readonly limits: AuthLimits,
     private readonly audit: AuditService,
-    private readonly legacy: LegacyUsers,
     private readonly config: ApiConfigService,
     @Inject(PASSWORD_HASHER) private readonly hasher: PasswordHasher,
   ) {}
@@ -64,9 +62,6 @@ export class SignupService {
   async signup(input: SignupInput): Promise<SignupAccepted> {
     await this.limits.takeSend('email', input.email, 'auth:over_email_send_rate_limit');
     const credential = await this.hasher.hash(input.password);
-    // An account still only in Supabase Auth (signed up through the old app) is moved first, so
-    // the address is "existing" below and never gets a second account (API-100-58).
-    await this.legacy.migrateByEmail(input.email);
     const queued = await runAuthTransaction(this.database, async (tx) => {
       const existing = await this.users.byEmail(tx, input.email);
       if (existing) {
@@ -159,7 +154,6 @@ export class SignupService {
   /** A3: always 202 (429 past the per-address limit). */
   async resend(email: string, purpose: EmailPurpose): Promise<void> {
     await this.limits.takeSend('email', email, 'auth:over_email_send_rate_limit');
-    await this.legacy.migrateByEmail(email);
     const queued = await runAuthTransaction(this.database, async (tx) => {
       const user = await this.users.byEmail(tx, email);
       if (!user || user.disabled) return undefined;

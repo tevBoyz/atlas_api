@@ -1,24 +1,18 @@
 import { createParamDecorator, type ExecutionContext } from '@nestjs/common';
 
 /**
- * The verified caller of an authenticated route (API-100-08 AC3). Built only from the access
- * token's claims: the guard never reads `auth.users` or `profiles` (each operation checks what it
- * needs, e.g. `profile_not_found`).
+ * The verified caller of an authenticated route (API-100-08 AC3). Built only from the API's own
+ * access token (`sub`, `sid`) and the live session check: the guard never reads `users` or
+ * `profiles` (each operation checks what it needs, e.g. `profile_not_found`).
  *
- * `email` / `phone` are the token's claims as issued (null when absent or empty). They are NOT
- * authorization inputs: the SQL functions read the Auth row (e.g. `_auth_user_phone`), so parity
- * code must do the same.
+ * `email` / `phone` are always null on own tokens (they carry neither claim). They are NOT
+ * authorization inputs: operations read the account row (`public.users`) when they need them.
  */
 export interface AuthenticatedUser {
-  /** `sub`: the user id (auth.users.id), lowercase uuid. */
+  /** `sub`: the user id (`users.id`), lowercase uuid. */
   readonly id: string;
-  /** Who issued the token: Supabase Auth, or the API itself (own tokens, API-100-51). */
-  readonly issuer: 'supabase' | 'atlas';
-  /**
-   * Own token: `sid`, the `device_sessions` id (always set). Supabase token: the `session_id` claim
-   * when present (a Supabase Auth session, not a row of this API), else null.
-   */
-  readonly sessionId: string | null;
+  /** `sid`: the caller's `device_sessions` id, lowercase uuid. */
+  readonly sessionId: string;
   readonly email: string | null;
   readonly phone: string | null;
 }

@@ -7,12 +7,12 @@ import { createTestApp } from '../../src/testing/test-app';
 import { authHeader } from '../../src/testing/test-tokens';
 import { openTestClient } from '../support/database';
 import { createUser } from '../support/fixtures';
-import { callSqlAs, getLiveLocationConfig } from '../support/incident-api';
+import { getLiveLocationConfig } from '../support/incident-api';
 
 /**
- * `GET /v1/config/live-location` (API-100-17 AC1) against `get_live_location_config()` on the same
- * `app_config` values: what counts as "a number", the 12 / 45 fallbacks, and the values the SQL
- * function raises on. Each test restores the seeded values.
+ * `GET /v1/config/live-location` (API-100-17 AC1) on `app_config` values: what counts as "a
+ * number", the 12 / 45 fallbacks, and the values that answer 500. Each test restores the seeded
+ * values.
  */
 type Body = Record<string, unknown>;
 
@@ -64,12 +64,10 @@ describe('GET /v1/config/live-location (API-100-17)', () => {
     );
   });
 
-  it('seeded values: {"interval_seconds":12,"stale_threshold_seconds":45}, the SQL bytes', async () => {
+  it('seeded values: {"interval_seconds":12,"stale_threshold_seconds":45}, exact bytes', async () => {
     const res = await getLiveLocationConfig(app, userId);
     expect(res.statusCode).toBe(200);
     expect(res.body).toBe('{"interval_seconds":12,"stale_threshold_seconds":45}');
-    const viaSql = await callSqlAs(client, userId, 'public.get_live_location_config()');
-    expect(res.body).toBe(JSON.stringify(viaSql));
   });
 
   it('a user without a profile, and an unknown user id, get it too (any valid token)', async () => {
@@ -95,32 +93,24 @@ describe('GET /v1/config/live-location (API-100-17)', () => {
     ['negative zero', '-0', '-0', 12, 45],
     ['an exponent that is an integer (1e2 is 100)', '1e2', '2.0e1', 100, 20],
     ['int4 max', '2147483647', '1', 2147483647, 1],
-  ])('%s → same as the SQL function', async (_name, interval, stale, i, s) => {
+  ])('%s', async (_name, interval, stale, i, s) => {
     await setValue(INTERVAL, interval);
     await setValue(STALE, stale);
     const res = await getLiveLocationConfig(app, userId);
     expect(res.statusCode).toBe(200);
     expect(res.json<Body>()).toEqual({ interval_seconds: i, stale_threshold_seconds: s });
-    const viaSql = await callSqlAs(client, userId, 'public.get_live_location_config()');
-    expect(res.body).toBe(JSON.stringify(viaSql));
   });
 
   it.each([
-    ['a decimal', '12.5', '22P02'],
-    ['an integer written with a fraction', '12.0', '22P02'],
-    ['out of int4 range', '2147483648', '22003'],
-  ])(
-    'SQL difference kept: %s makes the function raise; the API answers 500',
-    async (_name, value, sqlState) => {
-      await setValue(INTERVAL, value);
-      await expect(
-        callSqlAs(client, userId, 'public.get_live_location_config()'),
-      ).rejects.toMatchObject({ code: sqlState });
-      const res = await getLiveLocationConfig(app, userId);
-      expect(res.statusCode).toBe(500);
-      expect(res.json<{ error: { code: string } }>().error.code).toBe('internal:error');
-    },
-  );
+    ['a decimal', '12.5'],
+    ['an integer written with a fraction', '12.0'],
+    ['out of int4 range', '2147483648'],
+  ])('%s: the API answers 500 internal:error', async (_name, value) => {
+    await setValue(INTERVAL, value);
+    const res = await getLiveLocationConfig(app, userId);
+    expect(res.statusCode).toBe(500);
+    expect(res.json<{ error: { code: string } }>().error.code).toBe('internal:error');
+  });
 
   it('reads nothing but app_config and writes nothing', async () => {
     const before = (

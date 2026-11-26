@@ -35,7 +35,13 @@ async function compileWithEnv(env: Record<string, string>) {
   return { moduleRef, config: moduleRef.get(ApiConfigService) };
 }
 
-const KEYS = ['NODE_ENV', 'PORT', 'LOG_LEVEL', 'CHANNEL_PUSH_ENABLED', 'SUPABASE_JWT_SECRET'];
+const KEYS = [
+  'NODE_ENV',
+  'PORT',
+  'LOG_LEVEL',
+  'CHANNEL_PUSH_ENABLED',
+  'SUPABASE_STORAGE_SERVICE_KEY',
+];
 
 describe('ApiConfigModule (API-100-02)', () => {
   const saved: Record<string, string | undefined> = {};
@@ -71,10 +77,10 @@ describe('ApiConfigModule (API-100-02)', () => {
   it('never serializes or inspects to its values', async () => {
     const { moduleRef, config } = await compileWithEnv({
       NODE_ENV: 'test',
-      SUPABASE_JWT_SECRET: 'fake-secret-for-tests-0123456789-LEAK',
+      SUPABASE_STORAGE_SERVICE_KEY: 'fake-secret-for-tests-0123456789-LEAK',
     });
 
-    expect(config.get('SUPABASE_JWT_SECRET')).toContain('LEAK');
+    expect(config.get('SUPABASE_STORAGE_SERVICE_KEY')).toContain('LEAK');
     expect(JSON.stringify({ config })).not.toContain('LEAK');
     expect(inspect(config)).not.toContain('LEAK');
     await moduleRef.close();

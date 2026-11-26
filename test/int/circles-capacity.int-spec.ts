@@ -19,9 +19,8 @@ import {
   errorOf,
   getCapacity,
   getOwnCircle,
-  ownCircleViaRls,
-  sqlAs,
-  sqlErrorAs,
+  listMembers,
+  ownCircleRow,
 } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
@@ -36,10 +35,9 @@ import {
 
 /**
  * `GET /v1/me/circle/capacity` (`circle_invite_capacity`) and `GET /v1/me/circle` (spec §11.3 C1),
- * API-100-24, beyond the SQL scripts: what counts as a used slot (rule 8, every row state), the
- * shared `holdsSlot` rule in TypeScript and SQL against the baseline helpers, interchangeability with
- * the SQL function and the app's RLS read (same JSON text), no `invite_token`, and one consistent
- * snapshot while invites are created and expire.
+ * API-100-24: what counts as a used slot (rule 8, every row state), the shared `holdsSlot` rule in
+ * TypeScript and SQL against the capacity trigger's helper, the exact JSON text, no
+ * `invite_token`, and one consistent snapshot while invites are created and expire.
  */
 type Body = Record<string, unknown>;
 type Member = Record<string, unknown>;
@@ -128,7 +126,7 @@ describe('own circle and capacity (API-100-24)', () => {
       });
     });
 
-    it('counts active + valid pending, owner excluded; same JSON text as circle_invite_capacity()', async () => {
+    it('counts active + valid pending, owner excluded; exact JSON text', async () => {
       const reply = await getCapacity(app, owner.id);
       expect(reply.statusCode).toBe(200);
       expect(reply.json()).toEqual({
@@ -138,9 +136,10 @@ describe('own circle and capacity (API-100-24)', () => {
         used: 3,
         available: 2,
       });
-      const viaSql = await sqlAs<Body>(client, owner.id, 'public.circle_invite_capacity()');
-      // Same keys in the same (jsonb) order and the same integer types: byte-equal JSON.
-      expect(reply.body).toBe(JSON.stringify(viaSql));
+      // Same keys in the same order and integer types: byte-equal JSON.
+      expect(reply.body).toBe(
+        '{"used":3,"limit":5,"available":2,"active_count":2,"pending_count":1}',
+      );
     });
 
     it('a pending row that is canceled or consumed (not stored as declined/active) holds no slot', async () => {
@@ -149,9 +148,6 @@ describe('own circle and capacity (API-100-24)', () => {
       try {
         const body = (await getCapacity(app, owner.id)).json<Body>();
         expect(body).toMatchObject({ pending_count: 1, used: 3 });
-        expect(JSON.stringify(body)).toBe(
-          JSON.stringify(await sqlAs(client, owner.id, 'public.circle_invite_capacity()')),
-        );
       } finally {
         await client.query('delete from public.safety_circle_members where id = any($1)', [
           [canceled, consumed],
@@ -159,7 +155,7 @@ describe('own circle and capacity (API-100-24)', () => {
       }
     });
 
-    it('available never goes below 0 (rows past the trigger, as the SQL test inserts them)', async () => {
+    it('available never goes below 0 (rows past the trigger)', async () => {
       const fullOwner = await createUser(client, { fullName: 'Overfull Owner' });
       const full = await createCircle(client, fullOwner);
       await client.query(
@@ -182,9 +178,6 @@ describe('own circle and capacity (API-100-24)', () => {
         used: 6,
         available: 0,
       });
-      expect(reply.body).toBe(
-        JSON.stringify(await sqlAs(client, fullOwner.id, 'public.circle_invite_capacity()')),
-      );
     });
 
     it('no location-sharing or setup check: an owner with sharing off still gets the capacity', async () => {
@@ -211,9 +204,6 @@ describe('own circle and capacity (API-100-24)', () => {
         const reply = await getCapacity(app, user.id);
         expect(reply.statusCode).toBe(403);
         expect(errorOf(reply).code).toBe('circle_invite_capacity:not_owner');
-        expect(await sqlErrorAs(client, user.id, 'public.circle_invite_capacity()')).toBe(
-          'circle_invite_capacity:not_owner',
-        );
       }
     });
 
@@ -233,11 +223,11 @@ describe('own circle and capacity (API-100-24)', () => {
         const reply = await getOwnCircle(app, user.id);
         expect(reply.statusCode).toBe(200);
         expect(reply.body).toBe('{"circle":null,"members":[],"capacity":null}');
-        expect(await ownCircleViaRls(client, user.id)).toBeNull();
+        expect(await ownCircleRow(client, user.id)).toBeNull();
       }
     });
 
-    it('circle = the RLS row, members = owner view of list_circle_members, capacity = circle_invite_capacity (same JSON text); no invite_token', async () => {
+    it('circle = the stored row, members = the owner view of the member list, capacity = the capacity read (same JSON text); no invite_token', async () => {
       const owner = await createUser(client, { fullName: 'Whole Circle Owner' });
       const circle = await createCircle(client, owner);
       const ben = await createUser(client, { fullName: 'Ben Active' });
@@ -251,7 +241,7 @@ describe('own circle and capacity (API-100-24)', () => {
       expect(Object.keys(body)).toEqual(['circle', 'members', 'capacity']);
 
       expect(JSON.stringify(body.circle)).toBe(
-        JSON.stringify(await ownCircleViaRls(client, owner.id)),
+        JSON.stringify(await ownCircleRow(client, owner.id)),
       );
       expect(Object.keys(body.circle)).toEqual([
         'id',
@@ -260,14 +250,8 @@ describe('own circle and capacity (API-100-24)', () => {
         'created_at',
         'updated_at',
       ]);
-      expect(JSON.stringify(body.members)).toBe(
-        JSON.stringify(
-          await sqlAs(client, owner.id, 'public.list_circle_members($1)', [circle.id]),
-        ),
-      );
-      expect(JSON.stringify(body.capacity)).toBe(
-        JSON.stringify(await sqlAs(client, owner.id, 'public.circle_invite_capacity()')),
-      );
+      expect(JSON.stringify(body.members)).toBe((await listMembers(app, owner.id, circle.id)).body);
+      expect(JSON.stringify(body.capacity)).toBe((await getCapacity(app, owner.id)).body);
       expect(body.members.map((m) => [m.display_name, m.status])).toEqual([
         ['Whole Circle Owner', 'active'],
         ['Ben Active', 'active'],
@@ -286,7 +270,7 @@ describe('own circle and capacity (API-100-24)', () => {
     });
   });
 
-  describe('holdsSlot / inviteLookupStatus: TypeScript = SQL form = baseline helper', () => {
+  describe('holdsSlot / inviteLookupStatus: TypeScript = SQL form (= the capacity trigger helper for holdsSlot)', () => {
     // Every state that matters, relative to the database's now(); `+0` is "exactly now".
     const expiries = [
       'null',
@@ -339,7 +323,6 @@ describe('own circle and capacity (API-100-24)', () => {
           invite_consumed_at: string | null;
           helper_holds: boolean;
           api_holds: boolean;
-          helper_lookup: string;
           api_lookup: string;
           api_shown: string;
         }>(sql`
@@ -348,7 +331,6 @@ describe('own circle and capacity (API-100-24)', () => {
                  m.invite_canceled_at::text, m.invite_consumed_at::text,
                  public._circle_invite_holds_slot(m) as helper_holds,
                  ${holdsSlotSql(m)} as api_holds,
-                 public._circle_invite_lookup_status(m) as helper_lookup,
                  ${inviteLookupStatusSql(m)} as api_lookup,
                  ${shownMemberStatusSql(m)} as api_shown
             from unnest(array[${sql.raw(cases.join(',\n'))}]) as c(j)
@@ -366,10 +348,9 @@ describe('own circle and capacity (API-100-24)', () => {
           };
           expect(row.api_holds).toBe(row.helper_holds);
           expect(holdsSlot(slotRow, row.now)).toBe(row.helper_holds);
-          expect(row.api_lookup).toBe(row.helper_lookup);
-          expect(inviteLookupStatus(slotRow, row.now)).toBe(row.helper_lookup);
+          expect(inviteLookupStatus(slotRow, row.now)).toBe(row.api_lookup);
           const sqlShown =
-            row.status === 'pending' && row.helper_lookup === 'expired' ? 'expired' : row.status;
+            row.status === 'pending' && row.api_lookup === 'expired' ? 'expired' : row.status;
           expect(row.api_shown).toBe(sqlShown);
           expect(shownMemberStatus(slotRow, row.now)).toBe(sqlShown);
           if (row.helper_holds) holding += 1;

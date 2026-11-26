@@ -10,7 +10,6 @@ import { AuthLimits, LOGIN_CLEAR_LIMIT } from './auth-limits';
 import { AuthLinksRepository } from './auth-links.repository';
 import { AuthMessenger } from './auth-messenger';
 import { runAuthTransaction } from './auth-transaction';
-import { LegacyUsers } from './legacy-users';
 import { LockoutRepository } from './lockout.repository';
 import { PASSWORD_HASHER, type PasswordHasher } from './password-hasher';
 import type { ClientContext } from './sessions.repository';
@@ -42,7 +41,6 @@ export class PasswordResetService {
     private readonly messenger: AuthMessenger,
     private readonly limits: AuthLimits,
     private readonly audit: AuditService,
-    private readonly legacy: LegacyUsers,
     private readonly config: ApiConfigService,
     @Inject(PASSWORD_HASHER) private readonly hasher: PasswordHasher,
   ) {}
@@ -50,7 +48,6 @@ export class PasswordResetService {
   /** A14. */
   async forgot(email: string): Promise<void> {
     await this.limits.takeSend('email', email, 'auth:over_email_send_rate_limit');
-    await this.legacy.migrateByEmail(email);
     const token = await runAuthTransaction(this.database, async (tx) => {
       const user = await this.users.byEmail(tx, email);
       if (!user || user.disabled) return undefined;

@@ -3,6 +3,9 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { userRoom } from '../../src/realtime/realtime.constants';
 import { RealtimeGateway } from '../../src/realtime/realtime.gateway';
 import { createTestApp, type LogCapture } from '../../src/testing/test-app';
+import { randomUUID } from 'node:crypto';
+
+import { throwawayJwk } from '../../src/testing/test-auth-keys';
 import { signTestToken } from '../../src/testing/test-tokens';
 import {
   connectError,
@@ -68,8 +71,9 @@ describe('realtime gateway (API-100-39)', () => {
       ['a token that is not a string', { auth: { token: 42 } }],
       ['a malformed token', { auth: { token: 'not-a-jwt' } }],
       ['an expired token', { expiresInSeconds: -60 }],
-      ['a token signed with another key', { secret: 'another-secret-another-secret-0123456789' }],
-      ['an anonymous token', { claims: { is_anonymous: true } }],
+      ['a token signed with another key', { jwk: throwawayJwk(process.env.AUTH_JWT_ACTIVE_KID!) }],
+      ['a token whose session is not live', { claims: { sid: randomUUID() } }],
+      ['a Supabase-style token (retired, D76)', { typ: 'JWT' }],
       ['a token with a non-uuid subject', { claims: { sub: 'not-a-uuid' } }],
     ])('refuses %s with connect_error auth:session_expired', async (_name, options) => {
       const err = await connectError(urlA, ALICE, options);

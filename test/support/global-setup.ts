@@ -12,14 +12,12 @@ import { assertSafeTarget } from '../../src/db/tooling/target-guard';
 import {
   POSTGRES_IMAGE,
   PRE_0012_TEMPLATE_DATABASE,
-  PRODUCTION_TEMPLATE_DATABASE,
   REDIS_DATABASES,
   REDIS_IMAGE,
   RETIREMENT_MIGRATION_NUMBER,
   STACK_ENV,
   TEMPLATE_DATABASE,
 } from './stack';
-import { applyTestHarnessRegrant } from './test-harness-grants';
 
 /**
  * Jest globalSetup (API-100-13 AC1): one Postgres and one Redis container per run, on random host
@@ -45,31 +43,37 @@ declare global {
 }
 
 export function startPostgres(password: string): Promise<StartedTestContainer> {
-  return new GenericContainer(POSTGRES_IMAGE)
-    .withEnvironment({
-      POSTGRES_PASSWORD: password,
-      PGPASSWORD: password,
-      JWT_SECRET: randomBytes(32).toString('hex'),
-      JWT_EXP: '3600',
-    })
-    .withExposedPorts(PG_PORT)
-    .withCopyFilesToContainer([
-      { source: resolve('db/local/supabase-services-shim.sql'), target: SHIM_TARGET },
-    ])
-    .withHealthCheck({
-      // Healthy only once the image's init (including the shim) has finished: as in compose.
-      test: [
-        'CMD-SHELL',
-        `psql -h localhost -U postgres -d postgres -Atqc "select to_regclass('storage.buckets') is not null" | grep -q t`,
-      ],
-      interval: 1_000,
-      timeout: 5_000,
-      retries: 120,
-      startPeriod: 5_000,
-    })
-    .withWaitStrategy(Wait.forHealthCheck())
-    .withStartupTimeout(STARTUP_TIMEOUT_MS)
-    .start();
+  return (
+    new GenericContainer(POSTGRES_IMAGE)
+      .withEnvironment({
+        POSTGRES_PASSWORD: password,
+        PGPASSWORD: password,
+        JWT_SECRET: randomBytes(32).toString('hex'),
+        JWT_EXP: '3600',
+      })
+      // The image's own command plus more connection slots: every worker runs an app pool, a test
+      // client, the session seeder and the race tests' extra connections at once (the default 100
+      // ran out under full-suite load). Throwaway test container only.
+      .withCommand(['postgres', '-D', '/etc/postgresql', '-c', 'max_connections=300'])
+      .withExposedPorts(PG_PORT)
+      .withCopyFilesToContainer([
+        { source: resolve('db/local/supabase-services-shim.sql'), target: SHIM_TARGET },
+      ])
+      .withHealthCheck({
+        // Healthy only once the image's init (including the shim) has finished: as in compose.
+        test: [
+          'CMD-SHELL',
+          `psql -h localhost -U postgres -d postgres -Atqc "select to_regclass('storage.buckets') is not null" | grep -q t`,
+        ],
+        interval: 1_000,
+        timeout: 5_000,
+        retries: 120,
+        startPeriod: 5_000,
+      })
+      .withWaitStrategy(Wait.forHealthCheck())
+      .withStartupTimeout(STARTUP_TIMEOUT_MS)
+      .start()
+  );
 }
 
 export function startRedis(): Promise<StartedTestContainer> {
@@ -95,11 +99,21 @@ async function withClient<T>(url: string, fn: (client: Client) => Promise<T>): P
 async function freezeTemplate(adminMaintenanceUrl: string, name: string): Promise<void> {
   await withClient(adminMaintenanceUrl, async (client) => {
     // CREATE DATABASE needs an idle source: the image's background workers are disconnected first.
-    await client.query(
-      `select pg_terminate_backend(pid) from pg_stat_activity
-        where datname = 'postgres' and pid <> pg_backend_pid()`,
-    );
-    await client.query(`create database ${name} template postgres owner postgres`);
+    // A worker may reconnect between the terminate and the copy (55006 "being accessed by other
+    // users"): terminate again and retry, a few times.
+    for (let attempt = 1; ; attempt++) {
+      await client.query(
+        `select pg_terminate_backend(pid) from pg_stat_activity
+          where datname = 'postgres' and pid <> pg_backend_pid()`,
+      );
+      try {
+        await client.query(`create database ${name} template postgres owner postgres`);
+        break;
+      } catch (error) {
+        if ((error as { code?: string }).code !== '55006' || attempt >= 20) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
     await client.query(`alter database ${name} with is_template true allow_connections false`);
   });
 }
@@ -119,10 +133,9 @@ async function runMigrationsBefore(client: Client, number: number): Promise<void
 }
 
 /**
- * Baseline + API migrations as the API role, in three frozen steps: before 0012 (the rollback
- * test), all migrations = the production state of 0012 / D42 (the production-state test), then the
- * test harness re-grant (`test-harness-grants.ts`, test databases only) = the template every worker
- * database clones.
+ * Baseline + API migrations as the API role, in two frozen steps: before 0012 (the rollback test
+ * and the frozen-baseline SQL tests), then all migrations = the production state, the template
+ * every worker database clones.
  */
 async function buildTemplate(apiUrl: string, adminMaintenanceUrl: string): Promise<void> {
   await withClient(apiUrl, async (client) => {
@@ -131,8 +144,6 @@ async function buildTemplate(apiUrl: string, adminMaintenanceUrl: string): Promi
   });
   await freezeTemplate(adminMaintenanceUrl, PRE_0012_TEMPLATE_DATABASE);
   await withClient(apiUrl, (client) => runMigrations(client, resolve('db/migrations'), silent));
-  await freezeTemplate(adminMaintenanceUrl, PRODUCTION_TEMPLATE_DATABASE);
-  await withClient(apiUrl, applyTestHarnessRegrant);
   await freezeTemplate(adminMaintenanceUrl, TEMPLATE_DATABASE);
 }
 

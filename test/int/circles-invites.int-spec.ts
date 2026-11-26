@@ -13,8 +13,6 @@ import {
   inviteBatch,
   lookupInvite,
   resendInvite,
-  sqlAs,
-  sqlRolledBack,
 } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
@@ -28,10 +26,9 @@ import {
 
 /**
  * The owner's invitations (API-100-26 invite by phone and batch, API-100-27 link, API-100-28 resend
- * and cancel) beyond the SQL scripts: every acceptance criterion, the check order and codes against
- * the SQL functions, the exact JSON, row effects and codes of the SQL function for the same state and
- * caller (interchangeability), audit without personal data, Idempotency-Key, and that no route of
- * this round can make a member row `active` (spec §4.4 "known bypass").
+ * and cancel): every acceptance criterion, the check order and codes, audit without personal data,
+ * Idempotency-Key, and that no route of this round can make a member row `active` (spec §4.4
+ * "known bypass").
  */
 type Body = Record<string, unknown>;
 
@@ -159,10 +156,6 @@ describe('owner invitations (API-100-26/27/28)', () => {
       )
     ).rows;
 
-  /** The SQL function's `fn:code` for the same call, in a rolled-back transaction. */
-  const sqlCode = async (user: UserFixture, call: string, params: unknown[] = []) =>
-    (await sqlRolledBack(client, user.id, call, params)).error;
-
   const expectPayload = (body: Body) => {
     expect(Object.keys(body).sort()).toEqual([...PAYLOAD_KEYS].sort());
     expect(body.invite_token).toMatch(TOKEN);
@@ -176,36 +169,26 @@ describe('owner invitations (API-100-26/27/28)', () => {
 
   // --- API-100-26 AC1: owner precondition (spec rule 11) -----------------------------------------
 
-  describe('owner precondition, in the SQL order and with its codes', () => {
+  describe('owner precondition, in order, with its codes', () => {
     const routes: Array<{
       fn: string;
       call: (userId: string | null) => ReturnType<typeof invitePhone>;
-      sql: string;
-      params: unknown[];
     }> = [
       {
         fn: 'invite_circle_member_by_phone',
         call: (u) => invitePhone(app, u, { display_name: '', phone: 'x', relationship: 'cousin' }),
-        sql: 'public.invite_circle_member_by_phone($1, $2, $3)',
-        params: ['', 'x', 'cousin'],
       },
       {
         fn: 'invite_circle_members_by_phone',
         call: (u) => inviteBatch(app, u, { invites: 'not an array' }),
-        sql: 'public.invite_circle_members_by_phone($1::jsonb)',
-        params: [JSON.stringify('not an array')],
       },
       {
         fn: 'create_circle_invite_link',
         call: (u) => createInviteLink(app, u, {}),
-        sql: 'public.create_circle_invite_link(null)',
-        params: [],
       },
       {
         fn: 'resend_circle_invite',
         call: (u) => resendInvite(app, u, randomUUID()),
-        sql: 'public.resend_circle_invite($1)',
-        params: [randomUUID()],
       },
     ];
 
@@ -216,8 +199,8 @@ describe('owner invitations (API-100-26/27/28)', () => {
     });
 
     it.each(routes)(
-      '$fn: no profile 404, sharing off 409, no circle 404 (before any argument check), as SQL',
-      async ({ fn, call, sql, params }) => {
+      '$fn: no profile 404, sharing off 409, no circle 404 (before any argument check)',
+      async ({ fn, call }) => {
         const noProfile = await createUser(client, { profile: false });
         const sharingOff = await ownerWithCircle();
         await client.query(
@@ -234,7 +217,6 @@ describe('owner invitations (API-100-26/27/28)', () => {
           const reply = await call(user.id);
           expect(reply.statusCode).toBe(status);
           expect(errorOf(reply).code).toBe(`${fn}:${code}`);
-          expect(await sqlCode(user, sql, params)).toBe(`${fn}:${code}`);
         }
       },
     );
@@ -298,7 +280,7 @@ describe('owner invitations (API-100-26/27/28)', () => {
       expect(text).not.toContain(body.invite_token as string);
     });
 
-    it('validation in the SQL order with its codes (name, then phone, then relationship)', async () => {
+    it('validation in order with its codes (name, then phone, then relationship)', async () => {
       const { owner } = await ownerWithCircle();
       const good = invitePhoneNumber();
       const cases: Array<[Body, string]> = [
@@ -318,13 +300,6 @@ describe('owner invitations (API-100-26/27/28)', () => {
         const reply = await invitePhone(app, owner.id, body);
         expect(reply.statusCode).toBe(422);
         expect(errorOf(reply).code).toBe(`invite_circle_member_by_phone:${code}`);
-        expect(
-          await sqlCode(owner, 'public.invite_circle_member_by_phone($1, $2, $3)', [
-            body.display_name ?? null,
-            body.phone ?? null,
-            body.relationship ?? null,
-          ]),
-        ).toBe(`invite_circle_member_by_phone:${code}`);
       }
     });
 
@@ -382,6 +357,14 @@ describe('owner invitations (API-100-26/27/28)', () => {
         resent: true,
       });
       expect(second.invite_token).not.toBe(first.invite_token);
+      // Gap F: the refresh is stamped with the database's own now() of its transaction (the
+      // updated_at trigger uses the same now()), never compared with a client time window.
+      const stamped = await client.query<{ same_txn: boolean; moved: boolean }>(
+        `select invited_at = updated_at as same_txn, invited_at > $2::timestamptz as moved
+           from public.safety_circle_members where id = $1`,
+        [first.member_id, first.invited_at],
+      );
+      expect(stamped.rows[0]).toEqual({ same_txn: true, moved: true });
       expect(await lookup(first.invite_token as string)).toBe('not_found');
       expect(await lookup(second.invite_token as string)).toBe('pending');
       expect(await capacityOf(owner)).toEqual(capBefore);
@@ -507,16 +490,13 @@ describe('owner invitations (API-100-26/27/28)', () => {
   // --- API-100-26 AC5: batch ---------------------------------------------------------------------
 
   describe('POST /v1/me/circle/invites/phone/batch', () => {
-    it('422 invalid_invites when `invites` is not an array (missing, null, object, string), as SQL', async () => {
+    it('422 invalid_invites when `invites` is not an array (missing, null, object, string)', async () => {
       const { owner } = await ownerWithCircle();
       for (const invites of [undefined, null, {}, 'x', 5]) {
         const reply = await inviteBatch(app, owner.id, invites === undefined ? {} : { invites });
         expect(reply.statusCode).toBe(422);
         expect(errorOf(reply).code).toBe('invite_circle_members_by_phone:invalid_invites');
       }
-      expect(await sqlCode(owner, 'public.invite_circle_members_by_phone(null)')).toBe(
-        'invite_circle_members_by_phone:invalid_invites',
-      );
       const notObject = await inviteBatch(app, owner.id, [1]);
       expect(errorOf(notObject)).toMatchObject({ details: { field: 'body' } });
     });
@@ -677,7 +657,7 @@ describe('owner invitations (API-100-26/27/28)', () => {
   // --- API-100-28 AC1: resend --------------------------------------------------------------------
 
   describe('POST /v1/me/circle/invites/{member_id}/resend', () => {
-    it('errors in the SQL order with its codes', async () => {
+    it('errors in order with their codes', async () => {
       const { owner, circle } = await ownerWithCircle();
       const other = await ownerWithCircle('Other Owner');
       const foreign = await insertRow(other.circle);
@@ -695,13 +675,7 @@ describe('owner invitations (API-100-26/27/28)', () => {
         const reply = await resendInvite(app, owner.id, id);
         expect(reply.statusCode).toBe(status);
         expect(errorOf(reply).code).toBe(`resend_circle_invite:${code}`);
-        expect(await sqlCode(owner, 'public.resend_circle_invite($1)', [id])).toBe(
-          `resend_circle_invite:${code}`,
-        );
       }
-      expect(await sqlCode(owner, 'public.resend_circle_invite(null)')).toBe(
-        'resend_circle_invite:member_not_found',
-      );
       for (const bad of ['null', 'not-a-uuid']) {
         const reply = await resendInvite(app, owner.id, bad);
         expect(reply.statusCode).toBe(422);
@@ -780,7 +754,7 @@ describe('owner invitations (API-100-26/27/28)', () => {
   // --- API-100-28 AC2/AC3: cancel ----------------------------------------------------------------
 
   describe('POST /v1/me/circle/invites/{member_id}/cancel', () => {
-    it('errors in the SQL order with its codes; never cancel_circle_invite:expired', async () => {
+    it('errors in order with their codes; never cancel_circle_invite:expired', async () => {
       const { owner, circle } = await ownerWithCircle();
       const ben = await createUser(client);
       const active = await addActiveMember(client, circle, ben);
@@ -802,14 +776,8 @@ describe('owner invitations (API-100-26/27/28)', () => {
         const reply = await cancelInvite(app, user.id, id);
         expect(reply.statusCode).toBe(status);
         expect(errorOf(reply).code).toBe(`cancel_circle_invite:${code}`);
-        expect(await sqlCode(user, 'public.cancel_circle_invite($1)', [id])).toBe(
-          `cancel_circle_invite:${code}`,
-        );
         expect(await rowOf(id)).toEqual(before);
       }
-      expect(await sqlCode(owner, 'public.cancel_circle_invite(null)')).toBe(
-        'cancel_circle_invite:not_found',
-      );
       const nullPath = await cancelInvite(app, owner.id, 'null');
       expect(nullPath.statusCode).toBe(422);
       expect(errorOf(nullPath)).toMatchObject({ details: { field: 'member_id' } });
@@ -869,264 +837,6 @@ describe('owner invitations (API-100-26/27/28)', () => {
       expect(await rowOf(expired)).toMatchObject({ status: 'declined' });
       expect(await capacityOf(owner)).toMatchObject({ used: 5, available: 0 });
       expect((await auditRows(expired))[0].detail).toMatchObject({ previous_status: 'expired' });
-    });
-  });
-
-  // --- Interchangeability with the SQL functions -------------------------------------------------
-
-  describe('same state and caller → same JSON, rows and codes as the SQL function', () => {
-    type Reply = Awaited<ReturnType<typeof invitePhone>>;
-    /**
-     * Every row of the circle, comparable across the two sides: ids, values, and whether the call
-     * wrote the timestamps (`invited_at`/`updated_at` at or after `cutoff`, taken just before it).
-     */
-    const circleRows = (circleId: string, cutoff: string) => ({
-      statement: `select m.id::text as id, m.role, m.status, m.display_name, m.relationship,
-          m.phone, m.email, m.user_id, m.invite_token is not null as has_token,
-          m.invite_consumed_at is null as not_consumed,
-          m.invite_canceled_at is null as not_canceled,
-          m.invite_canceled_at >= $2::timestamptz as canceled_now,
-          m.activated_at is null as not_activated,
-          (m.invite_expires_at - m.invited_at) = interval '7 days' as seven_days,
-          m.invited_at >= $2::timestamptz as invited_now,
-          m.updated_at >= $2::timestamptz as updated_now
-        from public.safety_circle_members m
-       where m.circle_id = $1
-       order by m.created_at, m.display_name, m.status`,
-      params: [circleId, cutoff],
-    });
-    const clock = async () =>
-      (await client.query<{ t: string }>('select clock_timestamp()::text as t')).rows[0].t;
-
-    /** Tokens, times and ids of new rows replaced, keeping key order (JSON text compared). */
-    const normalize = (value: unknown, ids: Map<string, string>): unknown => {
-      if (Array.isArray(value)) return value.map((v) => normalize(v, ids));
-      if (value && typeof value === 'object') {
-        return Object.fromEntries(
-          Object.entries(value).map(([key, v]) => {
-            if (key === 'invite_token' || key === 'invite_url') return [key, '<token>'];
-            if (key === 'invited_at' || key === 'invite_expires_at') return [key, '<time>'];
-            if (key === 'member_id' && typeof v === 'string') {
-              if (!ids.has(v)) ids.set(v, `<new${ids.size}>`);
-              return [key, ids.get(v)];
-            }
-            return [key, normalize(v, ids)];
-          }),
-        );
-      }
-      return value;
-    };
-
-    const compare = async (
-      owned: Owned,
-      caller: UserFixture,
-      sqlCall: string,
-      params: unknown[],
-      api: () => Promise<Reply>,
-      keepIds: string[],
-    ) => {
-      const cutoff = await clock();
-      const rows = circleRows(owned.circle.id, cutoff);
-      const sqlSide = await sqlRolledBack<Body, Body>(client, caller.id, sqlCall, params, rows);
-      const reply = await api();
-      const known = () => new Map(keepIds.map((id) => [id, id]));
-      if (sqlSide.error) {
-        expect(reply.statusCode).toBeGreaterThanOrEqual(400);
-        expect(errorOf(reply).code).toBe(sqlSide.error);
-      } else {
-        expect(reply.statusCode).toBeLessThan(300);
-        expect(JSON.stringify(normalize(JSON.parse(reply.body), known()))).toBe(
-          JSON.stringify(normalize(sqlSide.body, known())),
-        );
-      }
-      const strip = (rows: Body[]) =>
-        normalize(
-          rows.map(({ id, ...rest }) => ({ member_id: id, ...rest })),
-          known(),
-        );
-      expect(sqlSide.rows?.length).toBeGreaterThanOrEqual(5);
-      const after = (await client.query<Body>(rows.statement, rows.params)).rows;
-      expect(strip(after)).toEqual(strip(sqlSide.rows ?? []));
-    };
-
-    /** A circle with every row state of a phone: active, valid pending, expired, declined. */
-    const richCircle = async () => {
-      const owned = await ownerWithCircle();
-      const ben = await createUser(client, { phone: true });
-      const active = await addActiveMember(client, owned.circle, ben);
-      const phones = {
-        active: ben.phone as string,
-        pending: invitePhoneNumber(),
-        expired: invitePhoneNumber(),
-        declined: invitePhoneNumber(),
-      };
-      const ids = {
-        owner: owned.circle.ownerMemberId,
-        active: active.id,
-        pending: await insertRow(owned.circle, { phone: phones.pending, name: 'P' }),
-        expired: await insertExpired(owned.circle, { phone: phones.expired, name: 'E' }),
-        declined: await insertRow(owned.circle, {
-          phone: phones.declined,
-          name: 'D',
-          status: 'declined',
-          canceled: true,
-        }),
-      };
-      return { owned, phones, ids, keep: Object.values(ids) };
-    };
-
-    it('invite_circle_member_by_phone: new, refresh of pending / expired / declined, already_active', async () => {
-      for (const target of ['new', 'pending', 'expired', 'declined', 'active'] as const) {
-        const { owned, phones, keep } = await richCircle();
-        const phone = target === 'new' ? invitePhoneNumber() : phones[target];
-        await compare(
-          owned,
-          owned.owner,
-          'public.invite_circle_member_by_phone($1, $2, $3)',
-          [' Name X ', phone, null],
-          () => invitePhone(app, owned.owner.id, { display_name: ' Name X ', phone }),
-          keep,
-        );
-      }
-    });
-
-    it('invite_circle_member_by_phone at 5/5 for an expired row: circle_full on both', async () => {
-      const { owned, phones, keep } = await richCircle();
-      await fillPending(owned.circle, 3);
-      await compare(
-        owned,
-        owned.owner,
-        'public.invite_circle_member_by_phone($1, $2, $3)',
-        ['Full', phones.expired, 'friend'],
-        () =>
-          invitePhone(app, owned.owner.id, {
-            display_name: 'Full',
-            phone: phones.expired,
-            relationship: 'friend',
-          }),
-        keep,
-      );
-    });
-
-    it('invite_circle_members_by_phone: a mixed batch', async () => {
-      const { owned, phones, keep } = await richCircle();
-      const fresh = invitePhoneNumber();
-      const invites = [
-        { phone: phones.active, display_name: 'A' },
-        { phone: phones.pending, display_name: 'B' },
-        { phone: phones.expired, display_name: 'C' },
-        { phone: fresh.slice(1), display_name: 'D' },
-        { phone: fresh, display_name: 'E' },
-        { phone: phones.declined, display_name: 'F' },
-        { phone: invitePhoneNumber(), display_name: 'G' },
-        { phone: 'nope', display_name: ' ' },
-        { phone: invitePhoneNumber(), display_name: ' ' },
-        'x',
-      ];
-      await compare(
-        owned,
-        owned.owner,
-        'public.invite_circle_members_by_phone($1::jsonb)',
-        [JSON.stringify(invites)],
-        () => inviteBatch(app, owned.owner.id, { invites }),
-        keep,
-      );
-    });
-
-    it('create_circle_invite_link: named, unnamed, and at 5/5', async () => {
-      for (const name of ['  Named  ', null]) {
-        const { owned, keep } = await richCircle();
-        await compare(
-          owned,
-          owned.owner,
-          'public.create_circle_invite_link($1)',
-          [name],
-          () => createInviteLink(app, owned.owner.id, { display_name: name }),
-          keep,
-        );
-      }
-      const { owned, keep } = await richCircle();
-      await fillPending(owned.circle, 3);
-      await compare(
-        owned,
-        owned.owner,
-        'public.create_circle_invite_link(null)',
-        [],
-        () => createInviteLink(app, owned.owner.id, {}),
-        keep,
-      );
-    });
-
-    it('resend_circle_invite: every row state, and expired at 5/5', async () => {
-      for (const target of ['owner', 'active', 'pending', 'expired', 'declined'] as const) {
-        const { owned, ids, keep } = await richCircle();
-        await compare(
-          owned,
-          owned.owner,
-          'public.resend_circle_invite($1)',
-          [ids[target]],
-          () => resendInvite(app, owned.owner.id, ids[target]),
-          keep,
-        );
-      }
-      const { owned, ids, keep } = await richCircle();
-      await fillPending(owned.circle, 3);
-      await compare(
-        owned,
-        owned.owner,
-        'public.resend_circle_invite($1)',
-        [ids.expired],
-        () => resendInvite(app, owned.owner.id, ids.expired),
-        keep,
-      );
-    });
-
-    it('cancel_circle_invite: every row state, and a non-owner caller', async () => {
-      for (const target of ['owner', 'active', 'pending', 'expired', 'declined'] as const) {
-        const { owned, ids, keep } = await richCircle();
-        await compare(
-          owned,
-          owned.owner,
-          'public.cancel_circle_invite($1)',
-          [ids[target]],
-          () => cancelInvite(app, owned.owner.id, ids[target]),
-          keep,
-        );
-      }
-      const { owned, ids, keep } = await richCircle();
-      const outsider = await createUser(client);
-      await compare(
-        owned,
-        outsider,
-        'public.cancel_circle_invite($1)',
-        [ids.pending],
-        () => cancelInvite(app, outsider.id, ids.pending),
-        keep,
-      );
-    });
-
-    it('the SQL functions and the API can follow each other on the same rows', async () => {
-      const { owned, phones, ids } = await richCircle();
-      // SQL refreshes, API cancels, SQL resends, API refreshes by phone.
-      const viaSql = await sqlAs<Body>(
-        client,
-        owned.owner.id,
-        'public.invite_circle_member_by_phone($1, $2, null)',
-        ['Mixed', phones.pending],
-      );
-      expect(viaSql.member_id).toBe(ids.pending);
-      expect((await cancelInvite(app, owned.owner.id, ids.pending)).statusCode).toBe(200);
-      const resent = await sqlAs<Body>(client, owned.owner.id, 'public.resend_circle_invite($1)', [
-        ids.pending,
-      ]);
-      expect(resent.resent).toBe(true);
-      const again = await invitePhone(app, owned.owner.id, {
-        display_name: 'Mixed Again',
-        phone: phones.pending,
-      });
-      expect(again.statusCode).toBe(200);
-      expect(again.json<Body>()).toMatchObject({ member_id: ids.pending, resent: true });
-      expect(await lookup(resent.invite_token as string)).toBe('not_found');
     });
   });
 

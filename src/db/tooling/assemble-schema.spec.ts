@@ -34,10 +34,11 @@ describe('assembleSchema (API-100-03)', () => {
     expect(out).not.toContain('.op(');
   });
 
-  it('adds the read-only auth.users subset and points foreign keys at it', () => {
-    expect(out).toContain("export const authUsers = auth.table('users', {");
-    expect(out).toContain('foreignColumns: [authUsers.id]');
-    expect(out).toMatch(/import \{ [^}]*pgSchema[^}]* \} from 'drizzle-orm\/pg-core';/);
+  it('omits foreign keys to the account table and never models auth.users (D76)', () => {
+    expect(out).not.toContain('authUsers');
+    expect(out).not.toContain('users.id');
+    expect(out).not.toContain('foreignKey({');
+    expect(out).toContain('index("profiles_idx")');
   });
 
   it('removes extra-config callbacks left empty', () => {

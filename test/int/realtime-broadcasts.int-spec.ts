@@ -1,6 +1,7 @@
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
+import { IncidentBroadcaster } from '../../src/realtime/incident-broadcaster';
 import { RealtimeReadsRepository } from '../../src/realtime/realtime-reads.repository';
 import { RealtimeGateway } from '../../src/realtime/realtime.gateway';
 import { createTestApp, type LogCapture } from '../../src/testing/test-app';
@@ -68,6 +69,8 @@ describe('incident broadcasts (API-100-41)', () => {
   let urlB: string;
   let client: Client;
   const open: TestSocket[] = [];
+  /** Per incident: how many `incident.event` broadcasts the submitting instance (B) has finished. */
+  const eventBroadcastsDone = new Map<string, number>();
 
   async function connect(url: string, user: UserFixture) {
     const socket = await connectSocket(url, user.id);
@@ -107,9 +110,25 @@ describe('incident broadcasts (API-100-41)', () => {
     return { resident, circle, m1, m2, outsider, r, s1, s2, out, incidentId };
   }
 
-  /** Lets the submit's own broadcasts finish, then joins the resident and both members. */
+  /**
+   * Waits until the submit's own broadcasts are out (every event the submit recorded has been
+   * broadcast by B, and the user-room counts / incoming arrived; on the events, not a fixed time,
+   * gap 60), then joins the resident and both members, so no submit event reaches the room later.
+   */
   async function joinAll(s: Scene) {
-    await sleep(300);
+    const recorded = (
+      await client.query<{ n: number }>(
+        'select count(*)::int as n from public.incident_events where incident_id = $1',
+        [s.incidentId],
+      )
+    ).rows[0].n;
+    await eventually(() => {
+      expect(eventBroadcastsDone.get(s.incidentId) ?? 0).toBeGreaterThanOrEqual(recorded);
+      expect(s.r.of('incident.delivery_counts').length).toBeGreaterThan(0);
+      for (const member of [s.s1, s.s2]) {
+        expect(member.of('incident.incoming').length).toBeGreaterThan(0);
+      }
+    });
     for (const socket of [s.r, s.s1, s.s2]) {
       await expect(socket.join(s.incidentId)).resolves.toEqual({ ok: true });
     }
@@ -127,6 +146,21 @@ describe('incident broadcasts (API-100-41)', () => {
       await appA.get(RealtimeGateway).ping();
       await appB.get(RealtimeGateway).ping();
     });
+    // Counts finished `incident.event` broadcasts of B (where every scene submits), so joinAll can
+    // wait until the submit's own room events are out (gap 60: on the event, not a fixed time).
+    // Not a jest spy: afterEach restores those.
+    const broadcaster = appB.get(IncidentBroadcaster);
+    const afterEvent = broadcaster.afterEvent.bind(broadcaster);
+    broadcaster.afterEvent = async (event) => {
+      try {
+        await afterEvent(event);
+      } finally {
+        eventBroadcastsDone.set(
+          event.incident_id,
+          (eventBroadcastsDone.get(event.incident_id) ?? 0) + 1,
+        );
+      }
+    };
   });
 
   afterEach(() => {

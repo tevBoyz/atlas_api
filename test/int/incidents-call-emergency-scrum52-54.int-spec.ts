@@ -13,7 +13,6 @@ import {
   markSafe,
   renotifyAlert,
   submitAlert,
-  submitAlertViaSql,
 } from '../support/incident-api';
 import {
   emergencyInfoBody,
@@ -255,12 +254,6 @@ describe('Call resident and emergency numbers (SCRUM-52/54, D59/D60)', () => {
         [`%${(phone as string).slice(1)}%`],
       );
       expect(rows[0].n).toBe(0);
-    });
-
-    it('the old SQL function is untouched: its payload has no resident_phone (known divergence)', async () => {
-      const { rita } = await scene();
-      const body = await submitAlertViaSql(client, rita.id, 'medical');
-      expect(body.share_payload).toEqual({});
     });
   });
 

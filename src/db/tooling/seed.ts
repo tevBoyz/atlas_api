@@ -7,7 +7,7 @@ import { assertBaselinePresent, type Log } from './baseline';
  * nothing new. Emails use the reserved `example.test` domain and phones the fictional
  * NANP 555-01xx range (+1 201 555-0101 ...). Never put real people, numbers or addresses here.
  *
- * Creates four `auth.users` rows with complete profiles, and one Safety Circle owned by Ada with:
+ * Creates four `public.users` accounts with complete profiles, and one Safety Circle owned by Ada with:
  *   - Ada (owner, active), Ben (member, active, also her emergency contact),
  *   - Cara (member, active), Dan (member, pending invite; Dan has an account but has not answered).
  * `activated_at` is never written: the `safety_circle_members_set_activated_at` trigger owns it.
@@ -74,18 +74,12 @@ export function seedStatements(): Array<{ sql: string; values: unknown[] }> {
 
   for (const user of users) {
     statements.push({
-      // GoTrue stores phones without the leading "+"; server code normalizes (spec §4.1).
-      sql: `insert into auth.users (
-              instance_id, id, aud, role, email, phone,
-              email_confirmed_at, phone_confirmed_at,
-              raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
-            values ('00000000-0000-0000-0000-000000000000', $1, 'authenticated', 'authenticated',
-              $2, $3, now(), now(),
-              '{"provider":"email","providers":["email","phone"]}'::jsonb,
-              jsonb_build_object('full_name', $4::text, 'phone', $5::text),
-              now(), now())
+      // The account table (D76: the API reads only public.users; phones are E.164).
+      sql: `insert into public.users (
+              id, email, email_confirmed_at, phone, phone_confirmed_at, metadata)
+            values ($1, $2, now(), $3, now(), jsonb_build_object('full_name', $4::text))
             on conflict (id) do nothing`,
-      values: [user.id, user.email, user.phone.slice(1), user.fullName, user.phone],
+      values: [user.id, user.email, user.phone, user.fullName],
     });
   }
 
@@ -188,8 +182,8 @@ export async function seedLocalData(client: ClientBase, log: Log): Promise<void>
     );
   }
   const counts = await client.query<{ users: number; profiles: number; members: number }>(
-    `select (select count(*) from auth.users where email like '%@example.test')::int as users,
-            (select count(*) from public.profiles p join auth.users u on u.id = p.id
+    `select (select count(*) from public.users where email like '%@example.test')::int as users,
+            (select count(*) from public.profiles p join public.users u on u.id = p.id
               where u.email like '%@example.test')::int as profiles,
             (select count(*) from public.safety_circle_members where circle_id = $1)::int as members`,
     [SEED_CIRCLE_ID],

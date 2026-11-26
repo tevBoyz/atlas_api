@@ -9,8 +9,7 @@ import { LocationsService } from './locations.service';
 
 const USER: AuthenticatedUser = {
   id: '11111111-1111-4111-8111-111111111111',
-  issuer: 'supabase',
-  sessionId: null,
+  sessionId: '99999999-9999-4999-8999-999999999999',
   email: null,
   phone: null,
 };

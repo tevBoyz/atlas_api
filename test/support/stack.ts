@@ -11,15 +11,14 @@ export const REDIS_IMAGE = 'redis:7.4.12-alpine';
 /** Logical Redis databases available: one per Jest worker. */
 export const REDIS_DATABASES = 128;
 
-/** Built once per run: baseline + API migrations. Every worker database is cloned from it. */
+/**
+ * Built once per run: baseline + API migrations, exactly the production state (no test-only
+ * grants since the parity suite was retired, D76). Every worker database is cloned from it.
+ */
 export const TEMPLATE_DATABASE = 'atlas_template';
 
-/**
- * Built once per run from the same migrated database BEFORE the test harness re-grant
- * (`test-harness-grants.ts`): the production state of migration 0012 / D42, cloned only by
- * `test/int/production-state.int-spec.ts`.
- */
-export const PRODUCTION_TEMPLATE_DATABASE = 'atlas_template_prod';
+/** The production state of 0012 / D42 and 0025 / D76: the same template. */
+export const PRODUCTION_TEMPLATE_DATABASE = TEMPLATE_DATABASE;
 
 /**
  * The baseline and the API migrations BEFORE 0012 (D42): cloned only by

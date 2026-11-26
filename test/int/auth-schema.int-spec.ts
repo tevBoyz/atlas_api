@@ -98,8 +98,7 @@ describe('auth schema (API-100-50, migration 0008)', () => {
     }
   });
 
-  it('users.id is the auth.users id; profiles, members and devices reference users (0010, D36)', async () => {
-    // The profile write moves the auth.users-only fixture user into users first (D37 trigger).
+  it('profiles, members and devices reference users (0010, D36)', async () => {
     const authUser = await createUser(client, { profile: true });
     const { rows: moved } = await client.query<{ email: string }>(
       'select email::text from public.users where id = $1',

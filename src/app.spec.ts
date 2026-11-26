@@ -7,7 +7,7 @@ import { type AuthenticatedUser, CurrentUser } from './common/auth';
 import { Operation } from './common/errors';
 import { FEATURE_MODULES } from './modules';
 import { createTestApp } from './testing/test-app';
-import { authHeader } from './testing/test-tokens';
+import { authHeader, withTestSessions } from './testing/test-tokens';
 
 /** Test-only route: proves the `/v1` prefix and authentication without touching a data store. */
 @Controller('test-app')
@@ -23,7 +23,7 @@ describe('App scaffold (API-100-01)', () => {
   let app: NestFastifyApplication;
 
   beforeAll(async () => {
-    ({ app } = await createTestApp({ controllers: [WhoAmIController] }));
+    ({ app } = await createTestApp({ controllers: [WhoAmIController] }, withTestSessions));
   });
 
   afterAll(async () => {

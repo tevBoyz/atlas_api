@@ -7,6 +7,7 @@ import { httpStatusForCode, PARITY_ERROR_CODES } from '../../src/common/errors';
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
 import { errorOf } from '../support/circle-api';
 import { openTestClient } from '../support/database';
+import { goneUser } from '../support/test-sessions';
 import { createUser, fakePhone } from '../support/fixtures';
 import { insertMember } from '../support/invite-rows';
 import {
@@ -123,9 +124,9 @@ describe('Phase 3 gate: every profile error code of the spec is produced (API-10
   const producers: Record<string, () => Promise<void>> = {
     'profiles:not_authenticated': async () => {
       record(await getProfile(app, null), 'profiles:not_authenticated');
-      // Also a valid token whose user no longer exists (the FK of profiles.id).
+      // Also a token whose user no longer exists (its session went with the account).
       record(
-        await putPersonalInfo(app, randomUUID(), personalInfoBody()),
+        await putPersonalInfo(app, await goneUser(client), personalInfoBody()),
         'profiles:not_authenticated',
       );
     },

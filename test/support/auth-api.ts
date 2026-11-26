@@ -146,10 +146,9 @@ export const errorOf = (reply: { json: <T>() => T }) =>
     .error;
 
 /**
- * A user of the OLD app: an `auth.users` row (with a complete profile) whose password is a bcrypt
- * hash as Supabase Auth stores it, signed in through the API. The profile write moves it into
- * `users` with its bcrypt credential (migration 0010's trigger, D37, the rules of API-100-58); the
- * sign-in re-hashes the password to argon2id.
+ * An imported account (moved from the old backend, API-100-58): a `users` row with a complete
+ * profile whose password credential is still a bcrypt hash, signed in through the API. The sign-in
+ * re-hashes the password to argon2id.
  */
 export async function legacyUser(
   app: NestFastifyApplication,

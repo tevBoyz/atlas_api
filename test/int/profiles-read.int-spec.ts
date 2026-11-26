@@ -7,10 +7,10 @@ import type { Client } from 'pg';
 import { PROFILE_COLUMNS } from '../../src/modules/profiles/profiles.repository';
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
 import { authHeader } from '../../src/testing/test-tokens';
-import { errorOf, sqlAs } from '../support/circle-api';
+import { errorOf } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import { createUser } from '../support/fixtures';
-import { createAuthUser, getProfile, profileViaRls } from '../support/profile-api';
+import { createAuthUser, getProfile, profileRowJson } from '../support/profile-api';
 
 /**
  * API-100-34: `GET /v1/me/profile` (spec §11.3 P1) against the app's direct `profiles` SELECT
@@ -26,7 +26,6 @@ import { createAuthUser, getProfile, profileViaRls } from '../support/profile-ap
 type Body = Record<string, unknown>;
 
 const SUPABASE_URL = 'https://example-project.supabase.co';
-const HOST = 'example-project.supabase.co';
 
 describe('GET /v1/me/profile (API-100-34)', () => {
   let app: NestFastifyApplication;
@@ -68,7 +67,7 @@ describe('GET /v1/me/profile (API-100-34)', () => {
     expect(rows.map((r) => r.name)).toEqual([...PROFILE_COLUMNS]);
   });
 
-  it('AC1: the body is the app’s select * (same keys, order, values and text) plus avatar_url and the SCRUM-21 lists', async () => {
+  it('AC1: the body is the stored row (same keys, order, values and text) plus avatar_url and the SCRUM-21 lists', async () => {
     const user = await createUser(client, { fullName: '  Spaced Name ' });
     await client.query(
       `update public.profiles
@@ -79,7 +78,7 @@ describe('GET /v1/me/profile (API-100-34)', () => {
     );
     const reply = await getProfile(app, user.id);
     expect(reply.statusCode).toBe(200);
-    const viaRls = await profileViaRls(client, user.id);
+    const stored = await profileRowJson(client, user.id);
     const body = reply.json<Body>();
     // SCRUM-21 (D51): the two item lists follow avatar_url (the app's select * has neither).
     expect(Object.keys(body)).toEqual([
@@ -95,22 +94,13 @@ describe('GET /v1/me/profile (API-100-34)', () => {
       ...columns
     } = body;
     expect([allergyItems, conditionItems]).toEqual([[], []]);
-    expect(JSON.stringify(columns)).toBe(viaRls);
+    expect(JSON.stringify(columns)).toBe(stored);
     expect(body.personal_info_completed_at).toBe('2026-11-20T10:00:00+00:00');
     expect(body.date_of_birth).toBe('1990-01-15');
-    // Same URL as `_avatars_public_url` behind PostgREST (Host = the project's host), and as the
-    // app's `getPublicUrl` (`{SUPABASE_URL}/storage/v1/object/public/avatars/{path}`).
+    // The app's `getPublicUrl` form (`{SUPABASE_URL}/storage/v1/object/public/avatars/{path}`).
     expect(avatarUrl).toBe(
       `${SUPABASE_URL}/storage/v1/object/public/avatars/${user.id}/avatar.jpg`,
     );
-    const fromSql = await sqlAs<string>(
-      client,
-      user.id,
-      'public._avatars_public_url($1)',
-      [`${user.id}/avatar.jpg`],
-      { host: HOST },
-    );
-    expect(avatarUrl).toBe(fromSql);
   });
 
   it('AC1: avatar_url is null without a photo, also for a blank path', async () => {

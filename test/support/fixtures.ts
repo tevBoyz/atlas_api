@@ -3,8 +3,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { ClientBase } from 'pg';
 
 /**
- * Fixture builders (API-100-13 AC2). They write through SQL because no endpoint exists yet: when a
- * phase ships an endpoint, its parity tests create the same state through the API instead.
+ * Fixture builders (API-100-13 AC2): rows written directly, as the table owner, to set up a state
+ * quickly (tests of a behaviour drive it through the API).
  * Data is fake: `example.test` emails and the fictional +1 201 555-01xx range.
  * `activated_at` on member rows is never written here: the database trigger owns it.
  */
@@ -30,18 +30,19 @@ export interface UserFixture {
 export interface UserOptions {
   id?: string;
   fullName?: string;
-  /** E.164 number, or `true` for a generated one. Default none. */
+  /** E.164 number (stored confirmed), or `true` for a generated one. Default none. */
   phone?: string | true;
-  /** `false` leaves the `auth.users` row without a profile. */
+  /** `false` leaves the account without a profile. */
   profile?: boolean;
-  /** `auth.users.encrypted_password` (a bcrypt hash, as Supabase Auth stores it). Default none. */
+  /** A bcrypt hash stored as the account's password credential (an imported account). */
   encryptedPassword?: string;
 }
 
 /**
- * An `auth.users` row plus a complete profile (GoTrue stores the phone without its `+`). Since
- * migration 0010 the profile write moves the user into `public.users` first (D37 trigger), as the
- * SQL behaviour tests rely on; `profile: false` leaves the user in `auth.users` only.
+ * An account in `public.users` (confirmed email, confirmed phone when given, an `email` / `phone`
+ * identity each, as an imported account has) plus a complete profile. The API reads only
+ * `public.users` (D76): nothing is written to Supabase's `auth.users`. Upserts the account row, so a
+ * bare row the test-session seeder wrote first is completed.
  */
 export async function createUser(q: Queryable, options: UserOptions = {}): Promise<UserFixture> {
   const id = options.id ?? randomUUID();
@@ -49,15 +50,31 @@ export async function createUser(q: Queryable, options: UserOptions = {}): Promi
   const email = `user-${id}@example.test`;
   const phone = options.phone === true ? fakePhone() : (options.phone ?? null);
   await q.query(
-    `insert into auth.users (instance_id, id, aud, role, email, phone, email_confirmed_at,
-                             phone_confirmed_at, raw_app_meta_data, raw_user_meta_data,
-                             encrypted_password, created_at, updated_at)
-     values ('00000000-0000-0000-0000-000000000000', $1, 'authenticated', 'authenticated', $2,
-             $3::text, now(), case when $3::text is null then null else now() end,
-             '{"provider":"email","providers":["email"]}'::jsonb,
-             jsonb_build_object('full_name', $4::text), $5::text, now(), now())`,
-    [id, email, phone?.replace(/^\+/, '') ?? null, fullName, options.encryptedPassword ?? null],
+    `insert into public.users (id, email, email_confirmed_at, phone, phone_confirmed_at, metadata)
+     values ($1, $2, now(), $3::text, case when $3::text is null then null else now() end,
+             jsonb_build_object('full_name', $4::text))
+     on conflict (id) do update
+       set email = excluded.email, email_confirmed_at = excluded.email_confirmed_at,
+           phone = excluded.phone, phone_confirmed_at = excluded.phone_confirmed_at,
+           metadata = excluded.metadata`,
+    [id, email, phone, fullName],
   );
+  await q.query(
+    `insert into public.user_identities (user_id, provider, provider_subject, email)
+     select $1::uuid, p.provider, $1::uuid::text,
+            case when p.provider = 'email' then $2::text::extensions.citext end
+       from (values ('email', true), ('phone', $3::text is not null)) as p(provider, applies)
+      where p.applies
+     on conflict (provider, provider_subject) do nothing`,
+    [id, email, phone],
+  );
+  if (options.encryptedPassword) {
+    await q.query(
+      `insert into public.user_credentials (user_id, password_hash, hash_algo)
+       values ($1, $2, 'bcrypt')`,
+      [id, options.encryptedPassword],
+    );
+  }
   if (options.profile !== false) {
     await q.query(
       `insert into public.profiles (

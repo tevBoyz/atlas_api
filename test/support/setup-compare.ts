@@ -1,12 +1,11 @@
 import type { Client } from 'pg';
 
-import { errorOf, sqlRolledBack } from './circle-api';
+import { errorOf } from './circle-api';
 import type { ApiReply } from './invite-rows';
 
 /**
- * `complete_profile_setup` (SQL) against `POST /v1/me/profile/complete` (API-100-36) on the same
- * database state. The SQL runs first and is rolled back; then the API runs and commits. Both sides
- * are reduced to a snapshot that is equal when they did the same thing:
+ * `POST /v1/me/profile/complete` (API-100-36) and its effects, reduced to a snapshot a test can
+ * assert exactly:
  * - the owner's circle (name, created now or not) and every member row of it, owner first;
  * - row ids: kept as is for rows that existed before, `new` for rows the call created;
  * - invite tokens: `kept` (same as before), `new` (a fresh token) or null;
@@ -14,7 +13,6 @@ import type { ApiReply } from './invite-rows';
  *   else their stored text; `activated_at` also says whether it equals `invited_at` (trigger time
  *   of a new owner row);
  * - the profile's `profile_setup_completed_at` (`now` or its kept text) and `updated_at` written;
- * - the answer: same keys in the same order, ids and the completion time normalized the same way.
  */
 type Body = Record<string, unknown>;
 
@@ -122,92 +120,36 @@ function normalize(raw: SetupSnapshot, prior: Before): SetupSnapshot {
   return { circle, members, profile };
 }
 
-function normalizeBody(body: Body, prior: Before): Body {
-  const out: Body = {};
-  for (const [key, value] of Object.entries(body)) {
-    if (key === 'circle_id' && value !== null) {
-      out[key] = value === prior.circleId ? value : 'new';
-    } else if (key === 'member_id' && value !== null) {
-      out[key] = prior.ids.has(value as string) ? value : 'new';
-    } else if (key === 'profile_setup_completed_at') {
-      out[key] =
-        prior.setupCompletedAt !== null &&
-        Date.parse(value as string) === Date.parse(prior.setupCompletedAt)
-          ? 'kept'
-          : 'now';
-    } else out[key] = value;
-  }
-  return out;
-}
-
-export interface SetupComparison {
-  sqlError?: string;
-  sqlBody?: Body;
+export interface SetupRun {
+  /** The error code when the API refused (4xx), else undefined. */
+  apiError?: string;
   apiBody?: Body;
-  /** The normalized snapshot (equal on both sides). */
+  /** The normalized snapshot of the effects. */
   snapshot: SetupSnapshot;
   reply: ApiReply;
 }
 
 /**
- * Runs the SQL function (rolled back) then the API on the same state for `ownerId`, and throws when
- * the answers or the effects differ (see the file comment). Returns the API side.
+ * Runs the API's setup for `ownerId` and returns its answer and its effects, normalized (see the
+ * file comment) so a test can assert exactly what was created, kept or refreshed.
  */
-export async function compareSetupWithSql(
+export async function runSetup(
   client: Client,
   ownerId: string,
   api: () => Promise<ApiReply>,
-): Promise<SetupComparison> {
+): Promise<SetupRun> {
   const prior = await before(client, ownerId);
   const cutoff = (await client.query<{ t: string }>('select clock_timestamp()::text as t')).rows[0]
     .t;
-  const sqlSide = await sqlRolledBack<Body, { snap: SetupSnapshot }>(
-    client,
-    ownerId,
-    'public.complete_profile_setup()',
-    [],
-    { statement: SNAPSHOT_SQL, params: [ownerId, cutoff] },
-  );
   const reply = await api();
+  if (reply.statusCode >= 500)
+    throw new Error(`The API answered ${reply.statusCode} ${reply.body}`);
   const apiSnap = (await client.query<{ snap: SetupSnapshot }>(SNAPSHOT_SQL, [ownerId, cutoff]))
     .rows[0].snap;
-  if (sqlSide.error !== undefined) {
-    if (reply.statusCode < 400 || errorOf(reply).code !== sqlSide.error) {
-      throw new Error(
-        `SQL raised ${sqlSide.error}; the API answered ${reply.statusCode} ${reply.body}`,
-      );
-    }
-  } else {
-    if (reply.statusCode !== 200) {
-      throw new Error(`SQL answered; the API answered ${reply.statusCode} ${reply.body}`);
-    }
-    const apiBody = normalizeBody(reply.json<Body>(), prior);
-    const sqlBody = normalizeBody(sqlSide.body ?? {}, prior);
-    if (JSON.stringify(apiBody) !== JSON.stringify(sqlBody)) {
-      throw new Error(
-        `Bodies differ:\n  api ${JSON.stringify(apiBody)}\n  sql ${JSON.stringify(sqlBody)}`,
-      );
-    }
-    // Key order as the RPC's jsonb.
-    if (
-      JSON.stringify(Object.keys(reply.json<Body>())) !==
-      JSON.stringify(Object.keys(sqlSide.body ?? {}))
-    ) {
-      throw new Error('Key order differs from the SQL function');
-    }
-  }
-  const sqlSnap = normalize(sqlSide.rows?.[0]?.snap as SetupSnapshot, prior);
-  const apiNorm = normalize(apiSnap, prior);
-  if (JSON.stringify(sqlSnap) !== JSON.stringify(apiNorm)) {
-    throw new Error(
-      `Effects differ:\n  api ${JSON.stringify(apiNorm)}\n  sql ${JSON.stringify(sqlSnap)}`,
-    );
-  }
   return {
-    sqlError: sqlSide.error,
-    sqlBody: sqlSide.body,
+    apiError: reply.statusCode >= 400 ? errorOf(reply).code : undefined,
     apiBody: reply.statusCode === 200 ? reply.json<Body>() : undefined,
-    snapshot: apiNorm,
+    snapshot: normalize(apiSnap, prior),
     reply,
   };
 }

@@ -19,10 +19,13 @@ import { PRE_0012_TEMPLATE_DATABASE } from '../support/stack';
  * revoked, removed or dropped. On a clone of the database as it was before 0012 (baseline +
  * 0001-0011): snapshot (privileges of anon / authenticated / PUBLIC with grantor and grant option,
  * `supabase_realtime` members, every `storage.objects` policy), apply 0012 with the real runner,
- * check the production state, run the rollback, and compare: identical. Then 0012 applies again
- * cleanly, and a second rollback run refuses and changes nothing.
+ * check the production state, run the rollbacks (0025's first: it recreates the old SQL functions
+ * 0012 recorded grants for, D76), and compare: identical. Then 0012 and 0025 apply again cleanly,
+ * and a second rollback run refuses and changes nothing.
  */
 const ROLLBACK_SQL = readFileSync(resolve('db/rollback/0012_down.sql'), 'utf8');
+/** 0025 (D76) dropped functions whose grants 0012 recorded: it is rolled back first. */
+const ROLLBACK_0025_SQL = readFileSync(resolve('db/rollback/0025_down.sql'), 'utf8');
 const silent = () => undefined;
 
 describe('stage 7.6: db/rollback/0012_down.sql restores the pre-0012 state (D42)', () => {
@@ -72,8 +75,9 @@ describe('stage 7.6: db/rollback/0012_down.sql restores the pre-0012 state (D42)
     // rows; 0018, D66-D68: two locked-down tables, one column, a check, an index and two app_config
     // rows; 0019, D69: one nullable column; 0020, D70, and 0021, D71: one widened check each; 0022,
     // D73: two nullable columns, a check and a trigger whose function no Supabase role may execute;
-    // 0023, D74: one nullable column and a check; 0024, D75: one view no Supabase role may read),
-    // so the snapshot comparison below is unchanged, and they stay recorded through the rollback.
+    // 0023, D74: one nullable column and a check; 0024, D75: one view no Supabase role may read;
+    // 0025, D76: drops the old SQL functions and policies, rolled back first below), so the
+    // snapshot comparison below is unchanged, and 0013-0024 stay recorded through the rollback.
     expect(await runMigrations(client, resolve('db/migrations'), silent)).toEqual([
       '0012_retire_supabase_app_paths',
       '0013_membership_end_status',
@@ -88,19 +92,23 @@ describe('stage 7.6: db/rollback/0012_down.sql restores the pre-0012 state (D42)
       '0022_notification_deliveries_final_at',
       '0023_incident_location_unavailable_since',
       '0024_support_incident_audit_view',
+      '0025_drop_legacy_sql',
     ]);
     expect(await supabasePrivilegesLeft(client)).toEqual([]);
     expect(await realtimeMembersLeft(client)).toEqual([]);
     expect(await avatarWritePolicies(client)).toEqual([]);
 
+    await client.query(ROLLBACK_0025_SQL);
     await client.query(ROLLBACK_SQL);
     expect(await supabaseAccessSnapshot(client)).toEqual(before);
 
     // Re-runnable: 0012 applies again on the rolled-back database, and rolls back again.
     expect(await runMigrations(client, resolve('db/migrations'), silent)).toEqual([
       '0012_retire_supabase_app_paths',
+      '0025_drop_legacy_sql',
     ]);
     expect(await supabasePrivilegesLeft(client)).toEqual([]);
+    await client.query(ROLLBACK_0025_SQL);
     await client.query(ROLLBACK_SQL);
     expect(await supabaseAccessSnapshot(client)).toEqual(before);
 

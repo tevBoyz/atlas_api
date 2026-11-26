@@ -18,10 +18,9 @@ import { openTestClient } from '../support/database';
 import { createUser } from '../support/fixtures';
 
 /**
- * API-100-54: password sign-in with the lockout of spec §6.8 rules 42-48, reproduced against the
- * same `login_lockouts` table the SQL functions use and compared with `login_lockout_status` /
- * `record_login_failure` on the same state (the parity reference), plus confirmation checks, the
- * per-IP throttles, uniform answers for unknown identifiers, concurrency and audit.
+ * API-100-54: password sign-in with the lockout of spec §6.8 rules 42-48 (`login_lockouts`), plus
+ * confirmation checks, the per-IP throttles, uniform answers for unknown identifiers, concurrency
+ * and audit.
  */
 interface Status {
   locked: boolean;
@@ -274,188 +273,30 @@ describe('password sign-in with lockout (API-100-54)', () => {
     });
   });
 
-  describe('parity with the SQL functions on the same state (spec §7.5)', () => {
-    /** Throttle rows of the SQL functions (request.headers is unset here: IP "unknown"). */
-    beforeEach(async () => {
-      await client.query('delete from public.login_lockout_rpc_throttle');
-    });
-
-    async function sqlStatus(email: string | null, phone: string | null): Promise<Status> {
-      const { rows } = await client.query<{ s: Status }>(
-        'select public.login_lockout_status(p_email => $1, p_phone => $2) as s',
-        [email, phone],
+  describe('rule 44: the lockout key of a phone sign-in', () => {
+    async function keys(...candidates: string[]): Promise<string[]> {
+      const { rows } = await client.query<{ email: string }>(
+        `select email from public.login_lockouts where email = any($1::text[]) order by 1`,
+        [candidates],
       );
-      return rows[0].s;
+      return rows.map((r) => r.email);
     }
 
-    async function sqlRecord(
-      email: string | null,
-      phone: string | null,
-    ): Promise<Status | 'locked'> {
-      try {
-        const { rows } = await client.query<{ s: Status }>(
-          'select public.record_login_failure(p_email => $1, p_phone => $2) as s',
-          [email, phone],
-        );
-        return rows[0].s;
-      } catch (error) {
-        if ((error as Error).message === 'login_lockout:locked') return 'locked';
-        throw error;
-      }
-    }
-
-    async function setState(key: string, state: string | null): Promise<void> {
-      await client.query('delete from public.login_lockouts where email = $1', [key]);
-      if (state) {
-        await client.query(
-          `insert into public.login_lockouts (email, failed_attempts, locked_until, last_failed_at)
-           select $1, ${state}`,
-          [key],
-        );
-      }
-    }
-
-    const STATES: [string, string | null][] = [
-      ['no row', null],
-      ['3 recent failures', `3, null, now() - interval '1 minute'`],
-      ['4 failures, the last 16 minutes ago', `4, null, now() - interval '16 minutes'`],
-      [
-        'locked for 10 more minutes',
-        `5, now() + interval '10 minutes', now() - interval '5 minutes'`,
-      ],
-      ['a lock that expired', `5, now() - interval '1 second', now() - interval '15 minutes'`],
-      ['4 recent failures (the next one locks)', `4, null, now() - interval '1 minute'`],
-    ];
-
-    const comparable = (s: Status) => ({
-      locked: s.locked,
-      failed_attempts: s.failed_attempts,
-      has_locked_until: s.locked_until !== null,
-    });
-    /**
-     * The same answer. `locked_until` comes from states written a moment apart (each side gets its
-     * own copy of the state, set with `now()`), so it may differ by the time between the two writes.
-     */
-    const expectParity = (api: Status, sqlSide: Status) => {
-      expect(comparable(api)).toEqual(comparable(sqlSide));
-      if (api.locked_until !== null && sqlSide.locked_until !== null) {
-        expect(
-          Math.abs(Date.parse(api.locked_until) - Date.parse(sqlSide.locked_until)),
-        ).toBeLessThan(5_000);
-      }
-    };
-
-    async function snapshot(key: string) {
-      const r = await row(key);
-      return r
-        ? {
-            failed_attempts: r.failed_attempts,
-            locked: r.locked,
-            has_last_failed: r.last_failed_at !== null,
-          }
-        : null;
-    }
-
-    it.each(STATES)('status: %s', async (_label, state) => {
-      const sqlUser = await createUser(client, { phone: true, profile: false });
-      await client.query('insert into public.users (id, email, phone) values ($1, $2, $3)', [
-        sqlUser.id,
-        sqlUser.email,
-        sqlUser.phone,
-      ]);
-      for (const [email, phone] of [
-        [sqlUser.email, null],
-        [null, sqlUser.phone],
-      ] as const) {
-        await setState(sqlUser.email, state);
-        const fromSql = await sqlStatus(email, phone);
-        const sqlRow = await snapshot(sqlUser.email);
-        await setState(sqlUser.email, state);
-        const query = email
-          ? `email=${encodeURIComponent(email)}`
-          : `phone=${encodeURIComponent(phone!)}`;
-        const fromApi = (await lockoutStatus(query)).json<Status>();
-        expectParity(fromApi, fromSql);
-        expect(await snapshot(sqlUser.email)).toEqual(sqlRow);
-      }
-    });
-
-    it.each(STATES)('failure: %s', async (_label, state) => {
-      const sqlUser = await createUser(client, { phone: true, profile: false });
-      await client.query('insert into public.users (id, email, phone) values ($1, $2, $3)', [
-        sqlUser.id,
-        sqlUser.email,
-        sqlUser.phone,
-      ]);
-      await setState(sqlUser.email, state);
-      const fromSql = await sqlRecord(sqlUser.email, null);
-      const sqlRow = await snapshot(sqlUser.email);
-      await setState(sqlUser.email, state);
-      const res = await login({ email: sqlUser.email, password: 'Wrong1234' });
-      if (fromSql === 'locked') {
-        expect(res.statusCode).toBe(423);
-      } else {
-        expect(res.statusCode).toBe(fromSql.locked ? 423 : 401);
-        expectParity(errorOf(res).details as unknown as Status, fromSql);
-      }
-      expect(await snapshot(sqlUser.email)).toEqual(sqlRow);
-    });
-
-    it('key of a phone: an account with an email → its email; a phone-only account or an unknown number → E.164', async () => {
+    it('an account with an email → its email; a phone-only account or an unknown number → E.164', async () => {
       const withEmail = await createUser(client, { phone: true, profile: false });
-      await client.query('insert into public.users (id, email, phone) values ($1, $2, $3)', [
-        withEmail.id,
-        withEmail.email,
-        withEmail.phone,
-      ]);
       const phoneOnly = await createUser(client, { phone: true, profile: false });
-      await client.query('update auth.users set email = null where id = $1', [phoneOnly.id]);
-      await client.query('insert into public.users (id, phone) values ($1, $2)', [
-        phoneOnly.id,
-        phoneOnly.phone,
-      ]);
+      await client.query('update public.users set email = null where id = $1', [phoneOnly.id]);
       const unknown = authFakePhone();
-      for (const phone of [withEmail.phone!, phoneOnly.phone!, unknown]) {
-        await sqlRecord(null, phone);
-        const sqlKeys = (
-          await client.query<{ email: string }>(
-            `select email from public.login_lockouts where email in ($1, $2) order by 1`,
-            [withEmail.email, phone],
-          )
-        ).rows.map((r) => r.email);
-        await client.query('delete from public.login_lockouts where email in ($1, $2)', [
-          withEmail.email,
-          phone,
-        ]);
+      const expected: [string, string][] = [
+        [withEmail.phone!, withEmail.email],
+        [phoneOnly.phone!, phoneOnly.phone!],
+        [unknown, unknown],
+      ];
+      for (const [phone, key] of expected) {
         await login({ phone, password: 'Wrong1234' });
-        const apiKeys = (
-          await client.query<{ email: string }>(
-            `select email from public.login_lockouts where email in ($1, $2) order by 1`,
-            [withEmail.email, phone],
-          )
-        ).rows.map((r) => r.email);
-        expect(apiKeys).toEqual(sqlKeys);
-        await client.query('delete from public.login_lockouts where email in ($1, $2)', [
-          withEmail.email,
-          phone,
-        ]);
+        expect(await keys(withEmail.email, phoneOnly.email, phone)).toEqual([key]);
+        await client.query('delete from public.login_lockouts where email = $1', [key]);
       }
-    });
-
-    it('rule 46 hook parity: the SQL hook refuses a password session for a key the API locked', async () => {
-      const sqlUser = await createUser(client, { profile: false });
-      await client.query('insert into public.users (id, email) values ($1, $2)', [
-        sqlUser.id,
-        sqlUser.email,
-      ]);
-      for (let i = 0; i < 5; i += 1) await login({ email: sqlUser.email, password: 'Wrong1234' });
-      const { rows } = await client.query<{ out: { error?: { message: string } } }>(
-        `select public.hook_reject_locked_password_session(
-                  jsonb_build_object('user_id', $1::text, 'authentication_method', 'password',
-                                     'claims', '{}'::jsonb)) as out`,
-        [sqlUser.id],
-      );
-      expect(rows[0].out.error?.message).toBe('login_lockout:locked');
     });
   });
 

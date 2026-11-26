@@ -16,7 +16,6 @@ import {
   listJoinedCircles,
   listMembers,
   removeMember,
-  sqlRolledBack,
 } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
@@ -36,7 +35,7 @@ import {
   markSafe,
   submitAlert,
 } from '../support/incident-api';
-import { compareWithSql, insertMember, memberRow } from '../support/invite-rows';
+import { callWithRows, insertMember, memberRow } from '../support/invite-rows';
 
 /**
  * API-100-32: `DELETE /v1/circles/{circle_id}/members/{member_id}` (`remove_circle_member`, spec
@@ -526,118 +525,75 @@ describe('remove and leave (API-100-32)', () => {
                  order by d.member_id`,
     params: [circleId],
   });
+  /** The circle's delivery rows of member row `memberId`. */
+  const deliveriesOf = async (circleId: string, memberId: string) => {
+    const rows = deliveryRows(circleId);
+    return (await client.query<Body>(rows.statement, rows.params)).rows.filter(
+      (row) => row.member_id === memberId,
+    );
+  };
 
   const compareRemove = async (caller: UserFixture, circle: CircleFixture, memberId: string) => {
-    const sqlDeliveries = await sqlRolledBack<Body, Body>(
-      client,
-      caller.id,
-      'public.remove_circle_member($1)',
-      [memberId],
-      deliveryRows(circle.id),
-    );
-    const compared = await compareWithSql(client, {
+    const compared = await callWithRows(client, {
       callerId: caller.id,
-      sqlCall: 'public.remove_circle_member($1)',
-      params: [memberId],
       circleIds: [circle.id],
       api: () => removeMember(app, caller.id, circle.id, memberId),
-      endedHistoryDivergence: true,
     });
-    const rows = deliveryRows(circle.id);
-    expect((await client.query(rows.statement, rows.params)).rows).toEqual(sqlDeliveries.rows);
     return compared;
   };
   const compareLeave = async (caller: UserFixture, circle: CircleFixture) => {
-    const sqlDeliveries = await sqlRolledBack<Body, Body>(
-      client,
-      caller.id,
-      'public.leave_safety_circle($1)',
-      [circle.id],
-      deliveryRows(circle.id),
-    );
-    const compared = await compareWithSql(client, {
+    const compared = await callWithRows(client, {
       callerId: caller.id,
-      sqlCall: 'public.leave_safety_circle($1)',
-      params: [circle.id],
       circleIds: [circle.id],
       api: () => leaveCircle(app, caller.id, circle.id),
-      endedHistoryDivergence: true,
     });
-    const rows = deliveryRows(circle.id);
-    expect((await client.query(rows.statement, rows.params)).rows).toEqual(sqlDeliveries.rows);
     return compared;
   };
 
-  it('remove answers and writes what remove_circle_member does (each code and success)', async () => {
+  it('remove: each code, and what a success writes', async () => {
     const { owner, circle, ben, benRow, caraRow } = await circleWithMembers();
     await submitAlert(app, owner.id, 'medical');
     const pending = await insertMember(client, circle.id);
     const declined = await insertMember(client, circle.id, { status: 'declined', canceled: true });
-    expect((await compareRemove(ben, circle, caraRow.id)).sqlError).toBe(
+    expect((await compareRemove(ben, circle, caraRow.id)).apiError).toBe(
       'remove_circle_member:not_authorized',
     );
-    expect((await compareRemove(owner, circle, circle.ownerMemberId)).sqlError).toBe(
+    expect((await compareRemove(owner, circle, circle.ownerMemberId)).apiError).toBe(
       'remove_circle_member:cannot_remove_owner',
     );
     expect(
-      (await compareRemove(owner, circle, '00000000-0000-4000-8000-0000000000fd')).sqlError,
+      (await compareRemove(owner, circle, '00000000-0000-4000-8000-0000000000fd')).apiError,
     ).toBe('remove_circle_member:not_found');
-    // D44 divergence: the SQL deletes Ben's active row, the API keeps it as `removed`; the
-    // pending and declined rows are deleted by both.
+    // D44: Ben's active row is kept as `removed` and his deliveries go; the pending and declined
+    // rows are deleted.
     const ended = await compareRemove(owner, circle, benRow.id);
-    expect(ended.sqlError).toBeUndefined();
-    expect(ended.endedByApi).toEqual([benRow.id]);
+    expect(ended.apiError).toBeUndefined();
+    expect(ended.endedNow).toEqual([benRow.id]);
     await expectEnded(benRow.id, 'removed', ben.id);
+    expect(await deliveriesOf(circle.id, benRow.id)).toEqual([]);
     for (const id of [pending.id, declined.id]) {
       const compared = await compareRemove(owner, circle, id);
-      expect(compared.sqlError).toBeUndefined();
-      expect(compared.endedByApi).toEqual([]);
+      expect(compared.apiError).toBeUndefined();
+      expect(compared.endedNow).toEqual([]);
       expect(await memberRow(client, id)).toBeUndefined();
     }
   });
 
-  it('leave answers and writes what leave_safety_circle does (each code and success)', async () => {
+  it('leave: each code, and what a success writes', async () => {
     const { owner, circle, ben, benRow } = await circleWithMembers();
     await submitAlert(app, owner.id, 'medical');
     const outsider = await createUser(client);
-    expect((await compareLeave(owner, circle)).sqlError).toBe('leave_safety_circle:is_owner');
-    expect((await compareLeave(outsider, circle)).sqlError).toBe(
+    expect((await compareLeave(owner, circle)).apiError).toBe('leave_safety_circle:is_owner');
+    expect((await compareLeave(outsider, circle)).apiError).toBe(
       'leave_safety_circle:not_authorized',
     );
     const left = await compareLeave(ben, circle);
-    expect(left.sqlError).toBeUndefined();
-    expect(left.endedByApi).toEqual([benRow.id]);
+    expect(left.apiError).toBeUndefined();
+    expect(left.endedNow).toEqual([benRow.id]);
     await expectEnded(benRow.id, 'left', ben.id);
-    expect((await compareLeave(ben, circle)).sqlError).toBe('leave_safety_circle:not_authorized');
+    expect(await deliveriesOf(circle.id, benRow.id)).toEqual([]);
+    expect((await compareLeave(ben, circle)).apiError).toBe('leave_safety_circle:not_authorized');
     const ghost: CircleFixture = { ...circle, id: '00000000-0000-4000-8000-0000000000fc' };
-    expect((await compareLeave(ben, ghost)).sqlError).toBe('leave_safety_circle:not_found');
-  });
-
-  it('a row removed through the SQL function is gone for the API, and the reverse', async () => {
-    const { owner, circle, ben, benRow, cara, caraRow } = await circleWithMembers();
-    // Ben is removed through the SQL function (committed); the API then finds no row.
-    await client.query('begin');
-    await client.query(
-      `select set_config('request.jwt.claim.sub', $1, true),
-              set_config('request.jwt.claims', $2, true)`,
-      [owner.id, JSON.stringify({ sub: owner.id, role: 'authenticated' })],
-    );
-    await client.query('select public.remove_circle_member($1)', [benRow.id]);
-    await client.query('commit');
-    expectCode(
-      await removeMember(app, owner.id, circle.id, benRow.id),
-      404,
-      'remove_circle_member:not_found',
-    );
-    expectCode(
-      await leaveCircle(app, ben.id, circle.id),
-      403,
-      'leave_safety_circle:not_authorized',
-    );
-    // Cara leaves through the API; the SQL then answers not_authorized for her.
-    expect((await leaveCircle(app, cara.id, circle.id)).statusCode).toBe(200);
-    const sql = await sqlRolledBack(client, cara.id, 'public.leave_safety_circle($1)', [circle.id]);
-    expect(sql.error).toBe('leave_safety_circle:not_authorized');
-    await expectEnded(caraRow.id, 'left', cara.id);
+    expect((await compareLeave(ben, ghost)).apiError).toBe('leave_safety_circle:not_found');
   });
 });

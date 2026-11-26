@@ -28,7 +28,7 @@ export function throwawayAuthKeys(kids: readonly string[] = ['test-key-1']): Thr
 /** Removes inherited own-auth and provider settings, then sets fresh throwaway keys. */
 export function useTestAuthEnvironment(env: NodeJS.ProcessEnv = process.env): void {
   for (const key of Object.keys(env)) {
-    if (/^(AUTH_|GOOGLE_|APPLE_|SUPABASE_JWT_ACCEPT)/.test(key)) delete env[key];
+    if (/^(AUTH_|GOOGLE_|APPLE_|SUPABASE_JWT_)/.test(key)) delete env[key];
   }
   Object.assign(env, throwawayAuthKeys());
 }

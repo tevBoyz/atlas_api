@@ -10,45 +10,20 @@ import { RouteContractCheck } from '../guards/route-contract';
 import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { ATLAS_KEY_RING, AtlasKeyRing } from './atlas-key-ring';
 import { AtlasTokenVerifier } from './atlas-token-verifier';
-import { DualTokenVerifier, type TokenUsageRecorder } from './dual-token-verifier';
 import {
   DatabaseSessionStatusReader,
   SESSION_STATUS_READER,
   type SessionStatusReader,
 } from './session-status';
-import { SupabaseTokenVerifier } from './supabase-token-verifier';
-import { TOKEN_USAGE, TokenUsageMetrics } from './token-usage';
 import { TOKEN_VERIFIER } from './token-verifier';
 
-/** The Supabase verifier from SUPABASE_JWT_* (API-100-08 AC2). */
-export function supabaseVerifierFromConfig(config: ApiConfigService): SupabaseTokenVerifier {
-  return new SupabaseTokenVerifier({
-    jwksUrl: config.get('SUPABASE_JWT_JWKS_URL'),
-    secret: config.get('SUPABASE_JWT_SECRET'),
-    issuer: config.get('SUPABASE_JWT_ISSUER'),
-    audience: config.get('SUPABASE_JWT_AUDIENCE'),
-    clockSkewSeconds: config.get('SUPABASE_JWT_CLOCK_SKEW_SECONDS'),
-  });
-}
-
-/** The dual-token verifier (API-100-51/59): own tokens, and Supabase tokens while accepted. */
-export function dualVerifierFromConfig(
+/** The guard's verifier: the API's own access tokens (API-100-51). */
+export function tokenVerifierFromConfig(
   config: ApiConfigService,
   ring: AtlasKeyRing,
   sessions: SessionStatusReader,
-  usage?: TokenUsageRecorder,
-): DualTokenVerifier {
-  const until = config.get('SUPABASE_JWT_ACCEPT_UNTIL');
-  return new DualTokenVerifier(
-    ring.issuer,
-    new AtlasTokenVerifier(ring, sessions, config.get('AUTH_JWT_CLOCK_SKEW_SECONDS')),
-    supabaseVerifierFromConfig(config),
-    {
-      accept: config.get('SUPABASE_JWT_ACCEPT'),
-      untilMs: until === undefined ? undefined : Date.parse(until),
-    },
-    usage,
-  );
+): AtlasTokenVerifier {
+  return new AtlasTokenVerifier(ring, sessions, config.get('AUTH_JWT_CLOCK_SKEW_SECONDS'));
 }
 
 /**
@@ -56,10 +31,10 @@ export function dualVerifierFromConfig(
  * then rate limiting, API-100-11), the active {@link TOKEN_VERIFIER} and the boot-time
  * {@link RouteContractCheck}.
  *
- * The verifier is the dual-token verifier (API-100-51/59): the API's own access tokens (keys from
- * AUTH_JWT_KEYS, {@link ATLAS_KEY_RING}) and, while SUPABASE_JWT_ACCEPT allows it, Supabase access
- * tokens. Production config requires both key sources (config.schema.ts). Elsewhere a missing one
- * is allowed, but then those tokens answer 401 (fail closed): logged once here.
+ * The verifier accepts only the API's own access tokens (keys from AUTH_JWT_KEYS,
+ * {@link ATLAS_KEY_RING}); Supabase access tokens were retired with the old backend (D76).
+ * Production config requires the keys (config.schema.ts). Elsewhere they may be missing, but then
+ * every token answers 401 (fail closed): logged once here.
  */
 @Module({
   imports: [DiscoveryModule, RateLimitModule],
@@ -70,35 +45,27 @@ export function dualVerifierFromConfig(
       useFactory: (config: ApiConfigService) => AtlasKeyRing.fromConfig(config),
     },
     { provide: SESSION_STATUS_READER, useClass: DatabaseSessionStatusReader },
-    { provide: TOKEN_USAGE, useClass: TokenUsageMetrics },
     {
       provide: TOKEN_VERIFIER,
-      inject: [ApiConfigService, ATLAS_KEY_RING, SESSION_STATUS_READER, TOKEN_USAGE, ROOT_LOGGER],
+      inject: [ApiConfigService, ATLAS_KEY_RING, SESSION_STATUS_READER, ROOT_LOGGER],
       useFactory: (
         config: ApiConfigService,
         ring: AtlasKeyRing,
         sessions: SessionStatusReader,
-        usage: TokenUsageMetrics,
         logger: Logger,
       ) => {
-        if (!supabaseVerifierFromConfig(config).isConfigured) {
-          logger.warn(
-            'Supabase access tokens are not accepted: set SUPABASE_JWT_ISSUER and ' +
-              'SUPABASE_JWT_JWKS_URL or SUPABASE_JWT_SECRET',
-          );
-        }
         if (!ring.isConfigured) {
           logger.warn(
             'own access tokens are not accepted: set AUTH_JWT_KEYS and AUTH_JWT_ACTIVE_KID',
           );
         }
-        return dualVerifierFromConfig(config, ring, sessions, usage);
+        return tokenVerifierFromConfig(config, ring, sessions);
       },
     },
     AuthGuard,
     { provide: APP_GUARD, useClass: RequestGuard },
     RouteContractCheck,
   ],
-  exports: [TOKEN_VERIFIER, ATLAS_KEY_RING, TOKEN_USAGE],
+  exports: [TOKEN_VERIFIER, ATLAS_KEY_RING],
 })
 export class AuthenticationModule {}

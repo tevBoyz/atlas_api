@@ -2,6 +2,11 @@ import { Redis } from 'ioredis';
 import { Client } from 'pg';
 
 import { adminDatabaseUrl, TEMPLATE_DATABASE, workerDatabaseName, workerRedisUrl } from './stack';
+import {
+  clearSeededTestSessions,
+  closeTestSessionClient,
+  registerTestSessionSeeder,
+} from './test-sessions';
 
 /**
  * Jest setupFilesAfterEnv (API-100-13 AC1). Test files running in parallel use different workers,
@@ -10,6 +15,8 @@ import { adminDatabaseUrl, TEMPLATE_DATABASE, workerDatabaseName, workerRedisUrl
  * every file. Suites may therefore commit real rows (the idempotency concurrency tests must).
  */
 async function resetWorkerStores(): Promise<void> {
+  await closeTestSessionClient();
+  clearSeededTestSessions();
   const name = workerDatabaseName();
   const admin = new Client({
     connectionString: adminDatabaseUrl(),
@@ -32,4 +39,6 @@ async function resetWorkerStores(): Promise<void> {
   }
 }
 
+registerTestSessionSeeder();
 beforeAll(resetWorkerStores, 120_000);
+afterAll(closeTestSessionClient);

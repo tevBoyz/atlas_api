@@ -15,7 +15,6 @@ import {
   userSchema,
 } from './auth.schemas';
 import { runAuthTransaction } from './auth-transaction';
-import { LegacyUsers } from './legacy-users';
 import type { SessionListEntry } from './sessions.repository';
 import { clientContext, type SessionJson, SessionsService } from './sessions.service';
 import { type UserJson, UsersRepository } from './users.repository';
@@ -25,15 +24,14 @@ import { z } from 'zod';
 /**
  * Refresh rotation, sign-out and device sessions (API-100-56, spec §11.3 A11-A13, A17, A19, A20).
  * Refresh is public (the access token may have expired) and limited per IP (150 per 5 minutes, the
- * Supabase refresh limit of today); the others need an access token (own, or Supabase during the
- * dual-token window) and use the default per-user limit.
+ * Supabase refresh limit of today); the others need an own access token and use the default
+ * per-user limit.
  */
 @Controller()
 export class SessionsController {
   constructor(
     private readonly sessions: SessionsService,
     private readonly users: UsersRepository,
-    private readonly legacy: LegacyUsers,
     private readonly database: DatabaseService,
   ) {}
 
@@ -71,8 +69,7 @@ export class SessionsController {
     tag: 'auth',
     responses: {
       204: {
-        description:
-          'Signed out on this device. With a Supabase access token (dual-token window) there is no API session to end: 204, nothing changes.',
+        description: 'Signed out on this device.',
       },
     },
   })
@@ -109,8 +106,6 @@ export class SessionsController {
     responses: { 200: { description: 'User.', name: 'User', schema: userSchema } },
   })
   async me(@CurrentUser() user: AuthenticatedUser): Promise<UserJson> {
-    // A Supabase-token caller not moved yet (dual-token window) is moved now (API-100-58).
-    await this.legacy.migrateById(user.id);
     const json = await runAuthTransaction(this.database, (tx) => this.users.userJson(tx, user.id));
     if (!json) throw new DomainError('auth:not_authenticated');
     return json;

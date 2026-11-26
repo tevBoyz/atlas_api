@@ -6,7 +6,7 @@ import type { Client } from 'pg';
 import { AVATAR_STORAGE, type AvatarStorage } from '../../src/modules/profiles/avatar-storage';
 import { MemoryAvatarStorage } from '../../src/modules/profiles/memory-avatar-storage';
 import { createTestApp, type LogCapture, withTestConfig } from '../../src/testing/test-app';
-import { errorOf, listMembers, sqlAs } from '../support/circle-api';
+import { errorOf, listMembers } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import { addActiveMember, createCircle, createUser } from '../support/fixtures';
 import {
@@ -334,7 +334,7 @@ describe('avatars through signed Storage URLs (API-100-37)', () => {
   });
 
   describe('AC3 / AC4 URL format and today’s paths', () => {
-    it('avatar_url is the public URL everywhere, equal to _avatars_public_url; {uid}/avatar.jpg stays valid', async () => {
+    it('avatar_url is the public URL everywhere; {uid}/avatar.jpg stays valid', async () => {
       const owner = await createUser(client, { fullName: 'Photo Owner' });
       const circle = await createCircle(client, owner);
       const member = await createUser(client, { fullName: 'Photo Member' });
@@ -349,16 +349,6 @@ describe('avatars through signed Storage URLs (API-100-37)', () => {
 
       const profile = (await getProfile(app, member.id)).json<Body>();
       expect(profile.avatar_url).toBe(publicUrl(legacy));
-      const sqlUrl = await sqlAs<string>(
-        client,
-        member.id,
-        'public._avatars_public_url($1)',
-        [legacy],
-        {
-          host: 'example-project.supabase.co',
-        },
-      );
-      expect(profile.avatar_url).toBe(sqlUrl);
       const listed = (await listMembers(app, owner.id, circle.id))
         .json<Body[]>()
         .find((row) => row.user_id === member.id);

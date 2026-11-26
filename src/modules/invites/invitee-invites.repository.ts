@@ -227,8 +227,8 @@ export class InviteeInvitesRepository {
   }
 
   /**
-   * The caller's phone before normalization (null if none), D47 ({@link callerPhoneSql}): the API
-   * account's confirmed `public.users.phone`, else `_auth_user_phone(uid)`'s `auth.users.phone`.
+   * The caller's phone before normalization (null if none), D47 / D76 ({@link callerPhoneSql}): the
+   * account's confirmed `public.users.phone`.
    */
   async authPhone(tx: InviteExecutor, callerId: string): Promise<string | null> {
     const result = await tx.execute<{ phone: string | null }>(sql`

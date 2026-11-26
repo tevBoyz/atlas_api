@@ -65,14 +65,6 @@ const clientIdList = () =>
     .pipe(z.array(z.string().regex(/^[A-Za-z0-9._:-]{1,255}$/)).min(1))
     .optional();
 
-/** An ISO-8601 date-time with a time zone (e.g. `2027-01-31T00:00:00Z`). */
-const isoDateTime = () =>
-  z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/)
-    .refine((value) => !Number.isNaN(Date.parse(value)))
-    .optional();
-
 function isIpOrCidr(entry: string): boolean {
   const [address, prefix, ...rest] = entry.split('/');
   if (rest.length > 0 || !address) return false;
@@ -110,12 +102,6 @@ export const configSchema = z.object({
   ALLOW_REMOTE_DATA_STORES: flag(),
 
   SUPABASE_URL: urlWithProtocol(['http:', 'https:']).optional(),
-  SUPABASE_JWT_JWKS_URL: urlWithProtocol(['http:', 'https:']).optional(),
-  SUPABASE_JWT_SECRET: z.string().min(32).optional(),
-  SUPABASE_JWT_ISSUER: urlWithProtocol(['http:', 'https:']).optional(),
-  SUPABASE_JWT_AUDIENCE: z.string().default('authenticated'),
-  // Allowed clock difference when checking `exp` / `nbf` of Supabase JWTs (API-100-08 AC2: <= 30 s).
-  SUPABASE_JWT_CLOCK_SKEW_SECONDS: integerInRange(0, 30).default(30),
   SUPABASE_STORAGE_SERVICE_KEY: z.string().optional(),
   // Where profile photos go (API-100-37): Supabase Storage, or the in-memory fake (tests, local
   // manual testing; refused when NODE_ENV=production).
@@ -242,11 +228,6 @@ export const configSchema = z.object({
   // Test-only seam: GET /__test/auth-messages reads what the FAKE email/SMS adapters "sent"
   // (verification links, OTP codes). Refused when NODE_ENV=production.
   AUTH_TEST_MAILBOX_ENABLED: flag(),
-  // Dual-token window (API-100-59): accept Supabase access tokens at all, and until when. Off by
-  // default since stage 7.1d (D40): the app has no Supabase sessions any more; the exchange route
-  // (D35) and the verifier stay, for an explicit SUPABASE_JWT_ACCEPT=true.
-  SUPABASE_JWT_ACCEPT: z.stringbool({ truthy: ['true'], falsy: ['false'] }).default(false),
-  SUPABASE_JWT_ACCEPT_UNTIL: isoDateTime(),
   // Google / Apple ID-token sign-in (API-100-55). Without client ids the provider is disabled.
   GOOGLE_CLIENT_IDS: clientIdList(),
   GOOGLE_JWKS_URL: urlWithProtocol(['http:', 'https:']).default(
@@ -271,11 +252,6 @@ const RULES: Record<ConfigKey, string> = {
   REDIS_URL: 'must be a redis:// or rediss:// URL',
   ALLOW_REMOTE_DATA_STORES: 'must be true or false',
   SUPABASE_URL: 'must be an http(s) URL',
-  SUPABASE_JWT_JWKS_URL: 'must be an http(s) URL',
-  SUPABASE_JWT_SECRET: 'must be at least 32 characters',
-  SUPABASE_JWT_ISSUER: 'must be an http(s) URL',
-  SUPABASE_JWT_AUDIENCE: 'must be a string',
-  SUPABASE_JWT_CLOCK_SKEW_SECONDS: 'must be an integer from 0 to 30',
   SUPABASE_STORAGE_SERVICE_KEY: 'must be a string',
   AVATAR_STORAGE: `must be one of ${AVATAR_STORAGE_DRIVERS.join(', ')}`,
   AVATARS_BUCKET: 'must be a bucket name (lowercase letters, digits, ".", "_", "-")',
@@ -342,8 +318,6 @@ const RULES: Record<ConfigKey, string> = {
   AUTH_EMAIL_LINK_TTL_SECONDS: 'must be an integer from 60 to 86400',
   AUTH_LINK_BASE: 'must be a URL (any scheme)',
   AUTH_TEST_MAILBOX_ENABLED: 'must be true or false',
-  SUPABASE_JWT_ACCEPT: 'must be true or false',
-  SUPABASE_JWT_ACCEPT_UNTIL: 'must be an ISO-8601 date-time with a time zone',
   GOOGLE_CLIENT_IDS: 'must be a comma-separated list of client ids',
   GOOGLE_JWKS_URL: 'must be an http(s) URL',
   APPLE_SIGN_IN_ENABLED: 'must be true or false',
@@ -382,18 +356,11 @@ export const REQUIRED_IN_PRODUCTION = [
   'DATABASE_URL',
   'REDIS_URL',
   'SUPABASE_URL',
-  'SUPABASE_JWT_ISSUER',
   // Signed avatar upload URLs (API-100-37); optional in development / tests.
   'SUPABASE_STORAGE_SERVICE_KEY',
   // Own access tokens (API-100-51).
   'AUTH_JWT_KEYS',
   'AUTH_JWT_ACTIVE_KID',
-] as const satisfies readonly ConfigKey[];
-
-/** At least one of these verifies Supabase JWTs; one is required when NODE_ENV=production. */
-export const SUPABASE_JWT_VERIFIERS = [
-  'SUPABASE_JWT_JWKS_URL',
-  'SUPABASE_JWT_SECRET',
 ] as const satisfies readonly ConfigKey[];
 
 export interface ConfigProblem {
@@ -466,12 +433,6 @@ export function parseConfig(env: Record<string, unknown>): Config {
       problems.push({
         keys: ['AVATAR_STORAGE'],
         reason: 'must be supabase when NODE_ENV=production (memory is for tests only)',
-      });
-    }
-    if (SUPABASE_JWT_VERIFIERS.every((key) => input[key] === undefined)) {
-      problems.push({
-        keys: [...SUPABASE_JWT_VERIFIERS],
-        reason: 'at least one is required when NODE_ENV=production',
       });
     }
   }

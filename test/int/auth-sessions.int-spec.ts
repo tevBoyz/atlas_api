@@ -14,8 +14,8 @@ import {
   signedUpUser,
 } from '../support/auth-api';
 import { openTestClient } from '../support/database';
+import { goneUser } from '../support/test-sessions';
 import { fakePushToken } from '../support/device-api';
-import { createUser } from '../support/fixtures';
 
 /**
  * API-100-56: rotating refresh tokens (SHA-256 at rest, 30-day lifetime, reuse revokes the session,
@@ -255,37 +255,32 @@ describe('refresh rotation, device sessions and sign-out (API-100-56)', () => {
       expect((await get('/v1/me', bearer(other))).statusCode).toBe(401);
     });
 
-    it('sign-out needs an access token (401 auth:not_authenticated); a Supabase token logs out nothing', async () => {
+    it('sign-out needs an access token (401 auth:not_authenticated)', async () => {
       const anonymous = await post(app, '/v1/auth/logout', {});
       expect([anonymous.statusCode, errorOf(anonymous).code]).toEqual([
         401,
         'auth:not_authenticated',
       ]);
-      const { session } = await signedUpUser(app);
-      const supabase = await post(app, '/v1/auth/logout', {}, await authHeader(session.user.id));
-      expect(supabase.statusCode).toBe(204);
-      expect(await sessionRow(session.session_id)).toEqual({ revoked: false, revoke_reason: null });
     });
   });
 
   describe('A17 GET /v1/me and A19 / A20 sessions', () => {
-    it('GET /v1/me answers the User; a Supabase-token user still only in auth.users is moved first', async () => {
+    it('GET /v1/me answers the User (imported accounts too); a deleted account answers 401', async () => {
       const { session } = await signedUpUser(app);
       const res = await get('/v1/me', bearer(session));
       expect(res.json()).toEqual(session.user);
-      const legacy = await createUser(client, { phone: true });
-      const moved = await get('/v1/me', await authHeader(legacy.id));
-      expect(moved.statusCode).toBe(200);
-      expect(moved.json()).toMatchObject({
-        id: legacy.id,
-        email: legacy.email,
-        phone: legacy.phone,
+      const imported = await legacyUser(app, client);
+      const own = await get('/v1/me', bearer(imported.session));
+      expect(own.statusCode).toBe(200);
+      expect(own.json()).toMatchObject({
+        id: imported.id,
+        email: imported.email,
         identities: [
           { provider: 'email', created_at: expect.any(String) as string },
           { provider: 'phone', created_at: expect.any(String) as string },
         ],
       });
-      const unknown = await get('/v1/me', await authHeader(randomUUID()));
+      const unknown = await get('/v1/me', await authHeader(await goneUser(client)));
       expect([unknown.statusCode, errorOf(unknown).code]).toEqual([401, 'auth:not_authenticated']);
     });
 

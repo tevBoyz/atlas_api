@@ -11,12 +11,13 @@ import { DevicesRepository } from '../../src/modules/notifications/devices.repos
 import { createTestApp, type LogCapture, withTestConfig } from '../../src/testing/test-app';
 import { authHeader } from '../../src/testing/test-tokens';
 import { openTestClient } from '../support/database';
+import { goneUser } from '../support/test-sessions';
 import { clearDevicePushToken, fakePushToken, registerDevice } from '../support/device-api';
 import { createUser, type UserFixture } from '../support/fixtures';
 
 /**
  * Device registration (API-100-44, spec §11.3 U1/U2, D22): upsert per (user, installation), the push
- * token moving between devices, clearing it at sign-out, Supabase tokens, validation order, and that
+ * token moving between devices, clearing it at sign-out, the token's user, validation order, and that
  * a push token never reaches a log line, an error body or the audit log.
  */
 type Body = Record<string, unknown>;
@@ -417,8 +418,8 @@ describe('PUT /v1/me/devices/current and DELETE .../push-token (API-100-44)', ()
       expect(errorOf(del).code).toBe('user_devices:not_authenticated');
     });
 
-    it('a valid Supabase token whose user does not exist → 401 user_devices:not_authenticated', async () => {
-      const reply = await registerDevice(app, randomUUID(), randomUUID(), {
+    it('a token whose user no longer exists → 401 user_devices:not_authenticated', async () => {
+      const reply = await registerDevice(app, await goneUser(client), randomUUID(), {
         platform: 'ios',
         app_version: '1',
       });
@@ -517,7 +518,7 @@ describe('PUT /v1/me/devices/current and DELETE .../push-token (API-100-44)', ()
     });
   });
 
-  it('works with a Supabase access token (AC4): the device belongs to the token’s `sub`', async () => {
+  it('AC4: the device belongs to the token’s `sub`', async () => {
     const user = await createUser(client);
     const reply = await app.inject({
       method: 'PUT',

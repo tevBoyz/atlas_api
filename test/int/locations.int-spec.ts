@@ -23,28 +23,18 @@ import {
 } from '../support/fixtures';
 import {
   attachLocation,
-  attachViaPostgrest,
-  callSqlAs,
   countRows,
   getLiveLocationConfig,
   getOpenIncident,
   markSafe,
-  type SqlOutcome,
   submitAlert,
 } from '../support/incident-api';
-import {
-  withoutClosedAtText,
-  withoutEmergencyServicesText,
-  withoutUnavailableSince,
-} from '../support/share-payload-shape';
 
 /**
- * `POST /v1/incidents/{id}/locations` (API-100-17) beyond the SQL script: argument conversion and
- * check order against the SQL function called the way PostgREST calls it, the out-of-order guard at
- * microsecond precision, AC7 (nothing but the five location columns changes), the post-commit hook,
- * coordinates kept out of logs, the rate-limit budget of an active alert, races on separate
- * connections, and interchangeability with the SQL function. The SQL script's late-ping assertions are
- * in `test/parity/scrum45_closure_events.spec.ts`.
+ * `POST /v1/incidents/{id}/locations` (API-100-17): argument conversion and check order, the
+ * out-of-order guard at microsecond precision, AC7 (nothing but the five location columns
+ * changes), the post-commit hook, coordinates kept out of logs, the rate-limit budget of an active
+ * alert, and races on separate connections.
  */
 type Body = Record<string, unknown>;
 type Reply = Awaited<ReturnType<typeof attachLocation>>;
@@ -76,8 +66,6 @@ const INCIDENT_SHARED_KEYS = [
 ];
 /** The stored fix every guard case starts from: one microsecond past 10:00 UTC. */
 const T0 = '2026-11-19T10:00:00.000001+00:00';
-/** SQLSTATEs of a value Postgres cannot convert to the parameter type (PostgREST answers 400). */
-const CONVERSION_ERRORS = new Set(['22P02', '22003', '22007', '22008', '22P05', '22021', '22009']);
 const PARALLEL = 10;
 
 let hookBehaviour: (event: IncidentLocationEvent) => void | Promise<void>;
@@ -161,15 +149,6 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
     return rows[0];
   };
 
-  const sharedJsonViaSql = async (incidentId: string) => {
-    await client.query(`set timezone = 'UTC'`);
-    const { rows } = await client.query<{ body: Body }>(
-      'select public._incident_activation_json(i) as body from public.incidents i where i.id = $1',
-      [incidentId],
-    );
-    return rows[0].body;
-  };
-
   const fix = (capturedAt: string, extra: Body = {}) => ({
     location_source: 'current',
     location_lat: 9.03,
@@ -191,7 +170,7 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
       expect(errorOf(res).code).toBe('attach_incident_location:not_authenticated');
     });
 
-    it('stores a current fix and answers IncidentShared (22 keys + D74, the SQL helper bytes)', async () => {
+    it('stores a current fix and answers IncidentShared (22 keys + D74)', async () => {
       const { resident, incidentId } = await activeAlert();
       const res = await attachLocation(app, resident.id, incidentId, fix(T0));
 
@@ -207,9 +186,6 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
         location_accuracy_m: 12.5,
         location_captured_at: T0,
       });
-      expect(withoutClosedAtText(res.body)).toBe(
-        JSON.stringify(await sharedJsonViaSql(incidentId)),
-      );
     });
 
     it('the open-incident read reflects the location update', async () => {
@@ -245,7 +221,7 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
     });
   });
 
-  describe('AC3: argument conversion and checks, as the SQL function through PostgREST', () => {
+  describe('AC3: argument conversion and checks', () => {
     type Expect = 'ok' | 'type_error' | 'invalid_source' | 'invalid_location';
     /** [name, exact JSON body text, expected outcome, field named by a type error]. */
     const CASES: [string, string, Expect, string?][] = [
@@ -394,7 +370,7 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
         'invalid_location',
       ],
       [
-        'accuracy "NaN" (stored, as the SQL does)',
+        'accuracy "NaN" (stored)',
         '{"location_source":"current","location_lat":1,"location_lng":1,"location_accuracy_m":"NaN","location_captured_at":"2026-11-19T11:00:00Z"}',
         'ok',
       ],
@@ -529,87 +505,47 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
       expect(reply.statusCode).toBe(422);
       return { kind: error.code.replace('attach_incident_location:', '') };
     };
-    const sqlKind = (outcome: SqlOutcome): { kind: string; body?: Body } => {
-      if (outcome.ok) return { kind: 'ok', body: outcome.body };
-      if (outcome.sqlState === 'P0001') {
-        return { kind: outcome.code.replace('attach_incident_location:', '') };
-      }
-      return { kind: CONVERSION_ERRORS.has(outcome.sqlState) ? 'type_error' : outcome.code };
-    };
-    /** The body without what differs between two incidents. */
-    const comparable = (body: Body | undefined) => {
-      if (!body) return body;
-      const { id, resident_id, activated_at, sent_at, ...rest } = body;
-      void id;
-      void resident_id;
-      void activated_at;
-      void sent_at;
-      return withoutUnavailableSince(rest);
-    };
-
     it.each(CASES)('%s', async (_name, json, expected, ...rest) => {
       const field = rest[0];
       const viaApi = await incidentWithFix();
-      const viaSql = await incidentWithFix();
+      const before = await storedLocation(viaApi.incidentId);
 
       const api = apiOutcome(
         await attachLocation(app, viaApi.resident.id, viaApi.incidentId, json),
       );
-      const sql = sqlKind(
-        await attachViaPostgrest(client, viaSql.resident.id, viaSql.incidentId, json),
-      );
 
       expect(api.kind).toBe(expected);
-      expect(sql.kind).toBe(expected);
       if (field) expect(api.field).toBe(field);
+      if (api.kind !== 'ok') {
+        // A refused ping writes nothing.
+        expect(await storedLocation(viaApi.incidentId)).toEqual(before);
+        return;
+      }
       if (api.body?.location_unavailable_since) {
-        // SCRUM-68 (D74), deliberate divergence: an accepted `unavailable` report keeps the stored
-        // fix (the SQL function wipes it) and records since when live location is unavailable.
+        // SCRUM-68 (D74): an accepted `unavailable` report keeps the stored fix and records since
+        // when live location is unavailable.
         expect(api.body).toMatchObject({
           location_source: 'current',
           location_lat: 1,
           location_captured_at: T0,
           location_unavailable_since: expect.any(String) as unknown,
         });
-        expect(await storedLocation(viaApi.incidentId)).toEqual(
-          await storedLocation((await incidentWithFix()).incidentId),
-        );
-        expect(sql.body).toMatchObject({ location_source: 'unavailable', location_lat: null });
+        expect(await storedLocation(viaApi.incidentId)).toEqual(before);
         return;
       }
-      expect(comparable(api.body)).toEqual(comparable(sql.body));
-      expect(await storedLocation(viaApi.incidentId)).toEqual(
-        await storedLocation(viaSql.incidentId),
-      );
-    });
-
-    describe('documented differences: JSON can no longer say what PostgREST received', () => {
-      it('a number literal that underflows (1e-400): the API reads 0, Postgres refuses it', async () => {
-        const json =
-          '{"location_source":"last_known","location_lat":1e-400,"location_lng":1,"location_captured_at":"2026-11-19T11:00:00Z"}';
-        const viaApi = await incidentWithFix();
-        const viaSql = await incidentWithFix();
-        const api = await attachLocation(app, viaApi.resident.id, viaApi.incidentId, json);
-        const sql = await attachViaPostgrest(client, viaSql.resident.id, viaSql.incidentId, json);
-        expect(api.statusCode).toBe(200);
-        expect(api.json<Body>().location_lat).toBe(0);
-        expect(sql).toMatchObject({ ok: false, sqlState: '22003' });
-      });
-
-      it('captured_at as a JSON number: refused by the API; PostgREST parses the digits', async () => {
-        const json =
-          '{"location_source":"last_known","location_lat":1,"location_lng":1,"location_captured_at":20261120}';
-        const viaApi = await incidentWithFix();
-        const viaSql = await incidentWithFix();
-        const api = await attachLocation(app, viaApi.resident.id, viaApi.incidentId, json);
-        const sql = await attachViaPostgrest(client, viaSql.resident.id, viaSql.incidentId, json);
-        expect(api.statusCode).toBe(422);
-        expect(errorOf(api)).toMatchObject({
-          code: 'validation:invalid_request',
-          details: { field: 'location_captured_at' },
+      // An accepted fix: the answer shows what was stored (as text: -0 is 0, NaN / Infinity are
+      // the strings the answer carries).
+      const stored = await storedLocation(viaApi.incidentId);
+      const keys = ['location_source', 'location_lat', 'location_lng', 'location_accuracy_m'];
+      const pick = (row: Body | undefined) =>
+        keys.map((key) => {
+          const value = (row ?? {})[key];
+          if (value === null || value === undefined) return null;
+          return typeof value === 'number' || typeof value === 'string'
+            ? String(value)
+            : JSON.stringify(value);
         });
-        expect(sql.ok).toBe(true);
-      });
+      expect(pick(api.body)).toEqual(pick(stored));
     });
 
     it.each([
@@ -684,9 +620,10 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
         code: 'validation:invalid_request',
         details: { field: 'id' },
       });
-      // PostgREST: the same id fails its uuid conversion.
-      const sql = await attachViaPostgrest(client, userId, decodeURIComponent(id), '{}');
-      expect(sql).toMatchObject({ ok: false, sqlState: '22P02' });
+      // Postgres refuses the same text as a uuid.
+      await expect(client.query('select $1::uuid', [decodeURIComponent(id)])).rejects.toMatchObject(
+        { code: '22P02' },
+      );
     });
 
     it('every spelling Postgres accepts reaches the same incident', async () => {
@@ -815,9 +752,6 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
       );
       expect(res.statusCode).toBe(200);
       expect(res.json<Body>()).toMatchObject({ location_lat: 1, location_captured_at: T0 });
-      expect(withoutClosedAtText(res.body)).toBe(
-        JSON.stringify(await sharedJsonViaSql(incidentId)),
-      );
       expect(hookCalls).toEqual([]);
     });
 
@@ -1200,42 +1134,39 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
       });
     });
 
-    it('an API ping and an SQL ping queued together: the older never wins', async () => {
+    it('two pings queued together, the newer queued second: the older never wins', async () => {
       const { resident, incidentId } = await incidentWithFix();
       const lock = await holdRow(incidentId);
-      const sqlClient = await openTestClient();
-      try {
-        const viaApi = post(
-          resident.id,
-          incidentId,
-          fix('2026-11-19T11:00:00.000001Z', { location_lat: 1 }),
-        );
-        await waitForLockWaiters(1);
-        const viaSql = callSqlAs(
-          sqlClient,
-          resident.id,
-          'public.attach_incident_location($1, $2, $3, $4, $5, $6)',
-          [incidentId, 'current', 2, 2, 5, '2026-11-19T11:00:00.000002Z'],
-        );
-        await waitForLockWaiters(2);
-        await lock.release();
-        await Promise.all([viaApi, viaSql]);
-      } finally {
-        await sqlClient.end();
-      }
+      const older = post(
+        resident.id,
+        incidentId,
+        fix('2026-11-19T11:00:00.000001Z', { location_lat: 1 }),
+      );
+      await waitForLockWaiters(1);
+      const newer = post(
+        resident.id,
+        incidentId,
+        fix('2026-11-19T11:00:00.000002Z', { location_lat: 2 }),
+      );
+      await waitForLockWaiters(2);
+      await lock.release();
+      await Promise.all([older, newer]);
       expect(await storedLocation(incidentId)).toMatchObject({ location_lat: 2 });
     });
 
-    it('a ping queued behind mark safe (SQL): not_open after the close commits, never reopened', async () => {
+    it('a ping queued behind mark safe: not_open after the close commits, never reopened', async () => {
       const { resident, incidentId } = await activeAlert();
+      // Mark safe's close (IncidentStateService), held open on its own connection.
       const closer = await openTestClient();
       await closer.query('begin');
+      await closer.query('select 1 from public.profiles where id = $1 for update', [resident.id]);
       await closer.query(
-        `select set_config('request.jwt.claim.sub', $1, true),
-                set_config('request.jwt.claims', $2, true)`,
-        [resident.id, JSON.stringify({ sub: resident.id, role: 'authenticated' })],
+        `update public.incidents
+            set status = 'resolved', resolved_at = now(), resolved_reason = 'safe',
+                auto_closed = false, location_sharing_ended_at = now()
+          where id = $1 and status = 'active'`,
+        [incidentId],
       );
-      await closer.query('select public.mark_incident_safe($1)', [incidentId]);
 
       const ping = post(resident.id, incidentId, fix('2026-11-19T11:00:00Z'));
       await waitForLockWaiters(1);
@@ -1280,55 +1211,6 @@ describe('POST /v1/incidents/{id}/locations (API-100-17)', () => {
         const after = await post(resident.id, incidentId, fix('2099-01-01T00:00:00Z'));
         expect(after.status).toBe(409);
       }
-    });
-  });
-
-  describe('interchangeable with the SQL function', () => {
-    it('the same ping via SQL and via the API on one incident: identical bodies', async () => {
-      const { resident, incidentId } = await activeAlert();
-      const viaSql = await callSqlAs<Body>(
-        client,
-        resident.id,
-        'public.attach_incident_location($1, $2, $3, $4, $5, $6)',
-        [incidentId, 'current', 9.03, 38.74, 12.5, T0],
-      );
-      const viaApi = await attachLocation(app, resident.id, incidentId, fix(T0));
-      expect(withoutClosedAtText(viaApi.body)).toBe(JSON.stringify(viaSql));
-    });
-
-    it('each side respects the fix the other stored', async () => {
-      const { resident, incidentId } = await activeAlert();
-      await callSqlAs(
-        client,
-        resident.id,
-        'public.attach_incident_location($1, $2, $3, $4, $5, $6)',
-        [incidentId, 'current', 5, 5, 5, '2026-11-19T11:00:00Z'],
-      );
-      const apiOlder = await attachLocation(
-        app,
-        resident.id,
-        incidentId,
-        fix('2026-11-19T10:59:59Z'),
-      );
-      expect(apiOlder.json<Body>()).toMatchObject({ location_lat: 5 });
-
-      await attachLocation(
-        app,
-        resident.id,
-        incidentId,
-        fix('2026-11-19T12:00:00Z', { location_lat: 6 }),
-      );
-      const sqlOlder = await callSqlAs<Body>(
-        client,
-        resident.id,
-        'public.attach_incident_location($1, $2, $3, $4, $5, $6)',
-        [incidentId, 'current', 7, 7, 7, '2026-11-19T11:30:00Z'],
-      );
-      expect(sqlOlder).toMatchObject({ location_lat: 6 });
-      const open = await callSqlAs<Body>(client, resident.id, 'public.get_my_open_incident()');
-      expect(withoutEmergencyServicesText((await getOpenIncident(app, resident.id)).body)).toBe(
-        `{"open_incident":${JSON.stringify(open)}}`,
-      );
     });
   });
 });

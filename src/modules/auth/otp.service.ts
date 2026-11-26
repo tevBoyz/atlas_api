@@ -7,7 +7,6 @@ import { AuditService } from '../audit/audit.service';
 import { type DeviceInput, fail, type OtpPurpose } from './auth-input';
 import { AuthMessenger } from './auth-messenger';
 import { type AuthTx, runAuthTransaction } from './auth-transaction';
-import { LegacyUsers } from './legacy-users';
 import { OTP_MAX_ATTEMPTS, OtpCounters, OtpCountersUnavailableError } from './otp-counters';
 import { OTP_TTL_SECONDS, PHONE_VERIFIER, type PhoneVerifier } from './phone-verification';
 import type { ClientContext } from './sessions.repository';
@@ -44,7 +43,6 @@ export class OtpService {
     private readonly counters: OtpCounters,
     private readonly messenger: AuthMessenger,
     private readonly audit: AuditService,
-    private readonly legacy: LegacyUsers,
     @Inject(PHONE_VERIFIER) private readonly verifier: PhoneVerifier,
   ) {}
 
@@ -182,7 +180,6 @@ export class OtpService {
 
   /** The caller may take `phone`: no other account holds it. 401 / 403 for a missing / disabled caller. */
   private async phoneFreeFor(phone: string, caller: AuthenticatedUser): Promise<boolean> {
-    await this.legacy.migrateById(caller.id);
     return runAuthTransaction(this.database, async (tx) => {
       const user = await this.users.byId(tx, caller.id);
       if (!user) throw new DomainError('auth:not_authenticated');
@@ -221,13 +218,11 @@ export class OtpService {
   ): Promise<string | null> {
     if (purpose === 'verify_phone') {
       if (!caller) throw new DomainError('auth:not_authenticated');
-      await this.legacy.migrateById(caller.id);
       const user = await runAuthTransaction(this.database, (tx) => this.users.byId(tx, caller.id));
       if (!user) throw new DomainError('auth:not_authenticated');
       if (user.phone !== phone) throw fail('auth:invalid_phone', 'phone');
       return user.id;
     }
-    await this.legacy.migrateByPhone(phone);
     const user = await runAuthTransaction(this.database, (tx) => this.users.byPhone(tx, phone));
     return user && !user.disabled ? user.id : null;
   }

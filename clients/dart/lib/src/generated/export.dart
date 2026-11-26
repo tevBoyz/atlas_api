@@ -46,7 +46,6 @@ export 'models/emergency_service.dart';
 export 'models/emergency_type.dart';
 export 'models/error_body.dart';
 export 'models/error_envelope.dart';
-export 'models/exchange_request.dart';
 export 'models/gender.dart';
 export 'models/google_sign_in_request.dart';
 export 'models/health_ok.dart';

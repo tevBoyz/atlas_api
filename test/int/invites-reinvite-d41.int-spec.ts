@@ -12,7 +12,6 @@ import {
   listMyInvites,
   previewInvite,
   removeMember,
-  sqlRolledBack,
 } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
@@ -33,28 +32,16 @@ import { insertExpiredMember, insertMember, memberRow } from '../support/invite-
  * history) in the same transaction, the circle locked first (D18 order). Live rows are untouched:
  * an `active` row → `already_member`, a still-valid pending row claimed by the caller →
  * `duplicate_membership`, as before. The owner row is never touched.
- *
- * The SQL functions are unchanged and still answer 409 `duplicate_membership` here: a deliberate
- * divergence (each "SQL still refuses" assertion below keeps the old answer on record).
+
  */
 type Body = Record<string, unknown>;
 type Reply = Awaited<ReturnType<typeof previewInvite>>;
-interface SqlResult {
-  /** The SQL call, for the failure message. */
-  call: string;
-  body?: Body;
-  error?: string;
-  sqlState?: string;
-  /** Postgres DETAIL (for a 40P01: the wait cycle). */
-  detail?: string;
-}
 
 const ROUNDS = 10;
 
 describe('re-invite after a finished invite (D41)', () => {
   let app: NestFastifyApplication;
   let client: Client;
-  let sqlClients: Client[];
 
   beforeAll(async () => {
     ({ app } = await createTestApp(
@@ -66,11 +53,9 @@ describe('re-invite after a finished invite (D41)', () => {
       }),
     ));
     client = await openTestClient();
-    sqlClients = await Promise.all(Array.from({ length: 3 }, () => openTestClient()));
   });
 
   afterAll(async () => {
-    await Promise.all((sqlClients ?? []).map((c) => c.end()));
     await client?.end();
     await app?.close();
   });
@@ -103,10 +88,6 @@ describe('re-invite after a finished invite (D41)', () => {
     Object.fromEntries(
       Object.entries(row).filter(([key]) => key !== 'user_id' && key !== 'updated_at'),
     );
-  const sqlPreviewError = async (caller: UserFixture, token: string) =>
-    (await sqlRolledBack(client, caller.id, 'public.preview_circle_invite($1)', [token])).error;
-  const sqlAcceptError = async (caller: UserFixture, token: string) =>
-    (await sqlRolledBack(client, caller.id, 'public.accept_circle_invite($1)', [token])).error;
 
   /** Released: same history, `user_id` null, `updated_at` moved. */
   const expectReleased = async (id: string, before: Body) => {
@@ -132,10 +113,6 @@ describe('re-invite after a finished invite (D41)', () => {
       expect(declinedRow).toMatchObject({ status: 'declined', user_id: dan.id });
 
       const second = await newLink(owner);
-      // The SQL function still refuses this (deliberate divergence, D41).
-      expect(await sqlPreviewError(dan, second.token)).toBe(
-        'preview_circle_invite:duplicate_membership',
-      );
       const preview = await previewInvite(app, dan.id, second.token);
       expect(preview.statusCode).toBe(200);
       expect(preview.json<Body>()).toMatchObject({
@@ -169,9 +146,6 @@ describe('re-invite after a finished invite (D41)', () => {
       });
       const before = await memberRow(client, old.id);
       const link = await newLink(owner);
-      expect(await sqlAcceptError(dan, link.token)).toBe(
-        'accept_circle_invite:duplicate_membership',
-      );
       const accept = await acceptInvite(app, dan.id, link.token);
       expect(accept.statusCode).toBe(200);
       await expectReleased(old.id, before);
@@ -198,9 +172,6 @@ describe('re-invite after a finished invite (D41)', () => {
       expect(canceledRow.invite_canceled_at).not.toBeNull();
 
       const second = await newLink(owner);
-      expect(await sqlPreviewError(dan, second.token)).toBe(
-        'preview_circle_invite:duplicate_membership',
-      );
       expect((await previewInvite(app, dan.id, second.token)).statusCode).toBe(200);
       await expectReleased(first.id, canceledRow);
       expect((await acceptInvite(app, dan.id, second.token)).statusCode).toBe(200);
@@ -216,9 +187,6 @@ describe('re-invite after a finished invite (D41)', () => {
       const old = await insertExpiredMember(client, circle.id, { userId: dan.id });
       const before = await memberRow(client, old.id);
       const link = await newLink(owner);
-      expect(await sqlPreviewError(dan, link.token)).toBe(
-        'preview_circle_invite:duplicate_membership',
-      );
       expect((await previewInvite(app, dan.id, link.token)).statusCode).toBe(200);
       await expectReleased(old.id, before);
       expect((await memberRow(client, old.id)).status).toBe('pending');
@@ -310,54 +278,9 @@ describe('re-invite after a finished invite (D41)', () => {
 
   // --- races ---------------------------------------------------------------------------------------
 
-  const deadlocks = async () =>
-    Number(
-      (
-        await client.query<{ n: string }>(
-          'select deadlocks::text as n from pg_stat_database where datname = current_database()',
-        )
-      ).rows[0].n,
-    );
-
-  /** A SQL function as `userId` on its own connection, committed; the error and SQLSTATE if any. */
-  const sqlCall = async (
-    c: Client,
-    userId: string,
-    call: string,
-    params: unknown[] = [],
-  ): Promise<SqlResult> => {
-    await c.query('begin');
-    try {
-      await c.query(
-        `select set_config('request.jwt.claim.sub', $1, true),
-                set_config('request.jwt.claims', $2, true),
-                set_config('TimeZone', 'UTC', true)`,
-        [userId, JSON.stringify({ sub: userId, role: 'authenticated' })],
-      );
-      const { rows } = await c.query<{ body: Body }>(`select ${call} as body`, params);
-      await c.query('commit');
-      return { call, body: rows[0].body };
-    } catch (error) {
-      await c.query('rollback');
-      const pg = error as { code?: string; detail?: string };
-      return { call, error: (error as Error).message, sqlState: pg.code, detail: pg.detail };
-    }
-  };
   const no5xx = (replies: Reply[]) => {
     for (const reply of replies) {
       if (reply.statusCode >= 500) throw new Error(`${reply.statusCode} ${reply.body}`);
-    }
-  };
-  const noSqlDeadlock = (results: SqlResult[]) => {
-    for (const result of results) {
-      if (result.sqlState === '40P01' || result.sqlState === '23505') {
-        throw new Error(`${result.sqlState} in ${result.call}: ${result.error} | ${result.detail}`);
-      }
-      if (result.error)
-        expect({ call: result.call, sqlState: result.sqlState }).toEqual({
-          call: result.call,
-          sqlState: 'P0001',
-        });
     }
   };
   /** At most one row of the circle holds the user, and at most one is active. */
@@ -367,8 +290,7 @@ describe('re-invite after a finished invite (D41)', () => {
     return rows;
   };
 
-  it('race: two new invites previewed and accepted at once after a decline, with an owner cancel and remove (no 5xx, no deadlock, one outcome)', async () => {
-    const before = await deadlocks();
+  it('race: two new invites previewed and accepted at once after a decline, with an owner cancel and remove (no 5xx, one outcome)', async () => {
     for (let round = 0; round < ROUNDS; round += 1) {
       const { owner, circle } = await ownerWithCircle();
       const ownerRowBefore = await memberRow(client, circle.ownerMemberId);
@@ -421,11 +343,9 @@ describe('re-invite after a finished invite (D41)', () => {
       if (oldRow) expect(oldRow).toMatchObject({ status: 'declined', user_id: null });
       expect(await memberRow(client, circle.ownerMemberId)).toEqual(ownerRowBefore);
     }
-    expect(await deadlocks()).toBe(before);
   });
 
-  it('race: API preview/accept mixed with the SQL functions and the incoming-list claim (phone invite, expired claimed row): no deadlock', async () => {
-    const before = await deadlocks();
+  it('race: preview/accept mixed with the incoming-list claim and a cancel (phone invite, expired claimed row): no 5xx', async () => {
     for (let round = 0; round < ROUNDS; round += 1) {
       const { owner, circle } = await ownerWithCircle();
       const dan = await createUser(client, { phone: true });
@@ -435,29 +355,22 @@ describe('re-invite after a finished invite (D41)', () => {
       const phoneRow = await insertMember(client, circle.id, { phone: dan.phone });
       const link = await newLink(owner);
 
-      const [apiReplies, sqlResults] = await Promise.all([
-        Promise.all([
-          previewInvite(app, dan.id, phoneRow.token),
-          acceptInvite(app, dan.id, link.token),
-          listMyInvites(app, dan.id),
-          acceptInvite(app, dan.id, phoneRow.token),
-        ]),
-        Promise.all([
-          sqlCall(sqlClients[0], dan.id, 'public.list_my_circle_invites()'),
-          sqlCall(sqlClients[1], dan.id, 'public.preview_circle_invite($1)', [link.token]),
-          sqlCall(sqlClients[2], owner.id, 'public.cancel_circle_invite($1)', [old.id]),
-        ]),
+      const apiReplies = await Promise.all([
+        previewInvite(app, dan.id, phoneRow.token),
+        acceptInvite(app, dan.id, link.token),
+        listMyInvites(app, dan.id),
+        acceptInvite(app, dan.id, phoneRow.token),
+        listMyInvites(app, dan.id),
+        previewInvite(app, dan.id, link.token),
+        cancelInvite(app, owner.id, old.id),
       ]);
       no5xx(apiReplies);
-      noSqlDeadlock(sqlResults);
       const rows = await expectConsistent(circle.id, dan.id);
       // At most one active row of Dan; any row holding Dan is live (never a finished one next to it).
       expect(rows.filter((r) => r.status === 'active').length).toBeLessThanOrEqual(1);
     }
-    expect(await deadlocks()).toBe(before);
   });
-  it('race: re-invite after a decline against decline, leave, SOS submit and the SQL accept (no 5xx, no deadlock)', async () => {
-    const before = await deadlocks();
+  it('race: re-invite after a decline against decline, leave, SOS submit and a second accept (no 5xx)', async () => {
     for (let round = 0; round < ROUNDS; round += 1) {
       const { owner, circle } = await ownerWithCircle();
       const ben = await createUser(client);
@@ -472,26 +385,20 @@ describe('re-invite after a finished invite (D41)', () => {
       const l2 = await newLink(owner);
       const l3 = await newLink(owner);
 
-      const [apiReplies, sqlResults] = await Promise.all([
-        Promise.all([
-          previewInvite(app, dan.id, l1.token),
-          acceptInvite(app, dan.id, l1.token),
-          declineInvite(app, dan.id, l2.token),
-          acceptInvite(app, dan.id, l3.token),
-          leaveCircle(app, ben.id, circle.id),
-          submitAlert(app, owner.id, 'medical'),
-          removeMember(app, owner.id, circle.id, old.id),
-        ]),
-        Promise.all([
-          sqlCall(sqlClients[0], dan.id, 'public.accept_circle_invite($1)', [l2.token]),
-          sqlCall(sqlClients[1], dan.id, 'public.decline_circle_invite($1)', [l3.token]),
-        ]),
+      const apiReplies = await Promise.all([
+        previewInvite(app, dan.id, l1.token),
+        acceptInvite(app, dan.id, l1.token),
+        declineInvite(app, dan.id, l2.token),
+        acceptInvite(app, dan.id, l3.token),
+        leaveCircle(app, ben.id, circle.id),
+        submitAlert(app, owner.id, 'medical'),
+        removeMember(app, owner.id, circle.id, old.id),
+        acceptInvite(app, dan.id, l2.token),
+        declineInvite(app, dan.id, l3.token),
       ]);
       no5xx(apiReplies);
-      noSqlDeadlock(sqlResults);
       const rows = await expectConsistent(circle.id, dan.id);
       expect(rows.filter((r) => r.status === 'active').length).toBeLessThanOrEqual(1);
     }
-    expect(await deadlocks()).toBe(before);
   });
 });

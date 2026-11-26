@@ -20,28 +20,17 @@ import {
 } from '../support/fixtures';
 import {
   attachLocation,
-  callSqlAs,
   countRows,
-  getOpenIncident,
   markSafe,
   renotifyAlert,
   setIncidentNotes,
-  setNotesViaPostgrest,
-  type SqlOutcome,
   submitAlert,
 } from '../support/incident-api';
-import {
-  withoutEmergencyServices,
-  withoutEmergencyServicesText,
-  withoutUnavailableSince,
-  withoutUnavailableSinceText,
-} from '../support/share-payload-shape';
 
 /**
- * `PUT /v1/incidents/{id}/notes` and `POST /v1/incidents/{id}/renotify` (API-100-18) beyond the SQL
- * scripts: trimming and counting exactly as Postgres, check order, audit without the note, hooks,
- * re-notify parity with submit, races on separate connections, and interchangeability with the SQL
- * functions. Also proves the shared JSON split (INCIDENT_SHARED_JSON) left every body byte-identical.
+ * `PUT /v1/incidents/{id}/notes` and `POST /v1/incidents/{id}/renotify` (API-100-18): trimming and
+ * counting exactly as Postgres, check order, audit without the note, hooks, re-notify parity with
+ * submit, and races on separate connections.
  */
 type Body = Record<string, unknown>;
 type Reply = Awaited<ReturnType<typeof setIncidentNotes>>;
@@ -129,18 +118,6 @@ describe('live note and explicit re-notify (API-100-18)', () => {
       [incidentId],
     );
     return rows[0];
-  };
-
-  const viaSql = async (
-    incidentId: string,
-    fn: '_incident_activation_json' | '_incident_send_json',
-  ) => {
-    await client.query(`set timezone = 'UTC'`);
-    const { rows } = await client.query<{ body: Body }>(
-      `select public.${fn}(i) as body from public.incidents i where i.id = $1`,
-      [incidentId],
-    );
-    return rows[0].body;
   };
 
   describe('notes: AC1 authorization and status', () => {
@@ -242,9 +219,6 @@ describe('live note and explicit re-notify (API-100-18)', () => {
       expect(after.incident_notes).toBe(expected);
       expect(after.incident_notes_updated_at).not.toBeNull();
       expect(after.share_payload).toEqual(before.share_payload);
-      expect(withoutUnavailableSinceText(res.body)).toBe(
-        JSON.stringify(await viaSql(incidentId, '_incident_activation_json')),
-      );
     });
 
     it.each([
@@ -343,41 +317,7 @@ describe('live note and explicit re-notify (API-100-18)', () => {
       expect(res.json<Body>().incident_notes).toBe('x');
     });
 
-    it('PostgREST parity: same outcome for strings, nulls and text Postgres refuses', async () => {
-      const kind = (outcome: SqlOutcome) =>
-        outcome.ok ? (outcome.body.incident_notes as string | null) : outcome.code;
-      for (const json of [
-        '{"incident_notes":"  x  "}',
-        '{"incident_notes":null}',
-        '{}',
-        `{"incident_notes":"${'b'.repeat(251)}"}`,
-        `{"incident_notes":"${'\\ud83d\\ude00'.repeat(250)}"}`,
-        '{"incident_notes":"a\\u0000b"}',
-      ]) {
-        const a = await activeAlert();
-        const b = await activeAlert();
-        const api = await setIncidentNotes(app, a.resident.id, a.incidentId, json);
-        const sql = await setNotesViaPostgrest(client, b.resident.id, b.incidentId, json);
-        const apiKind =
-          api.statusCode === 200
-            ? api.json<Body>().incident_notes
-            : errorOf(api).code === 'validation:invalid_request'
-              ? 'conversion'
-              : errorOf(api).code;
-        const sqlKind = !sql.ok && sql.sqlState.startsWith('22') ? 'conversion' : kind(sql);
-        expect(apiKind).toEqual(sqlKind);
-      }
-    });
-
-    it('documented difference: a JSON number is refused; PostgREST would store its text', async () => {
-      const a = await activeAlert();
-      const sql = await setNotesViaPostgrest(
-        client,
-        a.resident.id,
-        a.incidentId,
-        '{"incident_notes":1.50}',
-      );
-      expect(sql).toMatchObject({ ok: true, body: { incident_notes: '1.50' } });
+    it('a JSON number is refused (422), never stored as its text', async () => {
       const b = await activeAlert();
       expect(
         (await setIncidentNotes(app, b.resident.id, b.incidentId, '{"incident_notes":1.50}'))
@@ -446,7 +386,7 @@ describe('live note and explicit re-notify (API-100-18)', () => {
       expect(errorOf(res).code).toBe('renotify_emergency_alert:not_authenticated');
     });
 
-    it('the same re-notify as a submit on an active alert; IncidentSend, the SQL helper bytes', async () => {
+    it('the same re-notify as a submit on an active alert; the IncidentSend answer', async () => {
       const { resident, circle, memberUsers, incidentId } = await activeAlert(3);
       await client.query(
         `update public.incident_deliveries set acknowledged_at = now()
@@ -486,10 +426,6 @@ describe('live note and explicit re-notify (API-100-18)', () => {
       });
       expect(body.renotified_at).toEqual(expect.any(String));
       expect(body).not.toHaveProperty('submit_outcome');
-      // SCRUM-54 (D60): IncidentLive = the SQL helper bytes + emergency_services.
-      expect(withoutEmergencyServicesText(res.body)).toBe(
-        JSON.stringify(await viaSql(incidentId, '_incident_send_json')),
-      );
 
       const after = (
         await client.query<Body>(
@@ -604,44 +540,6 @@ describe('live note and explicit re-notify (API-100-18)', () => {
     });
   });
 
-  describe('INCIDENT_SHARED_JSON split: existing bodies are byte-identical to the SQL helpers', () => {
-    it('submit (minus submit_outcome), open read, renotify = _incident_send_json; notes = activation json', async () => {
-      const { resident, incidentId } = await activeAlert(2);
-      await attachLocation(app, resident.id, incidentId, {
-        location_source: 'current',
-        location_lat: 9.03,
-        location_lng: 38.74,
-        location_accuracy_m: 12.5,
-        location_captured_at: '2026-11-19T10:00:00.123456Z',
-      });
-      const notes = await setIncidentNotes(app, resident.id, incidentId, { incident_notes: 'x' });
-      expect(withoutUnavailableSinceText(notes.body)).toBe(
-        JSON.stringify(await viaSql(incidentId, '_incident_activation_json')),
-      );
-
-      const resubmit = await submitAlert(app, resident.id, 'fire');
-      const { submit_outcome: outcome, ...send } = withoutEmergencyServices(resubmit.json<Body>());
-      expect(outcome).toBe('renotified');
-      const sendViaSql = await viaSql(incidentId, '_incident_send_json');
-      expect(JSON.stringify(send)).toBe(JSON.stringify(sendViaSql));
-      // The submit body is `_incident_send_json(rec) || {submit_outcome}`, built by Postgres (jsonb key order).
-      const { rows } = await client.query<{ body: Body }>(
-        `select public._incident_send_json(i) || jsonb_build_object('submit_outcome', 'renotified') as body
-           from public.incidents i where i.id = $1`,
-        [incidentId],
-      );
-      expect(withoutEmergencyServicesText(resubmit.body)).toBe(JSON.stringify(rows[0].body));
-      expect(withoutEmergencyServicesText((await getOpenIncident(app, resident.id)).body)).toBe(
-        `{"open_incident":${JSON.stringify(sendViaSql)}}`,
-      );
-
-      const renotified = await renotifyAlert(app, resident.id, incidentId);
-      expect(withoutEmergencyServicesText(renotified.body)).toBe(
-        JSON.stringify(await viaSql(incidentId, '_incident_send_json')),
-      );
-    });
-  });
-
   describe('races on separate connections', () => {
     const request = async (method: string, path: string, userId: string, body?: unknown) => {
       const response = await fetch(`${baseUrl}${path}`, {
@@ -671,16 +569,21 @@ describe('live note and explicit re-notify (API-100-18)', () => {
       throw new Error(`fewer than ${n} sessions waiting on a lock`);
     }
 
-    /** Runs mark_incident_safe on its own connection and leaves it uncommitted. */
+    /**
+     * Mark safe's close on its own connection, left uncommitted: the resident's profile locked,
+     * then the incident resolved (`IncidentStateService`).
+     */
     async function closeUncommitted(residentId: string, incidentId: string) {
       const closer = await openTestClient();
       await closer.query('begin');
+      await closer.query('select 1 from public.profiles where id = $1 for update', [residentId]);
       await closer.query(
-        `select set_config('request.jwt.claim.sub', $1, true),
-                set_config('request.jwt.claims', $2, true)`,
-        [residentId, JSON.stringify({ sub: residentId, role: 'authenticated' })],
+        `update public.incidents
+            set status = 'resolved', resolved_at = now(), resolved_reason = 'safe',
+                auto_closed = false, location_sharing_ended_at = now()
+          where id = $1 and status = 'active'`,
+        [incidentId],
       );
-      await closer.query('select public.mark_incident_safe($1)', [incidentId]);
       return {
         commit: async () => {
           await closer.query('commit');
@@ -777,125 +680,17 @@ describe('live note and explicit re-notify (API-100-18)', () => {
       ).toBe(1);
     });
 
-    it('notes from the API and the SQL function interleaved: each write lands whole', async () => {
+    it('concurrent note writes: each write lands whole', async () => {
       const { resident, incidentId } = await activeAlert();
-      const sqlClients = await Promise.all(Array.from({ length: 4 }, () => openTestClient()));
-      try {
-        const values = Array.from({ length: 8 }, (_, i) => `note ${i}`);
-        await Promise.all(
-          values.map((value, i) =>
-            i % 2 === 0
-              ? request('PUT', `/v1/incidents/${incidentId}/notes`, resident.id, {
-                  incident_notes: value,
-                })
-              : callSqlAs(
-                  sqlClients[(i - 1) / 2],
-                  resident.id,
-                  'public.set_incident_notes($1, $2)',
-                  [incidentId, value],
-                ),
-          ),
-        );
-        expect(values).toContain((await stored(incidentId)).incident_notes);
-      } finally {
-        await Promise.all(sqlClients.map((c) => c.end()));
-      }
-    });
-  });
-
-  describe('interchangeable with the SQL functions', () => {
-    /** Two residents in the same state, one driven by the API and one by SQL. */
-    async function twins() {
-      return [await activeAlert(2), await activeAlert(2)] as const;
-    }
-
-    const comparable = (body: Body) => {
-      const copy: Body = withoutUnavailableSince({ ...body });
-      for (const key of [
-        'id',
-        'resident_id',
-        'circle_id',
-        'activated_at',
-        'sent_at',
-        'renotified_at',
-        'incident_notes_updated_at',
-      ]) {
-        copy[key] = copy[key] === null ? null : 'set';
-      }
-      return copy;
-    };
-
-    it('notes: same body shape and the same stored note for every input', async () => {
-      for (const value of ['  a b  ', '', null, '\tx', 'a'.repeat(250)]) {
-        const [a, b] = await twins();
-        const api = await setIncidentNotes(app, a.resident.id, a.incidentId, {
-          incident_notes: value,
-        });
-        const sql = await callSqlAs<Body>(
-          client,
-          b.resident.id,
-          'public.set_incident_notes($1, $2)',
-          [b.incidentId, value],
-        );
-        expect(comparable(api.json<Body>())).toEqual(comparable(sql));
-      }
-    });
-
-    it('notes: each side reads what the other wrote', async () => {
-      const { resident, incidentId } = await activeAlert();
-      await callSqlAs(client, resident.id, 'public.set_incident_notes($1, $2)', [
-        incidentId,
-        'from sql',
-      ]);
-      const open = (await getOpenIncident(app, resident.id)).json<{ open_incident: Body }>()
-        .open_incident;
-      expect(open.incident_notes).toBe('from sql');
-      await setIncidentNotes(app, resident.id, incidentId, { incident_notes: 'from api' });
-      const viaSqlOpen = await callSqlAs<Body>(
-        client,
-        resident.id,
-        'public.get_my_open_incident()',
-      );
-      expect(viaSqlOpen.incident_notes).toBe('from api');
-    });
-
-    it('renotify: same rows and events written by the API and by the SQL function', async () => {
-      const [a, b] = await twins();
-      const api = withoutEmergencyServices(
-        (await renotifyAlert(app, a.resident.id, a.incidentId)).json<Body>(),
-      );
-      const sql = await callSqlAs<Body>(
-        client,
-        b.resident.id,
-        'public.renotify_emergency_alert($1)',
-        [b.incidentId],
-      );
-      expect(comparable(api)).toEqual(comparable(sql));
-      const events = async (id: string) =>
-        (
-          await client.query<Body>(
-            `select event_type, detail - 'recipient_ids' as detail, jsonb_array_length(detail->'recipient_ids') as recipients
-               from public.incident_events where incident_id = $1 order by occurred_at, event_type`,
-            [id],
-          )
-        ).rows;
-      expect(await events(a.incidentId)).toEqual(await events(b.incidentId));
-    });
-
-    it('renotify: API and SQL calls on one incident each refresh the same deliveries', async () => {
-      const { resident, incidentId } = await activeAlert(2);
-      await renotifyAlert(app, resident.id, incidentId);
-      await callSqlAs(client, resident.id, 'public.renotify_emergency_alert($1)', [incidentId]);
-      const res = await renotifyAlert(app, resident.id, incidentId);
-      expect(res.json<Body>()).toMatchObject({ delivered_count: 2 });
-      expect(
-        await countRows(
-          client,
-          `select count(*)::int as n from public.incident_events
-            where incident_id = $1 and event_type = 'renotified' and (detail->>'recipient_count')::int = 2`,
-          [incidentId],
+      const values = Array.from({ length: 8 }, (_, i) => `note ${i}`);
+      await Promise.all(
+        values.map((value) =>
+          request('PUT', `/v1/incidents/${incidentId}/notes`, resident.id, {
+            incident_notes: value,
+          }),
         ),
-      ).toBe(3);
+      );
+      expect(values).toContain((await stored(incidentId)).incident_notes);
     });
   });
 });

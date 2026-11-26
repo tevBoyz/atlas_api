@@ -366,6 +366,7 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
     open.push(rita);
     expect(await rita.join(incidentId)).toEqual({ ok: true });
     await device(ned, fakePushToken('ned'));
+    const renotifiedAt = Date.now();
     expect((await renotifyAlert(app, resident.id, incidentId)).statusCode).toBe(200);
     await waitLong(async () => {
       expect(await statusOf(resident.id, incidentId)).toEqual({ [ned.id]: 'delivered|at|null' });
@@ -379,7 +380,10 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
     }, 15_000);
     await sleep(300);
     expect((await notices(incidentId)).length).toBe(1);
-    expect(rita.of('incident.delivery_failed')).toEqual([]);
+    // No new notice live either. The FIRST notice's broadcast may still reach Rita after she joined
+    // (it is published by the worker after its commit); only a notice of the re-notify would be new.
+    const live = rita.of<Body>('incident.delivery_failed');
+    expect(live.filter((p) => Date.parse(p.occurred_at as string) >= renotifiedAt)).toEqual([]);
   }, 90_000);
 
   it('a member who fails again after a re-notify is not reported twice (one notice per member per alert)', async () => {

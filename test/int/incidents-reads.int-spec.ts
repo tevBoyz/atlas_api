@@ -12,20 +12,17 @@ import {
   type UserFixture,
 } from '../support/fixtures';
 import {
-  callSqlAs,
   countRows,
   getOpenIncident,
   listRecentIncidents,
   markSafe,
   submitAlert,
 } from '../support/incident-api';
-import { withoutClosedAtText, withoutEmergencyServicesText } from '../support/share-payload-shape';
 
 /**
- * `GET /v1/me/incidents/open` and `GET /v1/me/incidents` (API-100-16) beyond the SQL script: the
- * wrapper, status filters, ordering ties, limit validation, ownership, consistency with submit,
- * interchangeability with the SQL functions, reads racing writes, and the AC5 latency budget. The SQL
- * script's own assertions are in `test/parity/scrum36_resident_incident_reads.spec.ts`.
+ * `GET /v1/me/incidents/open` and `GET /v1/me/incidents` (API-100-16): the wrapper, status
+ * filters, ordering ties, limit validation, ownership, consistency with submit, reads racing
+ * writes, and the AC5 latency budget.
  */
 type Body = Record<string, unknown>;
 type Reply = Awaited<ReturnType<typeof getOpenIncident>>;
@@ -33,7 +30,7 @@ type Reply = Awaited<ReturnType<typeof getOpenIncident>>;
 const POSTGRES_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?\+00:00$/;
 const RECENT_KEYS = [
   'activated_at',
-  // SCRUM-63 (D61, D63): after the SQL keys.
+  // SCRUM-63 (D61, D63).
   'auto_closed',
   'closed_at',
   'emergency_type',
@@ -43,18 +40,6 @@ const RECENT_KEYS = [
   'sent_at',
   'status',
 ];
-
-/**
- * SCRUM-63 (D63): each recent item also carries `auto_closed` and `closed_at` (false / null for the
- * active and resolved incidents the SQL function lists); the text without them, so the rest compares
- * byte for byte.
- */
-function asSqlRecentText(text: string): string {
-  if (/"closed_at":(?!null)|"auto_closed":(?!false)/.test(text)) {
-    throw new Error('a recent item is closed: not comparable with the SQL function');
-  }
-  return withoutClosedAtText(text).replace(/"auto_closed":false,|,"auto_closed":false/g, '');
-}
 
 describe('resident incident reads (API-100-16)', () => {
   let app: NestFastifyApplication;
@@ -155,7 +140,7 @@ describe('resident incident reads (API-100-16)', () => {
       }
     });
 
-    it('a valid token without a profile reads nothing (the SQL checks only the uid)', async () => {
+    it('a valid token without a profile reads nothing', async () => {
       const noProfile = await createUser(client, { profile: false });
       expect((await getOpenIncident(app, noProfile.id)).json()).toEqual({ open_incident: null });
       expect((await listRecentIncidents(app, noProfile.id)).json()).toEqual([]);
@@ -414,86 +399,15 @@ describe('resident incident reads (API-100-16)', () => {
     expect(await snapshot()).toEqual(before);
   });
 
-  describe('interchangeable with the SQL functions', () => {
-    it('same state: identical bodies from get_my_open_incident and the endpoint', async () => {
-      const { resident, memberUsers } = await residentWithCircle(3);
-      expect(await callSqlAs(client, resident.id, 'public.get_my_open_incident()')).toBeNull();
-      expect((await getOpenIncident(app, resident.id)).json()).toEqual({ open_incident: null });
-
-      const created = (await submitAlert(app, resident.id, 'medical')).json<Body>();
-      await client.query(
-        `update public.incident_deliveries set acknowledged_at = now()
-          where incident_id = $1 and member_user_id = $2`,
-        [created.id, memberUsers[1].id],
-      );
-      const viaSql = await callSqlAs<Body>(client, resident.id, 'public.get_my_open_incident()');
-      const res = await getOpenIncident(app, resident.id);
-      // SCRUM-54 (D60): the open incident also carries emergency_services, after the SQL keys.
-      expect(withoutEmergencyServicesText(res.body)).toBe(
-        `{"open_incident":${JSON.stringify(viaSql)}}`,
-      );
-    });
-
-    it('same state: identical lists from list_my_recent_incidents and the endpoint', async () => {
-      const resident = await createUser(client);
-      for (let i = 0; i < 23; i++) {
-        await insertIncident(
-          resident.id,
-          i % 3 === 0 ? 'resolved' : i % 3 === 1 ? 'cancelled' : 'resolved',
-          `timestamptz '2026-11-01 12:00:00+00' - make_interval(mins => ${i % 7})`,
-        );
-      }
-      await submitAlert(app, resident.id, 'fire');
-
-      for (const [query, limit] of [
-        ['', null],
-        ['limit=1', 1],
-        ['limit=7', 7],
-        ['limit=25', 25],
-        ['limit=0', 0],
-        ['limit=-3', -3],
-      ] as const) {
-        const viaSql = await callSqlAs<Body[]>(
-          client,
-          resident.id,
-          'public.list_my_recent_incidents($1)',
-          [limit],
-        );
-        const res = await listRecentIncidents(app, resident.id, query);
-        expect(asSqlRecentText(res.body)).toBe(JSON.stringify(viaSql));
-      }
-    });
-
-    it('the SQL caller reads what the API wrote, and the API what the SQL wrote', async () => {
-      const viaApi = await createUser(client);
-      const viaSql = await createUser(client);
-      await submitAlert(app, viaApi.id, 'fire');
-      await callSqlAs(client, viaSql.id, 'public.submit_emergency_alert($1)', ['fire']);
-
-      for (const user of [viaApi, viaSql]) {
-        const sqlOpen = await callSqlAs<Body>(client, user.id, 'public.get_my_open_incident()');
-        const sqlList = await callSqlAs(client, user.id, 'public.list_my_recent_incidents()');
-        expect(withoutEmergencyServicesText((await getOpenIncident(app, user.id)).body)).toBe(
-          `{"open_incident":${JSON.stringify(sqlOpen)}}`,
-        );
-        expect(asSqlRecentText((await listRecentIncidents(app, user.id)).body)).toBe(
-          JSON.stringify(sqlList),
-        );
-      }
-    });
-  });
-
   describe('reads racing writes (separate connections)', () => {
-    /** Begins a transaction as `userId` on a new connection and runs `call` in it, uncommitted. */
-    async function uncommitted(userId: string, call: string, params: unknown[]) {
+    /**
+     * Begins a transaction on a new connection and runs `statements` in it, uncommitted (the rows a
+     * submit or a mark safe writes, held open).
+     */
+    async function uncommitted(statements: Array<[string, unknown[]]>) {
       const writer = await openTestClient();
       await writer.query('begin');
-      await writer.query(
-        `select set_config('request.jwt.claim.sub', $1, true),
-                set_config('request.jwt.claims', $2, true)`,
-        [userId, JSON.stringify({ sub: userId, role: 'authenticated' })],
-      );
-      await writer.query(`select ${call}`, params);
+      for (const [text, params] of statements) await writer.query(text, params);
       return {
         commit: async () => {
           await writer.query('commit');
@@ -504,7 +418,21 @@ describe('resident incident reads (API-100-16)', () => {
 
     it('a submit in flight is invisible until it commits, and the read never waits', async () => {
       const { resident } = await residentWithCircle(3);
-      const submit = await uncommitted(resident.id, 'public.submit_emergency_alert($1)', ['fire']);
+      // A submit's rows: the incident and one delivery per active member, in one transaction.
+      const submit = await uncommitted([
+        [
+          `with i as (
+             insert into public.incidents (resident_id, circle_id, status, emergency_type, sent_at)
+             select c.owner_id, c.id, 'active', 'fire', now()
+               from public.safety_circles c where c.owner_id = $1
+             returning id, circle_id)
+           insert into public.incident_deliveries (incident_id, member_id, member_user_id)
+           select i.id, m.id, m.user_id
+             from i join public.safety_circle_members m on m.circle_id = i.circle_id
+            where m.role = 'member' and m.status = 'active'`,
+          [resident.id],
+        ],
+      ]);
 
       const during = await within(2_000, httpGet('/v1/me/incidents/open', resident.id));
       const listDuring = await within(2_000, httpGet('/v1/me/incidents', resident.id));
@@ -520,7 +448,16 @@ describe('resident incident reads (API-100-16)', () => {
     it('a mark safe in flight: still open until it commits, then null', async () => {
       const { resident } = await residentWithCircle(1);
       const created = (await submitAlert(app, resident.id, 'fire')).json<Body>();
-      const close = await uncommitted(resident.id, 'public.mark_incident_safe($1)', [created.id]);
+      // Mark safe's close (IncidentStateService), held open.
+      const close = await uncommitted([
+        [
+          `update public.incidents
+              set status = 'resolved', resolved_at = now(), resolved_reason = 'safe',
+                  auto_closed = false, location_sharing_ended_at = now()
+            where id = $1 and status = 'active'`,
+          [created.id],
+        ],
+      ]);
 
       const during = await within(2_000, httpGet('/v1/me/incidents/open', resident.id));
       const listDuring = await within(2_000, httpGet('/v1/me/incidents', resident.id));
@@ -563,9 +500,8 @@ describe('resident incident reads (API-100-16)', () => {
     // Other residents' history around the caller's rows.
     await client.query(
       `with users as (
-         insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
-         select '00000000-0000-0000-0000-000000000000', gen_random_uuid(), 'authenticated',
-                'authenticated', 'load-' || gen_random_uuid() || '@example.test', now(), now()
+         insert into public.users (id, email)
+         select gen_random_uuid(), 'load-' || gen_random_uuid() || '@example.test'
            from generate_series(1, 500)
          returning id),
        profiles as (

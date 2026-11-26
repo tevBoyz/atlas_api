@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { TestingModule } from '@nestjs/testing';
+import { Backoffs } from 'bullmq';
 import type { Client } from 'pg';
+
+import { parseConfig } from '../../src/config/config.schema';
 
 import { JobQueues } from '../../src/jobs/job-queues.service';
 import { DELIVERY_QUEUE, OUTBOX_QUEUE } from '../../src/jobs/jobs.constants';
@@ -19,14 +22,22 @@ import { addActiveMember, createCircle, createUser, type UserFixture } from '../
 import { markSafe, renotifyAlert, submitAlert } from '../support/incident-api';
 
 /**
- * Phase 5 gate (API-100-49 AC1): the whole pipeline with the fake push adapter and the DEFAULT
- * retry settings (3 retries, 2 s / 4 s / 8 s): HTTP submit → outbox row (same transaction) → relay
- * → outbox job → fan-out → delivery job → fake push → delivery `sent`; the failure path → 3
- * retries → `failed`; re-notify and mark safe; sign-out (U2) stops pushes to that installation.
+ * Phase 5 gate (API-100-49 AC1): the whole pipeline with the fake push adapter: HTTP submit →
+ * outbox row (same transaction) → relay → outbox job → fan-out → delivery job → fake push →
+ * delivery `sent`; the failure path → 3 retries → `failed`; re-notify and mark safe; sign-out (U2)
+ * stops pushes to that installation.
+ *
+ * Gap F: the retry delays are never waited for in real time. The DEFAULT schedule (3 retries,
+ * 2 s / 4 s / 8 s) is computed on a fake clock by BullMQ's own backoff function from the job options
+ * the fan-out wrote; the pipeline's worker runs with a 10 ms base delay, so the failure path takes
+ * milliseconds, not 14 s, and no deadline depends on machine load.
  */
 type Body = Record<string, unknown>;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const CONFIG = { CHANNEL_PUSH_ENABLED: 'true' };
+/** The worker's retry base for the pipeline (the default 2000 ms schedule is checked on a fake clock). */
+const FAST_RETRY_BASE_MS = 10;
+const WORKER_CONFIG = { ...CONFIG, NOTIFICATIONS_RETRY_BASE_DELAY_MS: String(FAST_RETRY_BASE_MS) };
 
 interface DeliveryDbRow {
   id: string;
@@ -66,7 +77,7 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
 
   beforeAll(async () => {
     ({ app } = await createTestApp({}, withTestConfig(CONFIG)));
-    ({ worker, logs: workerLogs } = await createTestWorker(withTestConfig(CONFIG)));
+    ({ worker, logs: workerLogs } = await createTestWorker(withTestConfig(WORKER_CONFIG)));
     client = await openTestClient();
 
     resident = await createUser(client);
@@ -161,23 +172,47 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
         'completed',
       10_000,
     );
-    expect(await (await queues.queue(DELIVERY_QUEUE).getJob(sent.id))?.getState()).toBe(
-      'completed',
+    // The delivery row is written inside the delivery job, so the job itself may finish just after.
+    await waitFor(
+      async () =>
+        (await (await queues.queue(DELIVERY_QUEUE).getJob(sent.id))?.getState()) === 'completed',
+      10_000,
     );
   });
 
-  it('failure path: 3 retries with the default backoff (2 s, 4 s, 8 s), then failed within 60 s', async () => {
+  it('the default retry schedule is 3 retries at 2 s, 4 s, 8 s (fake clock: computed, not waited)', async () => {
+    const defaults = parseConfig({ NODE_ENV: 'test' });
+    expect(defaults.NOTIFICATIONS_RETRY_ATTEMPTS).toBe(3);
+    const backoff = { type: 'exponential', delay: defaults.NOTIFICATIONS_RETRY_BASE_DELAY_MS };
+    const schedule: number[] = [];
+    for (
+      let attemptsMade = 1;
+      attemptsMade <= defaults.NOTIFICATIONS_RETRY_ATTEMPTS;
+      attemptsMade++
+    ) {
+      schedule.push(
+        (await Backoffs.calculate(backoff, attemptsMade, new Error('x'), {} as never)) as number,
+      );
+    }
+    expect(schedule).toEqual([2_000, 4_000, 8_000]);
+  });
+
+  it('failure path: the fan-out schedules exponential retries; 3 retries, then failed', async () => {
     let failed: DeliveryDbRow | undefined;
     await waitFor(async () => {
       failed = (await deliveries('incident.created')).find(
         (r) => r.recipient_user_id === unreachable.id && r.status === 'failed',
       );
       return failed !== undefined;
-    }, 40_000);
+    }, 30_000);
     expect(failed).toMatchObject({ error_code: 'fake_unavailable', attempts: 4 });
-    const took = failed!.updated_at.getTime() - failed!.queued_at.getTime();
-    expect(took).toBeGreaterThanOrEqual(14_000 - 500);
-    expect(took).toBeLessThan(60_000);
+    // The job carries the configured schedule (exponential from the base, 3 retries): with the
+    // default base that is the 2 s / 4 s / 8 s above.
+    const job = await worker.get(JobQueues).queue(DELIVERY_QUEUE).getJob(failed!.id);
+    expect(job?.opts).toMatchObject({
+      attempts: 4,
+      backoff: { type: 'exponential', delay: FAST_RETRY_BASE_MS },
+    });
     expect(push().calls.filter((c) => c.token === failingToken).length).toBeGreaterThanOrEqual(4);
     // The row is final before the job's last error is logged (SCRUM-65/71: the member's delivery
     // status is re-checked in between), so wait for the fourth line.
@@ -190,7 +225,7 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
       'job failed, will retry',
       'job failed, no retries left',
     ]);
-  }, 60_000);
+  });
 
   it('re-notify and mark safe reach the reachable member too', async () => {
     expect((await renotifyAlert(app, resident.id, incidentId)).statusCode).toBe(200);

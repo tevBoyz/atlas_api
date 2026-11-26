@@ -87,6 +87,6 @@ export class AtlasTokenVerifier implements TokenVerifier {
     const sessionId = sid.toLowerCase();
     const state = await this.sessions.stateOf(sessionId, userId);
     if (state !== 'live') throw new TokenRejectedError('session_revoked');
-    return { id: userId, issuer: 'atlas', sessionId, email: null, phone: null };
+    return { id: userId, sessionId, email: null, phone: null };
   }
 }

@@ -8,7 +8,8 @@
  *   activated_at). NEVER write `activatedAt` on safety_circle_members: the trigger only ignores
  *   client-chosen values for the anon/authenticated roles, and the API role is neither.
  * - RLS policies are intentionally omitted (authorization is enforced in code, AGENTS.md rule 5).
- * - `authUsers` is READ-ONLY: Supabase Auth owns auth.users.
+ * - Accounts live in `public.users` (API-owned, read with SQL); the foreign keys to it are
+ *   omitted here, and Supabase's `auth.users` is never read (D76).
  */
 import {
   bigserial,
@@ -21,7 +22,6 @@ import {
   inet,
   integer,
   jsonb,
-  pgSchema,
   pgTable,
   primaryKey,
   text,
@@ -29,22 +29,8 @@ import {
   unique,
   uniqueIndex,
   uuid,
-  varchar,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-
-const auth = pgSchema('auth');
-
-/** auth.users (Supabase Auth). READ-ONLY subset used by the API (spec §4.1). */
-export const authUsers = auth.table('users', {
-  id: uuid().primaryKey().notNull(),
-  email: varchar({ length: 255 }),
-  /** Stored by GoTrue without the leading "+" in some cases: always normalize to E.164. */
-  phone: text(),
-  emailConfirmedAt: timestamp('email_confirmed_at', { withTimezone: true, mode: 'string' }),
-  phoneConfirmedAt: timestamp('phone_confirmed_at', { withTimezone: true, mode: 'string' }),
-  createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }),
-});
 
 export const safetyCircles = pgTable(
   'safety_circles',
@@ -155,11 +141,6 @@ export const profiles = pgTable(
       'btree',
       table.profileSetupCompletedAt.asc().nullsLast(),
     ),
-    foreignKey({
-      columns: [table.id],
-      foreignColumns: [authUsers.id],
-      name: 'profiles_id_fkey',
-    }).onDelete('cascade'),
     check('profiles_full_name_nonempty', sql`char_length(TRIM(BOTH FROM full_name)) > 0`),
     check(
       'profiles_gender_allowed',
@@ -456,11 +437,6 @@ export const safetyCircleMembers = pgTable(
       foreignColumns: [safetyCircles.id],
       name: 'safety_circle_members_circle_id_fkey',
     }).onDelete('cascade'),
-    foreignKey({
-      columns: [table.userId],
-      foreignColumns: [authUsers.id],
-      name: 'safety_circle_members_user_id_fkey',
-    }).onDelete('set null'),
     check(
       'safety_circle_members_pending_invite_token',
       sql`(role <> 'member'::text) OR (status <> 'pending'::text) OR ((invite_token IS NOT NULL) AND (char_length(invite_token) >= 32) AND (invite_expires_at IS NOT NULL))`,

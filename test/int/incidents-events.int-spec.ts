@@ -15,6 +15,7 @@ import {
 } from '../../src/modules/incidents/incident-post-commit';
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
 import { authHeader } from '../../src/testing/test-tokens';
+import { leaveCircle, removeMember } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
   addActiveMember,
@@ -25,24 +26,15 @@ import {
   type MemberFixture,
   type UserFixture,
 } from '../support/fixtures';
-import {
-  callSqlAs,
-  getIncidentEvents,
-  markSafe,
-  markSafeViaSql,
-  renotifyAlert,
-  submitAlert,
-  submitAlertViaSql,
-} from '../support/incident-api';
+import { getIncidentEvents, markSafe, renotifyAlert, submitAlert } from '../support/incident-api';
 
 /**
  * `IncidentEventService` and `GET /v1/incidents/{id}/events` (API-100-22): the one event writer
  * (`ON CONFLICT DO NOTHING` on the once-only index, unknown types refused in code), the read with
  * `incident.eventsView` (rule 54) and `recipient_ids` hidden from everyone but the resident (epic §18
- * D3, an intentional difference from the RLS policy `incident_events_select_visible`, which returns
- * the whole row), `actor_id` obscured for everyone but the resident and the actor themselves (epic
- * §18 D11, also a deliberate difference from RLS), events never rewritten, the `incident.event` post-commit hook, and reads racing a
- * close and a removal on separate connections.
+ * D3), `actor_id` obscured for everyone but the resident and the actor themselves (epic §18 D11),
+ * events never rewritten, the `incident.event` post-commit hook, and reads racing a close and a
+ * removal.
  */
 type Body = Record<string, unknown>;
 type Reply = Awaited<ReturnType<typeof getIncidentEvents>>;
@@ -130,27 +122,6 @@ describe('incident events (API-100-22)', () => {
     return rows[0].body;
   }
 
-  /** Event ids `userId` can SELECT through RLS (`incident_events_select_visible`). */
-  async function rlsEventIds(userId: string, incidentId: string): Promise<string[]> {
-    await client.query('begin');
-    try {
-      await client.query(
-        `select set_config('request.jwt.claim.sub', $1, true),
-                set_config('request.jwt.claims', $2, true)`,
-        [userId, JSON.stringify({ sub: userId, role: 'authenticated' })],
-      );
-      await client.query('set local role authenticated');
-      const { rows } = await client.query<{ id: string }>(
-        `select id::text from public.incident_events where incident_id = $1
-          order by occurred_at, id`,
-        [incidentId],
-      );
-      return rows.map((row) => row.id);
-    } finally {
-      await client.query('rollback');
-    }
-  }
-
   /** What a caller who is not the resident gets: no recipient_ids (D3), actor_id masked (D11). */
   const memberView = (events: Body[], callerId: string) =>
     events.map((event) => {
@@ -219,7 +190,6 @@ describe('incident events (API-100-22)', () => {
         recipient_count: 2,
         recipient_ids: ids,
       });
-      expect(await rlsEventIds(s.resident.id, s.incidentId)).toEqual(events.map((e) => e.id));
     });
 
     it('AC4 (D3): a member gets the same events without recipient_ids; recipient_count stays', async () => {
@@ -232,10 +202,6 @@ describe('incident events (API-100-22)', () => {
       for (const other of s.members) expect(reply.body).not.toContain(other.id);
       const alert = reply.json<Body[]>().find((e) => e.event_type === 'alert_sent');
       expect(alert?.detail).toEqual({ recipient_count: 3, emergency_type: 'medical' });
-      // RLS returns the same rows (with recipient_ids): the API hides that key on purpose.
-      expect(await rlsEventIds(s.members[0].id, s.incidentId)).toEqual(
-        reply.json<Body[]>().map((e) => e.id),
-      );
     });
 
     it('D11: the resident gets full actor ids; a member gets them masked, never the full UUID', async () => {
@@ -252,9 +218,8 @@ describe('incident events (API-100-22)', () => {
       const reply = await getIncidentEvents(app, s.members[0].id, s.incidentId);
       expect(reply.statusCode).toBe(200);
       const member = reply.json<Body[]>();
-      // Same rows in the same order as the stored log and as RLS (which returns the full actor_id).
+      // Same rows in the same order as the stored log.
       expect(member.map((e) => e.id)).toEqual(stored.map((e) => e.id));
-      expect(await rlsEventIds(s.members[0].id, s.incidentId)).toEqual(member.map((e) => e.id));
       for (const event of member) {
         const actor = event.actor_id as string;
         expect(actor).toMatch(MASKED);
@@ -292,10 +257,10 @@ describe('incident events (API-100-22)', () => {
       const pending = await createUser(client);
       await inviteMember(client, s.circle, { claimedBy: pending });
       const outsider = await createUser(client);
-      await callSqlAs(client, s.resident.id, 'public.remove_circle_member($1)', [
-        s.memberRows[1].id,
-      ]);
-      await callSqlAs(client, s.members[2].id, 'public.leave_safety_circle($1)', [s.circle.id]);
+      expect(
+        (await removeMember(app, s.resident.id, s.circle.id, s.memberRows[1].id)).statusCode,
+      ).toBe(200);
+      expect((await leaveCircle(app, s.members[2].id, s.circle.id)).statusCode).toBe(200);
       const unknown = await getIncidentEvents(app, outsider.id, randomUUID());
       expect(unknown.statusCode).toBe(404);
       expect(errorOf(unknown).code).toBe('incident_events:not_found');
@@ -305,12 +270,11 @@ describe('incident events (API-100-22)', () => {
           status: 404,
           body: unknown.body,
         });
-        expect(await rlsEventIds(caller.id, s.incidentId)).toEqual([]);
       }
       expect((await getIncidentEvents(app, s.members[0].id, s.incidentId)).statusCode).toBe(200);
     });
 
-    it('legacy statuses: the resident still reads them; members get not_found (as RLS)', async () => {
+    it('legacy statuses: the resident still reads them; members get not_found', async () => {
       const s = await scene(1);
       await client.query(
         `update public.incidents set status = 'activating', sent_at = null where id = $1`,
@@ -319,7 +283,6 @@ describe('incident events (API-100-22)', () => {
       expect((await getIncidentEvents(app, s.resident.id, s.incidentId)).statusCode).toBe(200);
       const member = await getIncidentEvents(app, s.members[0].id, s.incidentId);
       expect(errorOf(member).code).toBe('incident_events:not_found');
-      expect(await rlsEventIds(s.members[0].id, s.incidentId)).toEqual([]);
     });
 
     it('an incident with no events yet (pre-events legacy row) is [] for the resident, not 404', async () => {
@@ -332,39 +295,6 @@ describe('incident events (API-100-22)', () => {
       const reply = await getIncidentEvents(app, resident.id, rows[0].id);
       expect(reply.statusCode).toBe(200);
       expect(reply.json()).toEqual([]);
-    });
-
-    it('events written by the SQL functions read the same as events written by the API', async () => {
-      const [a, b] = [await scene(2), await scene(2)];
-      // b was opened through the API; re-open both sides with the other writer.
-      await markSafe(app, a.resident.id, a.incidentId);
-      await markSafeViaSql(client, b.resident.id, b.incidentId);
-      const sqlSide = await submitAlertViaSql(client, a.resident.id, 'fire');
-      const shape = (events: Body[]) =>
-        events.map((e) => ({
-          event_type: e.event_type,
-          by_resident: true,
-          detail_keys: Object.keys(e.detail as Body).sort(),
-        }));
-      const viaApi = (await getIncidentEvents(app, a.members[0].id, a.incidentId)).json<Body[]>();
-      const viaSql = (await getIncidentEvents(app, b.members[0].id, b.incidentId)).json<Body[]>();
-      // SCRUM-63 (D62, recorded divergence): the SQL mark safe also writes `incident_closed`; the API
-      // writes it only at the real close (the close sweeper).
-      expect(
-        shape(viaApi).sort((x, y) => String(x.event_type).localeCompare(String(y.event_type))),
-      ).toEqual(
-        shape(viaSql)
-          .filter((e) => e.event_type !== 'incident_closed')
-          .sort((x, y) => String(x.event_type).localeCompare(String(y.event_type))),
-      );
-      expect(viaSql.filter((e) => e.event_type === 'incident_closed')).toHaveLength(1);
-      const fresh = (await getIncidentEvents(app, a.members[0].id, sqlSide.id as string)).json<
-        Body[]
-      >();
-      expect(fresh.map((e) => e.event_type).sort()).toEqual([
-        'alert_sent',
-        'location_sharing_started',
-      ]);
     });
   });
 
@@ -495,24 +425,18 @@ describe('incident events (API-100-22)', () => {
     }, 120_000);
 
     it('member removed while reading events: 200 or not_found, never an error', async () => {
-      const sqlClient = await openTestClient();
-      try {
-        for (let round = 0; round < RACE_ROUNDS; round++) {
-          const s = await scene(1);
-          const [read] = await Promise.all([
-            httpEvents(s.members[0].id, s.incidentId),
-            callSqlAs(sqlClient, s.resident.id, 'public.remove_circle_member($1)', [
-              s.memberRows[0].id,
-            ]),
-          ]);
-          if (read.status !== 200) {
-            expect(read.status).toBe(404);
-            expect(read.body.error).toMatchObject({ code: 'incident_events:not_found' });
-          }
-          expect((await httpEvents(s.members[0].id, s.incidentId)).status).toBe(404);
+      for (let round = 0; round < RACE_ROUNDS; round++) {
+        const s = await scene(1);
+        const [read, removed] = await Promise.all([
+          httpEvents(s.members[0].id, s.incidentId),
+          removeMember(app, s.resident.id, s.circle.id, s.memberRows[0].id),
+        ]);
+        expect(removed.statusCode).toBe(200);
+        if (read.status !== 200) {
+          expect(read.status).toBe(404);
+          expect(read.body.error).toMatchObject({ code: 'incident_events:not_found' });
         }
-      } finally {
-        await sqlClient.end();
+        expect((await httpEvents(s.members[0].id, s.incidentId)).status).toBe(404);
       }
     }, 120_000);
   });

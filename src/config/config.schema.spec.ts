@@ -12,7 +12,7 @@ function throwawayKey(kid: string, withPrivate = true): Record<string, string> {
 const AUTH_KEYS = JSON.stringify([throwawayKey('k1')]);
 
 /** Fake values only. The secret is long and distinctive so leaks are easy to detect. */
-const SECRET = 'fake-jwt-secret-0123456789-abcdefghij-SHOULD-NEVER-APPEAR';
+const SECRET = 'fake-storage-key-0123456789-abcdefghij-SHOULD-NEVER-APPEAR';
 const DB_URL = 'postgresql://fake_user:fake-db-password-NEVER-PRINT@localhost:5432/atlas';
 
 /** Defaults of the rate limit settings (API-100-11 AC2). */
@@ -57,7 +57,6 @@ const RATE_LIMIT_DEFAULTS = {
   AUTH_EMAIL_LINK_TTL_SECONDS: 300,
   AUTH_LINK_BASE: 'io.supabase.atlasmobile://login-callback/',
   AUTH_TEST_MAILBOX_ENABLED: false,
-  SUPABASE_JWT_ACCEPT: false,
   GOOGLE_JWKS_URL: 'https://www.googleapis.com/oauth2/v3/certs',
   APPLE_SIGN_IN_ENABLED: false,
   APPLE_JWKS_URL: 'https://appleid.apple.com/auth/keys',
@@ -70,11 +69,7 @@ const PRODUCTION_ENV = {
   DATABASE_POOL_MAX: '20',
   REDIS_URL: 'redis://localhost:6379',
   SUPABASE_URL: 'https://example.supabase.co',
-  SUPABASE_JWT_JWKS_URL: 'https://example.supabase.co/auth/v1/.well-known/jwks.json',
-  SUPABASE_JWT_SECRET: SECRET,
-  SUPABASE_JWT_ISSUER: 'https://example.supabase.co/auth/v1',
-  SUPABASE_JWT_AUDIENCE: 'authenticated',
-  SUPABASE_STORAGE_SERVICE_KEY: 'fake-storage-key',
+  SUPABASE_STORAGE_SERVICE_KEY: SECRET,
   AVATARS_BUCKET: 'avatars',
   INVITE_URL_BASE: 'io.supabase.atlasmobile://invite/',
   TRUST_PROXY: 'true',
@@ -109,7 +104,6 @@ describe('parseConfig (API-100-02)', () => {
         PORT: 8080,
         DATABASE_POOL_MAX: 20,
         ALLOW_REMOTE_DATA_STORES: false,
-        SUPABASE_JWT_CLOCK_SKEW_SECONDS: 30,
         AVATAR_STORAGE: 'supabase',
         TRUST_PROXY: true,
         CHANNEL_PUSH_ENABLED: false,
@@ -118,13 +112,14 @@ describe('parseConfig (API-100-02)', () => {
       });
     });
 
-    it('accepts production with only one Supabase JWT verifier (JWKS or secret)', () => {
-      const jwksOnly: Record<string, string> = { ...PRODUCTION_ENV };
-      delete jwksOnly.SUPABASE_JWT_SECRET;
-      const secretOnly: Record<string, string> = { ...PRODUCTION_ENV };
-      delete secretOnly.SUPABASE_JWT_JWKS_URL;
-      expect(() => parseConfig(jwksOnly)).not.toThrow();
-      expect(() => parseConfig(secretOnly)).not.toThrow();
+    it('ignores the retired Supabase JWT settings (D76): no key, no requirement', () => {
+      const config = parseConfig({
+        ...PRODUCTION_ENV,
+        SUPABASE_JWT_SECRET: 'x'.repeat(40),
+        SUPABASE_JWT_ISSUER: 'https://example.supabase.co/auth/v1',
+        SUPABASE_JWT_ACCEPT: 'true',
+      });
+      expect(Object.keys(config).filter((key) => key.startsWith('SUPABASE_JWT'))).toEqual([]);
     });
 
     it('ignores unrelated environment variables', () => {
@@ -151,8 +146,6 @@ describe('parseConfig (API-100-02)', () => {
         PORT: 3000,
         DATABASE_POOL_MAX: 10,
         ALLOW_REMOTE_DATA_STORES: false,
-        SUPABASE_JWT_AUDIENCE: 'authenticated',
-        SUPABASE_JWT_CLOCK_SKEW_SECONDS: 30,
         AVATARS_BUCKET: 'avatars',
         AVATAR_STORAGE: 'supabase',
         INVITE_URL_BASE: 'io.supabase.atlasmobile://invite/',
@@ -171,8 +164,7 @@ describe('parseConfig (API-100-02)', () => {
         expect(config.NODE_ENV).toBe(nodeEnv);
         expect(config.DATABASE_URL).toBeUndefined();
         expect(config.REDIS_URL).toBeUndefined();
-        expect(config.SUPABASE_JWT_JWKS_URL).toBeUndefined();
-        expect(config.SUPABASE_JWT_SECRET).toBeUndefined();
+        expect(config.SUPABASE_URL).toBeUndefined();
       },
     );
   });
@@ -201,7 +193,7 @@ describe('parseConfig (API-100-02)', () => {
   });
 
   describe('missing required keys (production)', () => {
-    it.each(['DATABASE_URL', 'REDIS_URL', 'SUPABASE_URL', 'SUPABASE_JWT_ISSUER'])(
+    it.each(['DATABASE_URL', 'REDIS_URL', 'SUPABASE_URL', 'AUTH_JWT_KEYS'])(
       'fails naming %s when it is missing',
       (key) => {
         const env: Record<string, string> = { ...PRODUCTION_ENV };
@@ -212,27 +204,15 @@ describe('parseConfig (API-100-02)', () => {
       },
     );
 
-    it('fails naming both JWT verifier keys when neither is set', () => {
-      const env: Record<string, string> = { ...PRODUCTION_ENV };
-      delete env.SUPABASE_JWT_JWKS_URL;
-      delete env.SUPABASE_JWT_SECRET;
-      const error = validationError(env);
-      expect(error.keys).toEqual(['SUPABASE_JWT_JWKS_URL', 'SUPABASE_JWT_SECRET']);
-      expect(error.message).toContain('SUPABASE_JWT_JWKS_URL or SUPABASE_JWT_SECRET');
-    });
-
     it('reports every missing key at once', () => {
       const error = validationError({ NODE_ENV: 'production' });
       expect(error.keys).toEqual([
         'DATABASE_URL',
         'REDIS_URL',
         'SUPABASE_URL',
-        'SUPABASE_JWT_ISSUER',
         'SUPABASE_STORAGE_SERVICE_KEY',
         'AUTH_JWT_KEYS',
         'AUTH_JWT_ACTIVE_KID',
-        'SUPABASE_JWT_JWKS_URL',
-        'SUPABASE_JWT_SECRET',
       ]);
     });
 
@@ -285,18 +265,11 @@ describe('parseConfig (API-100-02)', () => {
       );
     });
 
-    it('parses client id lists, the Supabase acceptance date and the Apple switch', () => {
+    it('parses client id lists and the Apple switch', () => {
       const config = parseConfig({
         GOOGLE_CLIENT_IDS: ' web.apps.example , android.apps.example ',
-        SUPABASE_JWT_ACCEPT: 'true',
-        SUPABASE_JWT_ACCEPT_UNTIL: '2027-01-31T00:00:00Z',
       });
       expect(config.GOOGLE_CLIENT_IDS).toEqual(['web.apps.example', 'android.apps.example']);
-      expect(config.SUPABASE_JWT_ACCEPT).toBe(true);
-      expect(config.SUPABASE_JWT_ACCEPT_UNTIL).toBe('2027-01-31T00:00:00Z');
-      expect(validationError({ SUPABASE_JWT_ACCEPT_UNTIL: '2027-01-31' }).keys).toEqual([
-        'SUPABASE_JWT_ACCEPT_UNTIL',
-      ]);
       expect(validationError({ APPLE_SIGN_IN_ENABLED: 'true' }).keys).toEqual(['APPLE_CLIENT_IDS']);
     });
   });
@@ -314,11 +287,8 @@ describe('parseConfig (API-100-02)', () => {
       ['REDIS_URL', 'http://localhost:6379'],
       ['ALLOW_REMOTE_DATA_STORES', 'yes'],
       ['SUPABASE_URL', 'example.supabase.co'],
-      ['SUPABASE_JWT_JWKS_URL', 'ftp://example.com/jwks'],
-      ['SUPABASE_JWT_ISSUER', 'nope'],
-      ['SUPABASE_JWT_SECRET', 'too-short'],
-      ['SUPABASE_JWT_CLOCK_SKEW_SECONDS', '31'],
-      ['SUPABASE_JWT_CLOCK_SKEW_SECONDS', '-1'],
+      ['AUTH_JWT_CLOCK_SKEW_SECONDS', '31'],
+      ['AUTH_JWT_CLOCK_SKEW_SECONDS', '-1'],
       ['AVATARS_BUCKET', 'Has Spaces'],
       ['INVITE_URL_BASE', 'no-scheme'],
       ['TRUST_PROXY', 'yes'],
@@ -348,9 +318,9 @@ describe('parseConfig (API-100-02)', () => {
 
   describe('never leaks values', () => {
     it('does not include an invalid secret value in the error', () => {
-      const leaky = 'short-secret-LEAK';
-      const error = validationError({ ...PRODUCTION_ENV, SUPABASE_JWT_SECRET: leaky });
-      expect(error.message).toContain('SUPABASE_JWT_SECRET');
+      const leaky = 'not-json-secret-LEAK';
+      const error = validationError({ ...PRODUCTION_ENV, AUTH_JWT_KEYS: leaky });
+      expect(error.message).toContain('AUTH_JWT_KEYS');
       expect(error.message).not.toContain(leaky);
       expect(error.stack).not.toContain(leaky);
       expect(JSON.stringify(error.problems)).not.toContain(leaky);

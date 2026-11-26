@@ -3,12 +3,9 @@ import type { Client } from 'pg';
 
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
 import { authHeader } from '../../src/testing/test-tokens';
+import { leaveCircle, removeMember } from '../support/circle-api';
 import { openTestClient } from '../support/database';
-import {
-  asSqlSharePayloadShape,
-  GM_EMERGENCY_SERVICES,
-  withoutClosedAtText,
-} from '../support/share-payload-shape';
+import { GM_EMERGENCY_SERVICES } from '../support/share-payload-shape';
 import {
   addActiveMember,
   type CircleFixture,
@@ -19,22 +16,18 @@ import {
   type UserFixture,
 } from '../support/fixtures';
 import {
-  attachLocation,
-  callSqlAs,
   getIncidentDetails,
   listResponderIncidents,
   markSafe,
   setIncidentNotes,
-  sqlOutcomeAs,
   submitAlert,
 } from '../support/incident-api';
 
 /**
- * `GET /v1/responder/incidents` and `GET /v1/incidents/{id}` (API-100-21) beyond the SQL scripts:
+ * `GET /v1/responder/incidents` and `GET /v1/incidents/{id}` (API-100-21):
  * exact key sets (members never get `resident_id`, `circle_id` or other profile data), the list
- * filter and ordering, hidden existence for every denied caller, byte-for-byte interchangeability
- * with `list_responder_incidents` / `get_incident_details`, and reads racing membership changes and
- * a close on separate connections.
+ * filter and ordering, hidden existence for every denied caller, and reads racing membership
+ * changes and a close.
  */
 type Body = Record<string, unknown>;
 type Reply = Awaited<ReturnType<typeof getIncidentDetails>>;
@@ -272,29 +265,6 @@ describe('responder incident list and details (API-100-21)', () => {
       expect(listed).toEqual(rows.map((row) => row.id));
       expect(new Set(listed).size).toBe(listed.length);
     });
-
-    it('interchangeable with list_responder_incidents: the same bytes for every caller', async () => {
-      const s = await scene(2);
-      const a = await submit(s.resident.id);
-      await attachLocation(app, s.resident.id, a, {
-        location_source: 'current',
-        location_lat: 9.03,
-        location_lng: 38.74,
-        location_accuracy_m: 5,
-        location_captured_at: new Date().toISOString(),
-      });
-      await markSafe(app, s.resident.id, a);
-      await submit(s.resident.id, 'burglary');
-      const joiner = await lateJoiner(s);
-      const outsider = await createUser(client);
-      for (const caller of [s.members[0], s.members[1], s.resident, joiner, outsider]) {
-        const api = await listResponderIncidents(app, caller.id);
-        const sql = await callSqlAs(client, caller.id, 'public.list_responder_incidents()');
-        expect(api.statusCode).toBe(200);
-        // SCRUM-63 (D63): `closed_at` (null here) is the API's only extra key.
-        expect(withoutClosedAtText(api.body)).toBe(JSON.stringify(sql));
-      }
-    });
   });
 
   describe('GET /v1/incidents/{id}', () => {
@@ -354,10 +324,10 @@ describe('responder incident list and details (API-100-21)', () => {
       const outsider = await createUser(client);
       const id = await submit(s.resident.id);
       const joiner = await lateJoiner(s);
-      await callSqlAs(client, s.resident.id, 'public.remove_circle_member($1)', [
-        s.memberRows[1].id,
-      ]);
-      await callSqlAs(client, s.members[2].id, 'public.leave_safety_circle($1)', [s.circle.id]);
+      expect(
+        (await removeMember(app, s.resident.id, s.circle.id, s.memberRows[1].id)).statusCode,
+      ).toBe(200);
+      expect((await leaveCircle(app, s.members[2].id, s.circle.id)).statusCode).toBe(200);
       const noCircle = await insertIncident(s, {
         status: 'resolved',
         activatedAt: 'now()',
@@ -398,10 +368,6 @@ describe('responder incident list and details (API-100-21)', () => {
           status: 404,
           body: unknown.body,
         });
-        const sql = await sqlOutcomeAs(client, caller.id, 'public.get_incident_details($1)', [
-          incidentId,
-        ]);
-        expect(sql).toMatchObject({ ok: false, code: 'get_incident_details:not_found' });
       }
       expect((await getIncidentDetails(app, s.members[0].id, id)).statusCode).toBe(200);
     });
@@ -427,38 +393,6 @@ describe('responder incident list and details (API-100-21)', () => {
       expect(await listIds(atStart.id)).toEqual([id]);
       expect(await listIds(after.id)).toEqual([]);
     });
-
-    it('interchangeable with get_incident_details: the same JSON in the SQL shape (open, located, noted, closed)', async () => {
-      const s = await scene(2);
-      await client.query(
-        `update public.profiles set allergies = 'Peanuts', share_allergies = true where id = $1`,
-        [s.resident.id],
-      );
-      const id = await submit(s.resident.id);
-      const compare = async () => {
-        for (const member of s.members) {
-          const api = await getIncidentDetails(app, member.id, id);
-          const sql = await callSqlAs(client, member.id, 'public.get_incident_details($1)', [id]);
-          // SCRUM-21 (D52, D53): the stored snapshot holds arrays (read by both sides): joined, and the
-          // two new keys removed; the rest identical.
-          expect(JSON.stringify(asSqlSharePayloadShape(api.json<Body>()))).toBe(
-            JSON.stringify(asSqlSharePayloadShape(sql)),
-          );
-        }
-      };
-      await compare();
-      await attachLocation(app, s.resident.id, id, {
-        location_source: 'current',
-        location_lat: -33.123456789,
-        location_lng: 151.987654321,
-        location_accuracy_m: 7.25,
-        location_captured_at: new Date().toISOString(),
-      });
-      await setIncidentNotes(app, s.resident.id, id, { incident_notes: 'Gate code 1234' });
-      await compare();
-      await markSafe(app, s.resident.id, id);
-      await compare();
-    });
   });
 
   describe('races on separate connections', () => {
@@ -477,17 +411,14 @@ describe('responder incident list and details (API-100-21)', () => {
     }
 
     it('member removed while reading: 200 (read first) or not_found (removed first); never an error', async () => {
-      const sqlClient = await openTestClient();
-      try {
+      {
         for (let round = 0; round < RACE_ROUNDS; round++) {
           const s = await scene(1);
           const id = await submit(s.resident.id);
           const [details, list] = await Promise.all([
             httpDetails(s.members[0].id, id),
             httpList(s.members[0].id),
-            callSqlAs(sqlClient, s.resident.id, 'public.remove_circle_member($1)', [
-              s.memberRows[0].id,
-            ]),
+            removeMember(app, s.resident.id, s.circle.id, s.memberRows[0].id),
           ]);
           if (details.status !== 200) {
             expect(details.status).toBe(404);
@@ -499,8 +430,6 @@ describe('responder incident list and details (API-100-21)', () => {
           expect((await httpDetails(s.members[0].id, id)).status).toBe(404);
           expect((await httpList(s.members[0].id)).body).toEqual([]);
         }
-      } finally {
-        await sqlClient.end();
       }
     }, 120_000);
 

@@ -9,7 +9,6 @@ import '../models/apple_sign_in_request.dart';
 import '../models/device_session.dart';
 import '../models/email_resend_request.dart';
 import '../models/email_verify_request.dart';
-import '../models/exchange_request.dart';
 import '../models/google_sign_in_request.dart';
 import '../models/jwks.dart';
 import '../models/lockout_status.dart';
@@ -52,15 +51,6 @@ abstract class AuthClient {
   @POST('/v1/auth/email/verify')
   Future<Session> verifyEmail({
     @Body() required EmailVerifyRequest body,
-    @Header('X-Atlas-Installation-Id') String? xAtlasInstallationId,
-  });
-
-  /// Move a signed-in Supabase session to an API session (once, at the app switch).
-  ///
-  /// [xAtlasInstallationId] - The app installation id (the same UUID as for `PUT /v1/me/devices/current`). Links the new session to that device, so signing out clears its push token.
-  @POST('/v1/auth/exchange')
-  Future<Session> exchangeSupabaseSession({
-    @Body() required ExchangeRequest body,
     @Header('X-Atlas-Installation-Id') String? xAtlasInstallationId,
   });
 

@@ -23,10 +23,10 @@ import {
 
 /**
  * Concurrency of the owner invite writes (epic §4 item 6, Phase 2 intro): every write locks the
- * caller's `safety_circles` row first, then member rows, as the SQL functions do, so parallel
- * invites through the API (on the app's pool) and through the SQL functions (each on its own
- * connection) serialize per circle. Capacity never goes above 5, one phone never gets a second row,
- * and no transaction deadlocks (40P01) or fails with a 5xx.
+ * caller's `safety_circles` row first, then member rows, so parallel invites serialize per circle;
+ * a raw insert on its own connection is guarded by the capacity trigger. Capacity never goes above
+ * 5, one phone never gets a second row, and no request fails with a 5xx (outcomes are asserted, not
+ * the database-wide deadlock counter, gap 32).
  */
 type Body = Record<string, unknown>;
 type Reply = Awaited<ReturnType<typeof invitePhone>>;
@@ -38,8 +38,8 @@ const phoneNumber = () => `+447700900${String(500 + counter++).padStart(3, '0')}
 describe('owner invitations under concurrency (API-100-26/27/28)', () => {
   let app: NestFastifyApplication;
   let client: Client;
-  /** Separate connections for the SQL writers. */
-  let sqlClients: Client[];
+  /** A separate connection for the raw insert. */
+  let rawClient: Client;
 
   beforeAll(async () => {
     ({ app } = await createTestApp(
@@ -47,11 +47,11 @@ describe('owner invitations under concurrency (API-100-26/27/28)', () => {
       withTestConfig({ RATE_LIMIT_AUTHENTICATED_MAX: '1000000', DATABASE_POOL_MAX: '12' }),
     ));
     client = await openTestClient();
-    sqlClients = await Promise.all(Array.from({ length: 4 }, () => openTestClient()));
+    rawClient = await openTestClient();
   });
 
   afterAll(async () => {
-    await Promise.all((sqlClients ?? []).map((c) => c.end()));
+    await rawClient?.end();
     await client?.end();
     await app?.close();
   });
@@ -101,41 +101,6 @@ describe('owner invitations under concurrency (API-100-26/27/28)', () => {
       )
     ).rows[0].n;
 
-  const deadlocks = async () =>
-    Number(
-      (
-        await client.query<{ n: string }>(
-          'select deadlocks::text as n from pg_stat_database where datname = current_database()',
-        )
-      ).rows[0].n,
-    );
-
-  /** Runs a SQL function as `userId` on its own connection; the error message when it raises. */
-  const sqlCall = async (
-    c: Client,
-    userId: string,
-    call: string,
-    params: unknown[],
-  ): Promise<{ body?: Body; error?: string; sqlState?: string }> => {
-    await c.query('begin');
-    try {
-      await c.query(
-        `select set_config('request.jwt.claim.sub', $1, true),
-                set_config('request.jwt.claims', $2, true)`,
-        [userId, JSON.stringify({ sub: userId, role: 'authenticated' })],
-      );
-      const { rows } = await c.query<{ body: Body }>(`select ${call} as body`, params);
-      await c.query('commit');
-      return { body: rows[0].body };
-    } catch (error) {
-      await c.query('rollback');
-      return {
-        error: (error as Error).message,
-        sqlState: (error as { code?: string }).code,
-      };
-    }
-  };
-
   const ok = (reply: Reply) => reply.statusCode === 200 || reply.statusCode === 201;
   const no5xx = (replies: Reply[]) => {
     for (const reply of replies) expect(reply.statusCode).toBeLessThan(500);
@@ -145,7 +110,6 @@ describe('owner invitations under concurrency (API-100-26/27/28)', () => {
     for (let round = 0; round < 3; round += 1) {
       const { owner, circle } = await ownerWithCircle();
       await fill(circle, 4);
-      const before = await deadlocks();
       const replies = await Promise.all([
         invitePhone(app, owner.id, { display_name: 'P1', phone: phoneNumber() }),
         invitePhone(app, owner.id, { display_name: 'P2', phone: phoneNumber() }),
@@ -175,7 +139,6 @@ describe('owner invitations under concurrency (API-100-26/27/28)', () => {
         }
       }
       expect(await used(circle)).toBe(5);
-      expect(await deadlocks()).toBe(before);
     }
   });
 
@@ -199,28 +162,15 @@ describe('owner invitations under concurrency (API-100-26/27/28)', () => {
     }
   });
 
-  it('concurrent invites for the same phone (API and SQL) leave one row: one created, the rest refreshed', async () => {
+  it('concurrent invites for the same phone leave one row: one created, the rest refreshed', async () => {
     const { owner, circle } = await ownerWithCircle();
     const phone = phoneNumber();
-    const [apiReplies, sqlReplies] = await Promise.all([
-      Promise.all(
-        Array.from({ length: 4 }, (_, i) =>
-          invitePhone(app, owner.id, { display_name: `Same ${i}`, phone }),
-        ),
+    const apiReplies = await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        invitePhone(app, owner.id, { display_name: `Same ${i}`, phone }),
       ),
-      Promise.all(
-        sqlClients
-          .slice(0, 2)
-          .map((c, i) =>
-            sqlCall(c, owner.id, 'public.invite_circle_member_by_phone($1, $2, null)', [
-              `Sql ${i}`,
-              phone,
-            ]),
-          ),
-      ),
-    ]);
+    );
     no5xx(apiReplies);
-    for (const r of sqlReplies) expect(r.error).toBeUndefined();
     const rows = (
       await client.query<{ id: string }>(
         'select id::text from public.safety_circle_members where circle_id = $1 and phone = $2',
@@ -228,10 +178,7 @@ describe('owner invitations under concurrency (API-100-26/27/28)', () => {
       )
     ).rows;
     expect(rows).toHaveLength(1);
-    const bodies = [
-      ...apiReplies.map((r) => r.json<Body>()),
-      ...sqlReplies.map((r) => r.body as Body),
-    ];
+    const bodies = apiReplies.map((r) => r.json<Body>());
     expect(bodies.filter((b) => b.resent === false)).toHaveLength(1);
     expect(new Set(bodies.map((b) => b.member_id))).toEqual(new Set([rows[0].id]));
     expect(apiReplies.filter((r) => r.statusCode === 201).length).toBeLessThanOrEqual(1);
@@ -265,59 +212,40 @@ describe('owner invitations under concurrency (API-100-26/27/28)', () => {
     }
   });
 
-  it('API and SQL writers mixed on one circle with 1 free slot: one wins, the trigger never lets a sixth in', async () => {
+  it('API writers and a raw insert on one circle with 1 free slot: one wins, the trigger never lets a sixth in', async () => {
     for (let round = 0; round < 3; round += 1) {
       const { owner, circle } = await ownerWithCircle();
       await fill(circle, 4);
-      const before = await deadlocks();
-      const [apiReplies, sqlReplies] = await Promise.all([
+      const [apiReplies, raw] = await Promise.all([
         Promise.all([
           invitePhone(app, owner.id, { display_name: 'Api', phone: phoneNumber() }),
           createInviteLink(app, owner.id, {}),
           inviteBatch(app, owner.id, { invites: [{ phone: phoneNumber(), display_name: 'Bat' }] }),
+          invitePhone(app, owner.id, { display_name: 'Api2', phone: phoneNumber() }),
+          createInviteLink(app, owner.id, { display_name: 'L2' }),
         ]),
-        Promise.all([
-          sqlCall(sqlClients[0], owner.id, 'public.create_circle_invite_link(null)', []),
-          sqlCall(sqlClients[1], owner.id, 'public.invite_circle_member_by_phone($1, $2, null)', [
-            'Sql',
-            phoneNumber(),
-          ]),
-          sqlCall(sqlClients[2], owner.id, 'public.invite_circle_members_by_phone($1::jsonb)', [
-            JSON.stringify([{ phone: phoneNumber(), display_name: 'SqlBatch' }]),
-          ]),
-          // A raw insert as the migration role: only the capacity trigger guards it.
-          (async () => {
-            try {
-              await insertRowOn(sqlClients[3], circle);
-              return { error: undefined as string | undefined, sqlState: undefined };
-            } catch (error) {
-              return {
-                error: (error as Error).message,
-                sqlState: (error as { code?: string }).code,
-              };
-            }
-          })(),
-        ]),
+        // A raw insert as the migration role: only the capacity trigger guards it.
+        insertRowOn(rawClient, circle).then(
+          () => ({
+            error: undefined as string | undefined,
+            sqlState: undefined as string | undefined,
+          }),
+          (error: { message: string; code?: string }) => ({
+            error: error.message,
+            sqlState: error.code,
+          }),
+        ),
       ]);
       no5xx(apiReplies);
-      for (const r of sqlReplies) expect(r.sqlState).not.toBe('40P01');
       const apiCreated =
         apiReplies.filter((r) => r.statusCode === 201).length +
         apiReplies
           .filter((r) => r.statusCode === 200)
           .reduce((n, r) => n + (r.json<{ created: Body[] }>().created.length ?? 0), 0);
-      const sqlCreated = sqlReplies.filter((r) => {
-        if (r.error) return false;
-        const body = (r as { body?: Body }).body;
-        if (body && Array.isArray(body.created)) return (body.created as Body[]).length > 0;
-        return true;
-      }).length;
-      expect(apiCreated + sqlCreated).toBe(1);
-      for (const r of sqlReplies) {
-        if (r.error) expect(r.error).toMatch(/circle_full$/);
-      }
+      const rawCreated = raw.error ? 0 : 1;
+      expect(apiCreated + rawCreated).toBe(1);
+      if (raw.error) expect(raw.error).toMatch(/circle_full$/);
       expect(await used(circle)).toBe(5);
-      expect(await deadlocks()).toBe(before);
     }
   });
 

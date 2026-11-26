@@ -9,7 +9,6 @@ import { AuditService } from '../audit/audit.service';
 import type { Identifier, LoginInput } from './auth-input';
 import { AuthLimits, LOGIN_CLEAR_LIMIT, LOGIN_FAILURE_LIMIT } from './auth-limits';
 import { type AuthTx, runAuthTransaction } from './auth-transaction';
-import { LegacyUsers } from './legacy-users';
 import { LockoutRepository, type LockoutStatus } from './lockout.repository';
 import { PASSWORD_HASHER, type PasswordHasher, type StoredHash } from './password-hasher';
 import type { ClientContext } from './sessions.repository';
@@ -50,23 +49,15 @@ export class LoginService {
     private readonly sessions: SessionsService,
     private readonly limits: AuthLimits,
     private readonly audit: AuditService,
-    private readonly legacy: LegacyUsers,
     @Inject(PASSWORD_HASHER) private readonly hasher: PasswordHasher,
     @Inject(ROOT_LOGGER) private readonly logger: Logger,
   ) {}
 
   /** A8 `GET /v1/auth/lockout-status` (`login_lockout_status`). */
   async status(identifier: Identifier): Promise<LockoutStatus> {
-    await this.migrate(identifier);
     return runAuthTransaction(this.database, async (tx) =>
       this.lockouts.status(tx, await this.lockouts.keyOf(tx, identifier)),
     );
-  }
-
-  private migrate(identifier: Identifier): Promise<void> {
-    return identifier.kind === 'email'
-      ? this.legacy.migrateByEmail(identifier.email)
-      : this.legacy.migrateByPhone(identifier.phone);
   }
 
   private findUser(tx: AuthTx, identifier: Identifier): Promise<UserRow | undefined> {
@@ -77,8 +68,6 @@ export class LoginService {
 
   /** A7 `POST /v1/auth/login`. */
   async login(input: LoginInput, client: ClientContext): Promise<SessionJson> {
-    await this.migrate(input.identifier);
-
     // 1. Lock key, resets, and the lock check (commits the resets, as login_lockout_status).
     const before = await runAuthTransaction(this.database, async (tx) => {
       const key = await this.lockouts.keyOf(tx, input.identifier);

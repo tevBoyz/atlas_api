@@ -1,12 +1,10 @@
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
-import { authHeader } from '../../src/testing/test-tokens';
 import {
   createAuthApp,
   DEVICE,
   errorOf,
-  legacyUser,
   post,
   type SessionBody,
   signedUpUser,
@@ -151,17 +149,6 @@ describe('change password while signed in (A16, stage 7.1b)', () => {
       new_password: NEW_PASSWORD,
     });
     expect([res.statusCode, errorOf(res).code]).toEqual([401, 'auth:invalid_credentials']);
-  });
-
-  it('a Supabase token (window on): the password changes and every API session is revoked', async () => {
-    const legacy = await legacyUser(app, client);
-    const res = await change(await authHeader(legacy.id), {
-      current_password: legacy.password,
-      new_password: NEW_PASSWORD,
-    });
-    expect(res.statusCode).toBe(204);
-    expect((await me(legacy.session)).statusCode).toBe(401);
-    expect((await login(legacy.email, NEW_PASSWORD)).statusCode).toBe(200);
   });
 
   it('rate limited: the 11th attempt in 15 minutes answers 429 rate_limit:exceeded', async () => {

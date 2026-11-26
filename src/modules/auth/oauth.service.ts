@@ -16,7 +16,6 @@ import {
   type IdTokenVerifier,
   type OAuthProvider,
 } from './id-token-verifier';
-import { LegacyUsers } from './legacy-users';
 import { LockoutRepository } from './lockout.repository';
 import type { ClientContext } from './sessions.repository';
 import { type PendingSession, type SessionJson, SessionsService } from './sessions.service';
@@ -64,7 +63,6 @@ export class OAuthService {
     private readonly lockouts: LockoutRepository,
     private readonly limits: AuthLimits,
     private readonly audit: AuditService,
-    private readonly legacy: LegacyUsers,
     @Inject(ID_TOKEN_VERIFIER) private readonly verifier: IdTokenVerifier,
   ) {}
 
@@ -84,7 +82,6 @@ export class OAuthService {
       throw new DomainError('auth:provider_unavailable');
     }
     if (provider === 'apple') this.checkNonce(claims, extras.nonce);
-    if (claims.email) await this.legacy.migrateByEmail(claims.email);
 
     const clears =
       provider === 'google' &&

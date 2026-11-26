@@ -9,13 +9,11 @@ import { openTestClient } from '../support/database';
 import { createCircle, createUser, fakePhone, type UserFixture } from '../support/fixtures';
 import { insertExpiredMember, insertMember } from '../support/invite-rows';
 import { completeSetup, createAuthUser, patchLocationSharing } from '../support/profile-api';
-import { compareSetupWithSql } from '../support/setup-compare';
+import { runSetup } from '../support/setup-compare';
 
 /**
- * API-100-36: `POST /v1/me/profile/complete` against `complete_profile_setup()` (final: baseline
- * 20261117120000). Every scenario runs the SQL function first (rolled back) and then the API on the
- * same state, and requires the same answer (keys, order, values) and the same effects on the
- * profile, the circle and every member row (`test/support/setup-compare.ts`).
+ * API-100-36: `POST /v1/me/profile/complete`. Every scenario asserts the answer and the effects on
+ * the profile, the circle and every member row (`test/support/setup-compare.ts`).
  *
  * - AC1 errors in the function's order (401, 404, the three `*_incomplete`);
  * - AC2 `profile_setup_completed_at` keeps its first value;
@@ -60,7 +58,7 @@ describe('POST /v1/me/profile/complete (API-100-36)', () => {
   };
 
   const compare = (owner: UserFixture) =>
-    compareSetupWithSql(client, owner.id, () => completeSetup(app, owner.id));
+    runSetup(client, owner.id, () => completeSetup(app, owner.id));
 
   /** A circle owned by `owner` (fixture), with `n` active members. */
   const circleWithActives = async (owner: UserFixture, n: number) => {
@@ -83,12 +81,12 @@ describe('POST /v1/me/profile/complete (API-100-36)', () => {
       expect(errorOf(reply).code).toBe('complete_profile_setup:not_authenticated');
     });
 
-    it('no profile → 404 profile_not_found (same as the SQL)', async () => {
+    it('no profile → 404 profile_not_found', async () => {
       const id = randomUUID();
       await createAuthUser(client, id);
-      const result = await compareSetupWithSql(client, id, () => completeSetup(app, id));
+      const result = await runSetup(client, id, () => completeSetup(app, id));
       expect(result.reply.statusCode).toBe(404);
-      expect(result.sqlError).toBe('complete_profile_setup:profile_not_found');
+      expect(result.apiError).toBe('complete_profile_setup:profile_not_found');
     });
 
     it.each([
@@ -132,7 +130,7 @@ describe('POST /v1/me/profile/complete (API-100-36)', () => {
       await client.query(`update public.profiles set ${set} where id = $1`, [user.id]);
       const result = await compare(user);
       expect(result.reply.statusCode).toBe(409);
-      expect(result.sqlError).toBe(`complete_profile_setup:${code}`);
+      expect(result.apiError).toBe(`complete_profile_setup:${code}`);
       // Nothing written.
       expect(
         (await client.query('select 1 from public.safety_circles where owner_id = $1', [user.id]))
@@ -144,8 +142,7 @@ describe('POST /v1/me/profile/complete (API-100-36)', () => {
   describe('AC2-AC5 completion, circle, owner row, contact row (rule 6)', () => {
     it('first completion: circle, owner row (activated_at from the trigger) and a pending 7-day contact invite', async () => {
       const { user, contactPhone } = await readyUser();
-      const { snapshot, apiBody, sqlBody } = await compare(user);
-      expect(Object.keys(apiBody ?? {})).toEqual(Object.keys(sqlBody ?? {}));
+      const { snapshot, apiBody } = await compare(user);
       expect(Object.keys(apiBody ?? {})).toEqual([
         'circle_id',
         'member_id',
@@ -282,7 +279,7 @@ describe('POST /v1/me/profile/complete (API-100-36)', () => {
       });
     });
 
-    it('contact row expired (stored pending): token kept (as the SQL), new expiry, takes a free slot', async () => {
+    it('contact row expired (stored pending): token kept, new expiry, takes a free slot', async () => {
       const { user, contactPhone } = await readyUser();
       const circle = await createCircle(client, user);
       await insertExpiredMember(client, circle.id, { phone: contactPhone });

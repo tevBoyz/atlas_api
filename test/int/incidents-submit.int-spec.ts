@@ -9,7 +9,7 @@ import {
   type IncidentSubmittedEvent,
 } from '../../src/modules/incidents/incident-post-commit';
 import { createTestApp, type LogCapture, withTestConfig } from '../../src/testing/test-app';
-import { authHeader } from '../../src/testing/test-tokens';
+import { authHeader, testSessionId } from '../../src/testing/test-tokens';
 import { openTestClient } from '../support/database';
 import {
   addActiveMember,
@@ -19,14 +19,13 @@ import {
   inviteMember,
   type UserFixture,
 } from '../support/fixtures';
-import { countRows, submitAlert, submitAlertViaSql } from '../support/incident-api';
-import { GM_EMERGENCY_SERVICES, withoutEmergencyServices } from '../support/share-payload-shape';
+import { countRows, submitAlert } from '../support/incident-api';
+import { GM_EMERGENCY_SERVICES } from '../support/share-payload-shape';
 
 /**
- * `POST /v1/incidents` (API-100-15) beyond the SQL script: check order, status codes, re-notify and
- * promote, share payload, audit, post-commit hooks, idempotent replay, and real concurrency on
- * separate database connections. The SQL script's own assertions are in
- * `test/parity/scrum43_submit_emergency_alert.spec.ts`.
+ * `POST /v1/incidents` (API-100-15): check order, status codes, re-notify and promote, share
+ * payload, audit, post-commit hooks, idempotent replay, and real concurrency on separate database
+ * connections.
  */
 type Body = Record<string, unknown>;
 
@@ -413,7 +412,7 @@ describe('POST /v1/incidents (API-100-15)', () => {
   });
 
   describe('AC4: share payload snapshot', () => {
-    it('includes only flagged, non-blank values and matches the SQL helper', async () => {
+    it('includes only flagged, non-blank values', async () => {
       const resident = await newResident();
       await client.query(
         `update public.profiles
@@ -430,20 +429,13 @@ describe('POST /v1/incidents (API-100-15)', () => {
           where id = $1`,
         [resident.id],
       );
-      const { rows } = await client.query<{ expected: Body }>(
-        `select public._incident_share_payload(p) as expected
-           from public.profiles p where p.id = $1`,
-        [resident.id],
-      );
-
       const body = (await submitAlert(app, resident.id, 'medical')).json<Body>();
 
-      expect(body.share_payload).toEqual(rows[0].expected);
       expect(body.share_payload).toEqual({
         emergency_contact_full_name: 'Ada Contact',
         emergency_contact_phone: '+12015550199',
         blood_type: 'O+',
-        // btrim removes spaces only: the leading tab stays, as it does in the SQL function.
+        // btrim removes spaces only: the leading tab stays.
         emergency_notes: '\tgate code',
       });
     });
@@ -551,14 +543,12 @@ describe('POST /v1/incidents (API-100-15)', () => {
       expect(JSON.stringify(rows)).not.toContain('domestic_violence');
     });
 
-    it('a session id claim that is not a uuid does not fail the alert', async () => {
+    it('the audit row carries the caller’s session (the token’s sid)', async () => {
       const resident = await newResident();
-      const res = await submitAlert(app, resident.id, 'fire', randomUUID(), {
-        claims: { session_id: 'not-a-uuid' },
-      });
+      const res = await submitAlert(app, resident.id, 'fire');
       expect(res.statusCode).toBe(201);
       const rows = await auditRows(res.json<Body>().id);
-      expect(rows[0].actor_session_id).toBeNull();
+      expect(rows[0].actor_session_id).toBe(testSessionId(resident.id));
     });
 
     it('a failure inside the transaction rolls everything back and hides its detail', async () => {
@@ -755,32 +745,19 @@ describe('POST /v1/incidents (API-100-15)', () => {
       );
     });
 
-    it('API and SQL callers racing each other still open one incident', async () => {
+    it('callers released at once behind the profile lock still open one incident', async () => {
       const { resident, memberUsers } = await residentWithCircle(2);
-      const sqlClients = await Promise.all(
-        Array.from({ length: PARALLEL / 2 }, () => openTestClient()),
-      );
       const lock = await holdProfileLock(resident.id);
 
-      const api = Array.from({ length: PARALLEL / 2 }, () => httpSubmit(resident.id, 'fire'));
-      const viaSql = sqlClients.map((sqlClient) =>
-        submitAlertViaSql(sqlClient, resident.id, 'fire'),
-      );
+      const api = Array.from({ length: PARALLEL }, () => httpSubmit(resident.id, 'fire'));
       await waitForLockWaiters(PARALLEL);
       await lock.release();
-      const [apiReplies, sqlReplies] = await Promise.all([Promise.all(api), Promise.all(viaSql)]);
-      await Promise.all(sqlClients.map((sqlClient) => sqlClient.end()));
+      const apiReplies = await Promise.all(api);
 
-      const outcomes = [
-        ...apiReplies.map((reply) => reply.body.submit_outcome),
-        ...sqlReplies.map((body) => body.submit_outcome),
-      ];
+      const outcomes = apiReplies.map((reply) => reply.body.submit_outcome);
       expect(outcomes.filter((outcome) => outcome === 'created')).toHaveLength(1);
       expect(outcomes.filter((outcome) => outcome === 'renotified')).toHaveLength(PARALLEL - 1);
-      const ids = new Set([
-        ...apiReplies.map((reply) => reply.body.id),
-        ...sqlReplies.map((body) => body.id),
-      ]);
+      const ids = new Set(apiReplies.map((reply) => reply.body.id));
       expect(ids.size).toBe(1);
       const [id] = [...ids];
       expect(await openIncidents(resident.id)).toBe(1);
@@ -795,16 +772,21 @@ describe('POST /v1/incidents (API-100-15)', () => {
       ).toBe(memberUsers.length);
     });
 
-    /** Closes the incident in an open transaction, as `mark_incident_safe` does. */
+    /**
+     * Closes the incident in an open transaction as mark safe does: the resident's profile row
+     * locked first, then the incident resolved (`IncidentStateService`).
+     */
     async function closeInOpenTransaction(residentId: string, incidentId: unknown) {
       const closer = await openTestClient();
       await closer.query('begin');
+      await closer.query('select 1 from public.profiles where id = $1 for update', [residentId]);
       await closer.query(
-        `select set_config('request.jwt.claim.sub', $1, true),
-                set_config('request.jwt.claims', $2, true)`,
-        [residentId, JSON.stringify({ sub: residentId, role: 'authenticated' })],
+        `update public.incidents
+            set status = 'resolved', resolved_at = now(), resolved_reason = 'safe',
+                auto_closed = false, location_sharing_ended_at = now()
+          where id = $1 and status = 'active'`,
+        [incidentId],
       );
-      await closer.query('select public.mark_incident_safe($1)', [incidentId]);
       return closer;
     }
 
@@ -826,7 +808,7 @@ describe('POST /v1/incidents (API-100-15)', () => {
     });
 
     it('the incident row lock: a close holding only that row is seen once it commits', async () => {
-      // mark_incident_safe also blocks the profile lock (its events reference the profile), so this
+      // Mark safe also holds the profile lock (see closeInOpenTransaction), so this
       // close touches the incident row alone: the submit can only be waiting on the incident lock.
       const { resident } = await residentWithCircle(1);
       const first = (await submitAlert(app, resident.id, 'fire')).json<Body>();
@@ -869,141 +851,6 @@ describe('POST /v1/incidents (API-100-15)', () => {
         submit_outcome: 'renotified',
         emergency_type: 'fire',
       });
-    });
-  });
-
-  describe('interchangeable with the SQL function', () => {
-    /** Two residents in the same starting state. */
-    async function twins() {
-      const build = async () => {
-        const { resident, circle, memberUsers } = await residentWithCircle(2);
-        await inviteMember(client, circle);
-        await client.query(
-          `update public.profiles
-              set blood_type = 'O+', share_blood_type = true,
-                  allergies = 'Peanuts', share_allergies = false,
-                  emergency_notes = '  Side door ', emergency_notes_shareable = true
-            where id = $1`,
-          [resident.id],
-        );
-        return { resident, circle, memberUsers };
-      };
-      return { viaApi: await build(), viaSql: await build() };
-    }
-
-    /** The rows a submit wrote, without values that differ between two residents. */
-    async function writtenRows(incidentId: unknown) {
-      const { rows: incidents } = await client.query<Body>(
-        `select status, emergency_type, share_payload, location_lat, location_lng,
-                location_accuracy_m, location_captured_at, location_source, cancelled_at,
-                incident_notes, incident_notes_updated_at, renotified_at is not null as renotified,
-                resolved_at, resolved_reason, auto_closed, activity_confirmed_at,
-                location_sharing_ended_at, sent_at = activated_at as sent_at_activation,
-                updated_at = activated_at as untouched
-           from public.incidents where id = $1`,
-        [incidentId],
-      );
-      const { rows: deliveries } = await client.query<Body>(
-        `select count(*)::int as total,
-                count(acknowledged_at)::int as acknowledged,
-                bool_and(delivered_at = i.activated_at) as delivered_at_activation
-           from public.incident_deliveries d
-           join public.incidents i on i.id = d.incident_id
-          where d.incident_id = $1`,
-        [incidentId],
-      );
-      const { rows: events } = await client.query<Body>(
-        `select event_type, detail - 'recipient_ids' as detail,
-                jsonb_array_length(coalesce(detail->'recipient_ids', '[]'::jsonb)) as recipients,
-                actor_id = i.resident_id as by_resident,
-                -- Gap 59: location_sharing_started is stored at clock_timestamp(), just after
-                -- the alert (the SQL function stores now()); both count as "at activation".
-                case when e.event_type = 'location_sharing_started'
-                     then e.occurred_at >= i.activated_at
-                          and e.occurred_at < i.activated_at + interval '10 seconds'
-                     else e.occurred_at = i.activated_at end as at_activation
-           from public.incident_events e
-           join public.incidents i on i.id = e.incident_id
-          where e.incident_id = $1
-          order by event_type`,
-        [incidentId],
-      );
-      return { incident: incidents[0], deliveries, events };
-    }
-
-    /**
-     * JSON type of every value: the shape a client parses. An API body is compared without
-     * `emergency_services` (SCRUM-54, D60: checked to be the seeded list; the SQL has no such key).
-     */
-    const shapeOf = (raw: Body) => {
-      const body = 'emergency_services' in raw ? withoutEmergencyServices(raw) : raw;
-      return Object.keys(body).map((key) => {
-        const value = body[key];
-        return [key, value === null ? 'null' : typeof value];
-      });
-    };
-
-    it('create: same rows, same response keys, key order and value types', async () => {
-      const { viaApi, viaSql } = await twins();
-
-      const apiBody = (await submitAlert(app, viaApi.resident.id, 'medical')).json<Body>();
-      const sqlBody = await submitAlertViaSql(client, viaSql.resident.id, 'medical');
-
-      expect(shapeOf(apiBody)).toEqual(shapeOf(sqlBody));
-      expect(apiBody.share_payload).toEqual(sqlBody.share_payload);
-      expect(apiBody.submit_outcome).toBe(sqlBody.submit_outcome);
-      expect(apiBody.activated_at).toMatch(POSTGRES_UTC_TIMESTAMP);
-      expect(sqlBody.activated_at).toMatch(POSTGRES_UTC_TIMESTAMP);
-      expect(await writtenRows(apiBody.id)).toEqual(await writtenRows(sqlBody.id));
-    });
-
-    it('re-notify: same rows and response whichever side created the incident', async () => {
-      const { viaApi, viaSql } = await twins();
-      const apiCreated = (await submitAlert(app, viaApi.resident.id, 'fire')).json<Body>();
-      const sqlCreated = await submitAlertViaSql(client, viaSql.resident.id, 'fire');
-
-      // Crossed over: SQL re-notifies the API's incident, the API re-notifies the SQL's.
-      const sqlBody = await submitAlertViaSql(client, viaApi.resident.id, 'medical');
-      const reply = await submitAlert(app, viaSql.resident.id, 'medical');
-      const apiBody = reply.json<Body>();
-
-      expect(reply.statusCode).toBe(200);
-      expect(sqlBody.id).toBe(apiCreated.id);
-      expect(apiBody.id).toBe(sqlCreated.id);
-      expect(shapeOf(apiBody)).toEqual(shapeOf(sqlBody));
-      const normalize = async (id: unknown) => {
-        const { incident, events } = await writtenRows(id);
-        return { incident: { ...incident, untouched: null }, events };
-      };
-      expect(await normalize(apiCreated.id)).toEqual(await normalize(sqlCreated.id));
-    });
-
-    it('promote: same rows and response from a legacy activating row', async () => {
-      const { viaApi, viaSql } = await twins();
-      const legacy = (residentId: string, circleId: string) =>
-        client.query(
-          `insert into public.incidents (resident_id, circle_id, status)
-           values ($1, $2, 'activating')`,
-          [residentId, circleId],
-        );
-      await legacy(viaApi.resident.id, viaApi.circle.id);
-      await legacy(viaSql.resident.id, viaSql.circle.id);
-
-      const apiBody = (await submitAlert(app, viaApi.resident.id, 'burglary')).json<Body>();
-      const sqlBody = await submitAlertViaSql(client, viaSql.resident.id, 'burglary');
-
-      expect(apiBody.submit_outcome).toBe('promoted');
-      expect(sqlBody.submit_outcome).toBe('promoted');
-      expect(shapeOf(apiBody)).toEqual(shapeOf(sqlBody));
-      const normalize = async (id: unknown) => {
-        const { incident, deliveries, events } = await writtenRows(id);
-        return {
-          incident: { ...incident, sent_at_activation: null, untouched: null },
-          deliveries,
-          events: events.map((event) => ({ ...event, at_activation: null })),
-        };
-      };
-      expect(await normalize(apiBody.id)).toEqual(await normalize(sqlBody.id));
     });
   });
 

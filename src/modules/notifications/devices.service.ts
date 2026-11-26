@@ -7,7 +7,7 @@ import { sqlStateOf } from '../incidents/incident-transaction';
 import { type DeviceRegistration, type PushTokenStatus, pushTokenStatus } from './device-input';
 import { type DeviceTransaction, DevicesRepository } from './devices.repository';
 
-/** `auth.users` row missing: the token is valid but its user no longer exists (D16, D22). */
+/** `users` row missing: the token is valid but its user no longer exists (D16, D22). */
 const FOREIGN_KEY_VIOLATION = '23503';
 
 /**
@@ -49,9 +49,7 @@ export class DevicesService {
     const outcome = await this.run(async (tx) => {
       const written = await this.repository.register(tx, user.id, installationId, input);
       // Own sessions (API-100-56): sign-out of this session clears this device's push token.
-      if (user.issuer === 'atlas' && user.sessionId) {
-        await this.repository.linkSession(tx, user.id, user.sessionId, written.id);
-      }
+      await this.repository.linkSession(tx, user.id, user.sessionId, written.id);
       return written;
     });
     return { device_id: outcome.id, push_token_status: pushTokenStatus(outcome) };

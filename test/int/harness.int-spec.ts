@@ -64,14 +64,19 @@ describe('Test harness (API-100-13)', () => {
       await t.rollback();
     });
 
-    it('user: auth.users row and a complete profile', async () => {
+    it('user: a public.users account (confirmed phone) and a complete profile', async () => {
       const user = await createUser(t.client, { phone: true });
-      const { rows } = await t.client.query<{ phone: string; complete: boolean }>(
-        `select u.phone, p.profile_setup_completed_at is not null as complete
-           from auth.users u join public.profiles p on p.id = u.id where u.id = $1`,
+      const { rows } = await t.client.query<{
+        phone: string;
+        confirmed: boolean;
+        complete: boolean;
+      }>(
+        `select u.phone, u.phone_confirmed_at is not null as confirmed,
+                p.profile_setup_completed_at is not null as complete
+           from public.users u join public.profiles p on p.id = u.id where u.id = $1`,
         [user.id],
       );
-      expect(rows).toEqual([{ phone: user.phone!.slice(1), complete: true }]);
+      expect(rows).toEqual([{ phone: user.phone, confirmed: true, complete: true }]);
     });
 
     it('user without a profile', async () => {

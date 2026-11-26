@@ -22,7 +22,7 @@ import {
   createUser,
   type UserFixture,
 } from '../support/fixtures';
-import { markSafe, renotifyAlert, submitAlert, submitAlertViaSql } from '../support/incident-api';
+import { markSafe, renotifyAlert, submitAlert } from '../support/incident-api';
 
 /**
  * Incident notification wiring (API-100-48, D26): submit (created / promoted / renotified),
@@ -295,13 +295,6 @@ describe('incident notifications, channels disabled (the default) (API-100-48)',
     expect(after[0].n).toBe(before[0].n);
     await app.get(OutboxRelay).flush();
     expect(await queue.count()).toBeLessThanOrEqual(jobsBefore);
-  });
-
-  it('the SQL function path (today’s app) writes no outbox row: only API writes notify', async () => {
-    const { resident } = await circleWith(client, 1);
-    const result = await submitAlertViaSql(client, resident.id, 'medical');
-    expect(typeof result.id).toBe('string');
-    expect(await outboxOf(client, result.id as string)).toEqual([]);
   });
 });
 

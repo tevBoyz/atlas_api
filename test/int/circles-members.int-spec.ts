@@ -4,7 +4,7 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
-import { errorOf, listMembers, sqlAs, sqlErrorAs } from '../support/circle-api';
+import { errorOf, listMembers } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
   addActiveMember,
@@ -17,11 +17,10 @@ import {
 } from '../support/fixtures';
 
 /**
- * `GET /v1/circles/{circle_id}/members` (`list_circle_members`, API-100-25) beyond the SQL scripts:
+ * `GET /v1/circles/{circle_id}/members` (`list_circle_members`, API-100-25):
  * the check order and codes, the exact key sets of the owner and member views, `expired`, the name
  * rules (live profile name, Postgres `trim`), `avatar_url` from `SUPABASE_URL` (D12), the ordering
- * with the database collation, privacy of contact fields, and the same JSON text as the SQL function
- * for the same state and caller.
+ * with the database collation, and privacy of contact fields.
  */
 type Member = Record<string, unknown>;
 
@@ -48,7 +47,7 @@ const OWNER_ONLY_KEYS = [
 describe('circle member list (API-100-25)', () => {
   /** The app configured like the hosted project (avatar URLs from SUPABASE_URL). */
   let app: NestFastifyApplication;
-  /** The app without SUPABASE_URL (local default): avatar URLs are bare paths, as direct SQL. */
+  /** The app without SUPABASE_URL (local default): avatar URLs are bare paths. */
   let bareApp: NestFastifyApplication;
   let client: Client;
 
@@ -59,9 +58,6 @@ describe('circle member list (API-100-25)', () => {
   let decliner: UserFixture;
   let outsider: UserFixture;
   let circle: CircleFixture;
-
-  const sqlList = (userId: string, circleId: string, host?: string) =>
-    sqlAs<Member[]>(client, userId, 'public.list_circle_members($1)', [circleId], { host });
 
   beforeAll(async () => {
     ({ app } = await createTestApp(
@@ -123,7 +119,7 @@ describe('circle member list (API-100-25)', () => {
     await bareApp?.close();
   });
 
-  describe('errors, in the SQL function order', () => {
+  describe('errors, in order', () => {
     it('401 list_circle_members:not_authenticated without a token', async () => {
       const reply = await listMembers(app, null, circle.id);
       expect(reply.statusCode).toBe(401);
@@ -148,12 +144,6 @@ describe('circle member list (API-100-25)', () => {
         expect(reply.statusCode).toBe(404);
         expect(errorOf(reply).code).toBe('list_circle_members:not_found');
       }
-      expect(
-        await sqlErrorAs(client, outsider.id, 'public.list_circle_members($1)', [unknown]),
-      ).toBe('list_circle_members:not_found');
-      expect(await sqlErrorAs(client, outsider.id, 'public.list_circle_members(null)')).toBe(
-        'list_circle_members:not_found',
-      );
     });
 
     it('accepts any Postgres uuid spelling (upper case, braces, no hyphens) like the RPC argument', async () => {
@@ -168,9 +158,6 @@ describe('circle member list (API-100-25)', () => {
         const reply = await listMembers(app, user.id, circle.id);
         expect(reply.statusCode).toBe(403);
         expect(errorOf(reply).code).toBe('list_circle_members:not_authorized');
-        expect(
-          await sqlErrorAs(client, user.id, 'public.list_circle_members($1)', [circle.id]),
-        ).toBe('list_circle_members:not_authorized');
       }
     });
 
@@ -184,7 +171,6 @@ describe('circle member list (API-100-25)', () => {
       const reply = await listMembers(app, soloOwner.id, soloCircle);
       expect(reply.statusCode).toBe(200);
       expect(reply.body).toBe('[]');
-      expect(await sqlList(soloOwner.id, soloCircle)).toEqual([]);
 
       const leaver = await createUser(client, { fullName: 'Leaver' });
       const row = await addActiveMember(client, circle, leaver);
@@ -250,15 +236,10 @@ describe('circle member list (API-100-25)', () => {
       expect(byName['Eve Expired'].avatar_url).toBeNull();
     });
 
-    it('same JSON text as list_circle_members for the owner (PostgREST host = SUPABASE_URL host)', async () => {
-      expect(body).toBe(JSON.stringify(await sqlList(owner.id, circle.id, PROJECT_HOST)));
-    });
-
-    it('without SUPABASE_URL the avatar URL is the bare path, as the SQL without a Host header', async () => {
+    it('without SUPABASE_URL the avatar URL is the bare path', async () => {
       const reply = await listMembers(bareApp, owner.id, circle.id);
       const ben = reply.json<Member[]>().find((r) => r.display_name === 'Ben Profile');
       expect(ben?.avatar_url).toBe('/storage/v1/object/public/avatars/ben-id/avatar.jpg');
-      expect(reply.body).toBe(JSON.stringify(await sqlList(owner.id, circle.id)));
     });
 
     it('a profile name changes show at once on active rows (read live)', async () => {
@@ -301,7 +282,6 @@ describe('circle member list (API-100-25)', () => {
       ]) {
         expect(reply.body).not.toContain(secret as string);
       }
-      expect(reply.body).toBe(JSON.stringify(await sqlList(ben.id, circle.id, PROJECT_HOST)));
     });
   });
 
@@ -317,10 +297,9 @@ describe('circle member list (API-100-25)', () => {
       const reply = await listMembers(app, tabby.id, c.id);
       const names = reply.json<Member[]>().map((r) => r.display_name);
       expect(names).toContain('\t');
-      expect(reply.body).toBe(JSON.stringify(await sqlList(tabby.id, c.id, PROJECT_HOST)));
     });
 
-    it('lower(name) ordering follows the database collation, ties by invited_at (same text as the SQL)', async () => {
+    it('lower(name) ordering follows the database collation, ties by invited_at', async () => {
       const sorter = await createUser(client, { fullName: 'Zed Sorter' });
       const c = await createCircle(client, sorter);
       // The first four end up expired, the last five stay valid pending (at most 5 hold a slot).
@@ -345,7 +324,6 @@ describe('circle member list (API-100-25)', () => {
       }
       const reply = await listMembers(app, sorter.id, c.id);
       expect(reply.statusCode).toBe(200);
-      expect(reply.body).toBe(JSON.stringify(await sqlList(sorter.id, c.id, PROJECT_HOST)));
       const { rows } = await client.query<{ n: string }>(
         `select display_name as n from public.safety_circle_members
           where circle_id = $1 and role = 'member'

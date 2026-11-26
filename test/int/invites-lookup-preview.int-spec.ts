@@ -16,8 +16,6 @@ import {
   errorOf,
   lookupInvite,
   previewInvite,
-  sqlAs,
-  sqlRolledBack,
 } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
@@ -29,7 +27,7 @@ import {
   type UserFixture,
 } from '../support/fixtures';
 import {
-  compareWithSql,
+  callWithRows,
   insertExpiredMember,
   insertMember,
   insertOverCapacity,
@@ -77,9 +75,6 @@ describe('invite lookup and preview (API-100-29)', () => {
     const owner = await createUser(client, { fullName, phone: true });
     return { owner, circle: await createCircle(client, owner) };
   };
-
-  const sqlLookup = (token: string) =>
-    sqlAs<Body>(client, randomUUID(), 'public.lookup_circle_invite($1)', [token]);
 
   // --- GET /v1/invites/{token}/status -----------------------------------------------------------
 
@@ -141,7 +136,6 @@ describe('invite lookup and preview (API-100-29)', () => {
         const reply = await lookupInvite(app, row.token);
         expect({ name, status: reply.statusCode }).toEqual({ name, status: 200 });
         expect({ name, body: reply.json<Body>().status }).toEqual({ name, body: expected[name] });
-        expect(reply.body).toBe(JSON.stringify(await sqlLookup(row.token)));
         // Never a name, phone or id.
         expect(Object.keys(reply.json<Body>())).toEqual(['status', 'invite_expires_at']);
         for (const secret of [row.id, circle.id, owner.id, ben.id, 'Row Name', 'Ada']) {
@@ -153,8 +147,7 @@ describe('invite lookup and preview (API-100-29)', () => {
     it('blank, unknown and padded tokens; text Postgres cannot hold is 422', async () => {
       const { circle } = await ownerWithCircle();
       const row = await insertMember(client, circle.id);
-      const notFound = JSON.stringify(await sqlLookup('   '));
-      expect(notFound).toBe('{"status":"not_found","invite_expires_at":null}');
+      const notFound = '{"status":"not_found","invite_expires_at":null}';
       for (const path of ['%20', '%20%20%20', encodeURIComponent(fakeInviteToken()), 'x']) {
         const reply = await lookupInvite(app, path, { raw: true });
         expect({ path, status: reply.statusCode, body: reply.body }).toEqual({
@@ -166,7 +159,7 @@ describe('invite lookup and preview (API-100-29)', () => {
       // Trimmed (spaces only), as the SQL's trim().
       const padded = await lookupInvite(app, `%20${row.token}%20%20`, { raw: true });
       expect(padded.json<Body>().status).toBe('pending');
-      expect(padded.body).toBe(JSON.stringify(await sqlLookup(`  ${row.token} `)));
+      expect(padded.body).toBe((await lookupInvite(app, row.token)).body);
       // A tab is not trimmed by Postgres trim(): not found.
       expect((await lookupInvite(app, `%09${row.token}`, { raw: true })).json<Body>().status).toBe(
         'not_found',
@@ -294,13 +287,10 @@ describe('invite lookup and preview (API-100-29)', () => {
       circleIds: string[],
       options: { raw?: boolean } = {},
     ) =>
-      compareWithSql(client, {
+      callWithRows(client, {
         callerId: caller.id,
-        sqlCall: 'public.preview_circle_invite($1)',
-        params: [options.raw ? decodeURIComponent(token) : token],
         circleIds,
         api: () => previewInvite(app, caller.id, token, options),
-        host: PROJECT_HOST,
       });
     const previewOf = async (caller: UserFixture, token: string, circleIds: string[]) =>
       (await compare(caller, token, circleIds)).reply.json<Body>();
@@ -502,18 +492,18 @@ describe('invite lookup and preview (API-100-29)', () => {
         claimed: true,
       });
       expect((await memberRow(client, row.id)).user_id).toBe(dan.id);
-      // Auth phone with spaces around it still matches (normalized).
+      // An unconfirmed account phone never matches (D47).
       const fay = await createUser(client);
       const fayPhone = '+12015550177';
-      await client.query(`update auth.users set phone = $2 where id = $1`, [
-        fay.id,
-        `  ${fayPhone.slice(1)} `,
-      ]);
+      await client.query(
+        `update public.users set phone = $2, phone_confirmed_at = null where id = $1`,
+        [fay.id, fayPhone],
+      );
       const fayRow = await insertMember(client, circle.id, { phone: fayPhone });
       expect(await previewOf(fay, fayRow.token, [circle.id])).toMatchObject({
         status: 'pending',
-        recipient_ok: true,
-        claimed: true,
+        recipient_ok: false,
+        claimed: false,
       });
     });
 
@@ -578,7 +568,7 @@ describe('invite lookup and preview (API-100-29)', () => {
       expect(await memberRow(client, live.id)).toEqual(liveBefore);
     });
 
-    it('D41 divergence: the caller’s DECLINED row no longer blocks the claim (SQL still 409, API 200)', async () => {
+    it('D41: the caller’s DECLINED row no longer blocks the claim (200)', async () => {
       const { circle } = await ownerWithCircle();
       const dan = await createUser(client);
       // Dan already holds a (declined) row of this circle.
@@ -588,14 +578,7 @@ describe('invite lookup and preview (API-100-29)', () => {
         userId: dan.id,
       });
       const link = await insertMember(client, circle.id);
-      // The SQL function is unchanged and still refuses this case (parity assertion kept) ...
-      const sqlSide = await sqlRolledBack(client, dan.id, 'public.preview_circle_invite($1)', [
-        link.token,
-      ]);
-      expect(sqlSide.error).toBe('preview_circle_invite:duplicate_membership');
-      expect((await memberRow(client, link.id)).user_id).toBeNull();
-      // ... the API deliberately diverges (D41, approved by Dawit 2026-11-21): it releases the
-      // finished row and claims the new one.
+      // D41 (approved by Dawit 2026-11-21): the finished row is released and the new one claimed.
       const reply = await previewInvite(app, dan.id, link.token);
       expect(reply.statusCode).toBe(200);
       expect(reply.json<Body>()).toMatchObject({ status: 'pending', claimed: true });

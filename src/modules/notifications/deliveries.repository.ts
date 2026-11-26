@@ -129,8 +129,8 @@ export class DeliveriesRepository {
    * - push: one row per device of the recipient with a push token (not revoked); none → one
    *   `skipped` row `no_device`.
    * - sms / email: one row per recipient; no phone / email on the account → `skipped` `no_address`.
-   *   The phone is the account's confirmed API phone, else `auth.users.phone` (D47); the email is
-   *   still `auth.users.email`.
+   *   The phone is the account's confirmed phone and the email the account's email, both from
+   *   `public.users` (D47, D76; gap 21).
    * - a disabled channel → every row of it `skipped` `channel_disabled` (no adapter is called).
    * - a recipient who is no longer eligible → one `skipped` row `not_eligible` per channel.
    * `preferences` records the recipient's `alert_*_enabled` flags (recorded, not enforced, D4).
@@ -176,10 +176,10 @@ export class DeliveriesRepository {
                  '{}'::jsonb
                ) as preferences,
                nullif(btrim(${callerPhoneSql(sql`r.user_id`)}), '') is not null as has_phone,
-               nullif(btrim(u.email), '') is not null as has_email
+               nullif(btrim(u.email::text), '') is not null as has_email
           from recipients r
           left join public.profiles p on p.id = r.user_id
-          left join auth.users u on u.id = r.user_id
+          left join public.users u on u.id = r.user_id
       ),
       devices as (
         select d.user_id, d.id
@@ -263,12 +263,12 @@ export class DeliveriesRepository {
              case when dv.revoked_at is null then dv.push_provider end as push_provider,
              case when dv.revoked_at is null then dv.push_token end as push_token,
              nullif(btrim(${callerPhoneSql(sql`d.recipient_user_id`)}), '') as phone,
-             nullif(btrim(u.email), '') as email,
+             nullif(btrim(u.email::text), '') as email,
              p.timezone as time_zone
         from public.notification_deliveries d
         join public.notification_outbox o on o.id = d.outbox_id
         left join public.user_devices dv on dv.id = d.device_id
-        left join auth.users u on u.id = d.recipient_user_id
+        left join public.users u on u.id = d.recipient_user_id
         left join public.profiles p on p.id = d.recipient_user_id
        where d.id = ${id}::uuid`);
     return result.rows[0];

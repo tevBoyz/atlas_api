@@ -19,25 +19,13 @@ import {
   inviteMember,
   type UserFixture,
 } from '../support/fixtures';
-import {
-  callSqlAs,
-  countRows,
-  markSafe,
-  markSafeViaSql,
-  submitAlert,
-  submitAlertViaSql,
-} from '../support/incident-api';
-import {
-  withoutUnavailableSince,
-  withoutUnavailableSinceText,
-} from '../support/share-payload-shape';
+import { countRows, markSafe, submitAlert } from '../support/incident-api';
 
 /**
- * `POST /v1/incidents/{id}/mark-safe` (API-100-19) beyond the SQL scripts: check order, the
- * already-safe no-op writing nothing, the closure recipients of rule 54 (including the window case of
+ * `POST /v1/incidents/{id}/mark-safe` (API-100-19): check order, the already-safe no-op writing
+ * nothing, the closure recipients of rule 54 (including the window case of
  * membership_access_window: members who joined after the incident started are not told it closed),
- * audit and post-commit hooks, idempotency, races and the submit lock order (no deadlock), and
- * interchangeability with the SQL function `mark_incident_safe`.
+ * audit and post-commit hooks, idempotency, races and the submit lock order (no deadlock).
  */
 type Body = Record<string, unknown>;
 type Reply = Awaited<ReturnType<typeof markSafe>>;
@@ -147,18 +135,6 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
     };
   }
 
-  const viaSendJson = async (incidentId: string) => {
-    await client.query(`set timezone = 'UTC'`);
-    const { rows } = await client.query<{ body: Body }>(
-      // SCRUM-68 (D74): the SQL helper plus location_unavailable_since (jsonb orders the keys).
-      `select public._incident_send_json(i)
-              || jsonb_build_object('location_unavailable_since', i.location_unavailable_since) as body
-         from public.incidents i where i.id = $1`,
-      [incidentId],
-    );
-    return rows[0].body;
-  };
-
   const eventCount = (incidentId: string, eventType: string) =>
     countRows(
       client,
@@ -180,9 +156,7 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
 
   /**
    * Exactly one of each closure event and of the two submit events (re-notifies aside). SCRUM-63
-   * (D62, recorded divergence): `incident_closed` is checked apart: the API mark safe no longer
-   * writes it (the close sweeper does, at the real close), the SQL function still does, so it is
-   * there at most once (once when the SQL function won a race).
+   * (D62): mark safe never writes `incident_closed` (the close sweeper does, at the real close).
    */
   async function expectClosedOnce(incidentId: string) {
     const { rows } = await client.query<{ event_type: string; n: number }>(
@@ -196,7 +170,7 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
         where incident_id = $1 and event_type = 'incident_closed'`,
       [incidentId],
     );
-    expect(closedEvents.length).toBeLessThanOrEqual(1);
+    expect(closedEvents.length).toBe(0);
     expect(rows).toEqual([
       { event_type: 'alert_sent', n: 1 },
       { event_type: 'closure_notified', n: 1 },
@@ -351,20 +325,9 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
       expect(again.statusCode).toBe(200);
       expect(again.headers['idempotent-replayed']).toBeUndefined();
       expect(again.body).toBe(first.body);
-      expect(again.body).toBe(JSON.stringify(await viaSendJson(incidentId)));
       expect(await snapshot(incidentId)).toEqual(before);
       await sleep(50);
       expect(hookCalls).toEqual([]);
-    });
-
-    it('also when the SQL function closed it', async () => {
-      const { resident, incidentId } = await activeAlert(1);
-      const closed = await markSafeViaSql(client, resident.id, incidentId);
-      const before = await snapshot(incidentId);
-      const res = await markSafe(app, resident.id, incidentId);
-      expect(res.statusCode).toBe(200);
-      expect(withoutUnavailableSince(res.json<Body>())).toEqual(closed);
-      expect(await snapshot(incidentId)).toEqual(before);
     });
   });
 
@@ -384,7 +347,7 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
   });
 
   describe('AC5, AC6: the close', () => {
-    it('one transaction: columns, the four events and IncidentSend from the SQL helper', async () => {
+    it('one transaction: columns, the four events and the IncidentSend answer', async () => {
       const { resident, memberUsers, incidentId } = await activeAlert(3);
       await client.query(
         `update public.incident_deliveries set acknowledged_at = now()
@@ -401,7 +364,6 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
       const res = await markSafe(app, resident.id, incidentId);
 
       expect(res.statusCode).toBe(200);
-      expect(res.body).toBe(JSON.stringify(await viaSendJson(incidentId)));
       expect(res.json<Body>()).toMatchObject({
         id: incidentId,
         status: 'resolved',
@@ -537,24 +499,6 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
         recipient_count: 1,
         recipient_ids: [memberUsers[0].id],
       });
-    });
-
-    it('the same recipients as the SQL helper for every boundary', async () => {
-      const [a, b] = [await activeAlert(4), await activeAlert(4)];
-      for (const twin of [a, b]) {
-        const offsets = ['-1 microsecond', '0', '1 microsecond', '1 day'];
-        for (const [i, user] of twin.memberUsers.entries()) {
-          await setActivation(twin.circle.id, user.id, twin.incidentId, offsets[i]);
-        }
-      }
-      await markSafe(app, a.resident.id, a.incidentId);
-      await markSafeViaSql(client, b.resident.id, b.incidentId);
-      const positions = async (twin: typeof a) =>
-        ((await closureDetail(twin.incidentId))?.recipient_ids ?? []).map((id) =>
-          twin.memberUsers.findIndex((user) => user.id === id),
-        );
-      expect((await positions(a)).sort()).toEqual([0, 1]);
-      expect((await positions(b)).sort()).toEqual([0, 1]);
     });
   });
 
@@ -762,37 +706,6 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
       expect(replay).toEqual(done);
       await expectClosedOnce(incidentId);
     });
-
-    it('API and SQL closes racing: closed once, every caller gets the closed incident', async () => {
-      const { resident, incidentId } = await activeAlert(2);
-      const sqlClients = await Promise.all(
-        Array.from({ length: PARALLEL / 2 }, () => openTestClient()),
-      );
-      try {
-        const lock = await holdProfileLock(resident.id);
-        const api = Array.from({ length: PARALLEL / 2 }, () =>
-          httpMarkSafe(resident.id, incidentId),
-        );
-        // The SQL function locks the incident first and then waits on the profile (its events'
-        // foreign key), so start it once the API calls are queued on the profile.
-        await waitForLockWaiters(PARALLEL / 2);
-        const viaSql = sqlClients.map((sqlClient) =>
-          markSafeViaSql(sqlClient, resident.id, incidentId),
-        );
-        await waitForLockWaiters(PARALLEL);
-        await lock.release();
-        const [apiReplies, sqlReplies] = await Promise.all([Promise.all(api), Promise.all(viaSql)]);
-        expect(apiReplies.map((reply) => reply.status)).toEqual(Array(PARALLEL / 2).fill(200));
-        const stamps = new Set([
-          ...apiReplies.map((reply) => reply.body.resolved_at),
-          ...sqlReplies.map((body) => body.resolved_at),
-        ]);
-        expect(stamps.size).toBe(1);
-      } finally {
-        await Promise.all(sqlClients.map((sqlClient) => sqlClient.end()));
-      }
-      await expectClosedOnce(incidentId);
-    });
   });
 
   describe('lock order with submit (no deadlock)', () => {
@@ -816,63 +729,24 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
       await expectClosedOnce(incidentId);
     });
 
-    it('for contrast: the SQL function in the same interleaving deadlocks (40P01)', async () => {
-      // Documents why the API takes the profile lock first. Dawit decided to leave the SQL alone.
-      const { resident, incidentId } = await activeAlert(1);
-      const { holder, release } = await holdProfileLock(resident.id);
-      const closer = await openTestClient();
-      try {
-        const closing = markSafeViaSql(closer, resident.id, incidentId).then(
-          () => null,
-          (error: { code?: string }) => error.code,
-        );
-        await waitForLockWaiters(1);
-        const locking = holder
-          .query(
-            `select 1 from public.incidents
-              where resident_id = $1 and status in ('activating', 'active') for update`,
-            [resident.id],
-          )
-          .then(
-            () => null,
-            (error: { code?: string }) => error.code,
-          );
-        const codes = await Promise.all([closing, locking]);
-        expect(codes).toContain('40P01');
-      } finally {
-        await holder.query('rollback').catch(() => undefined);
-        await release().catch(() => undefined);
-        await closer.end();
-      }
-    });
-
     /**
      * One round: an open alert, then mark safe and a new submit fired together. Either the submit ran
      * first (re-notified the open alert, which the close then closed) or the close ran first (the
      * submit opened a new alert). Never an error, never two open alerts.
      */
-    async function raceRound(submitVia: 'api' | 'sql', sqlClient: Client) {
+    async function raceRound() {
       const { resident, incidentId } = await activeAlert(2);
       const [closed, submitted]: [{ status: number }, { ok: boolean; body: Body }] =
         await Promise.all([
           httpMarkSafe(resident.id, incidentId),
-          submitVia === 'api'
-            ? httpSubmit(resident.id, 'fire').then((reply) => ({
-                ok: reply.status === 200 || reply.status === 201,
-                status: reply.status,
-                body: reply.body,
-              }))
-            : submitAlertViaSql(sqlClient, resident.id, 'fire').then(
-                (body) => ({ ok: true, status: 0, body }),
-                (error: { code?: string }) => ({
-                  ok: false,
-                  status: 0,
-                  body: { sqlstate: error.code } satisfies Body,
-                }),
-              ),
+          httpSubmit(resident.id, 'fire').then((reply) => ({
+            ok: reply.status === 200 || reply.status === 201,
+            status: reply.status,
+            body: reply.body,
+          })),
         ]);
       expect(closed.status).toBe(200);
-      // On failure, shows the reply (a deadlock surfaces as 500 internal:error, or SQLSTATE 40P01).
+      // On failure, shows the reply (a deadlock surfaces as 500 internal:error).
       expect(submitted.ok ? 'ok' : JSON.stringify(submitted.body)).toBe('ok');
       await expectClosedOnce(incidentId);
       const outcome = submitted.body.submit_outcome;
@@ -893,22 +767,11 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
       return outcome as string;
     }
 
-    it.each(['api', 'sql'] as const)(
-      `mark safe racing a %s submit, ${RACE_ROUNDS} rounds: no deadlock, a correct end state`,
-      async (submitVia) => {
-        const sqlClient = await openTestClient();
-        const outcomes: string[] = [];
-        try {
-          for (let round = 0; round < RACE_ROUNDS; round++) {
-            outcomes.push(await raceRound(submitVia, sqlClient));
-          }
-        } finally {
-          await sqlClient.end();
-        }
-        expect(outcomes).toHaveLength(RACE_ROUNDS);
-      },
-      120_000,
-    );
+    it(`mark safe racing a submit, ${RACE_ROUNDS} rounds: no deadlock, a correct end state`, async () => {
+      const outcomes: string[] = [];
+      for (let round = 0; round < RACE_ROUNDS; round++) outcomes.push(await raceRound());
+      expect(outcomes).toHaveLength(RACE_ROUNDS);
+    }, 120_000);
 
     it('mark safe racing a submit queued on the profile: both orders, no deadlock', async () => {
       // Force the dangerous interleaving every time: the submit holds nothing yet, the close queues
@@ -926,107 +789,6 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
         expect([200, 201]).toContain(submitted.status);
         await expectClosedOnce(incidentId);
       }
-    });
-  });
-
-  describe('interchangeable with the SQL function', () => {
-    const comparable = (body: Body) => {
-      const copy: Body = withoutUnavailableSince({ ...body });
-      for (const key of [
-        'id',
-        'resident_id',
-        'circle_id',
-        'activated_at',
-        'sent_at',
-        'resolved_at',
-        'location_sharing_ended_at',
-      ]) {
-        copy[key] = copy[key] === null ? null : 'set';
-      }
-      return copy;
-    };
-
-    const rowsOf = async (incidentId: string) => {
-      const { rows: incident } = await client.query<Body>(
-        `select status, resolved_reason, auto_closed, emergency_type, share_payload,
-                resolved_at = location_sharing_ended_at as same_stamp,
-                resolved_at >= activated_at as after_start
-           from public.incidents where id = $1`,
-        [incidentId],
-      );
-      const { rows: events } = await client.query<Body>(
-        `select e.event_type, e.actor_id = i.resident_id as by_resident,
-                e.detail - 'recipient_ids' as detail,
-                jsonb_array_length(e.detail->'recipient_ids') as recipients,
-                e.occurred_at = i.resolved_at as at_close
-           from public.incident_events e join public.incidents i on i.id = e.incident_id
-          where e.incident_id = $1
-            and e.event_type not in ('alert_sent', 'location_sharing_started', 'incident_closed')
-          order by e.event_type`,
-        [incidentId],
-      );
-      return { incident, events };
-    };
-
-    /** SCRUM-63 (D62): `incident_closed` rows at the close (the SQL function only). */
-    const closedEventCount = async (incidentId: string) =>
-      (
-        await client.query(
-          `select 1 from public.incident_events
-            where incident_id = $1 and event_type = 'incident_closed'`,
-          [incidentId],
-        )
-      ).rows.length;
-
-    it('same rows, events and response whichever side closes', async () => {
-      const [a, b] = [await activeAlert(3), await activeAlert(3)];
-      const api = await markSafe(app, a.resident.id, a.incidentId);
-      const sql = await markSafeViaSql(client, b.resident.id, b.incidentId);
-
-      expect(comparable(api.json<Body>())).toEqual(comparable(sql));
-      expect(Object.keys(withoutUnavailableSince(api.json<Body>()))).toEqual(Object.keys(sql));
-      expect(await rowsOf(a.incidentId)).toEqual(await rowsOf(b.incidentId));
-      // SCRUM-63 (D62, recorded divergence): only the SQL function writes incident_closed here.
-      expect(await closedEventCount(a.incidentId)).toBe(0);
-      expect(await closedEventCount(b.incidentId)).toBe(1);
-      expect((await closureDetail(a.incidentId))?.recipient_ids).toEqual(
-        a.memberUsers.map((user) => user.id).sort(),
-      );
-      expect((await closureDetail(b.incidentId))?.recipient_ids).toEqual(
-        b.memberUsers.map((user) => user.id).sort(),
-      );
-    });
-
-    it('closed by the API: the SQL retry is a no-op returning the same body', async () => {
-      const { resident, incidentId } = await activeAlert(2);
-      const api = await markSafe(app, resident.id, incidentId);
-      const before = await snapshot(incidentId);
-      const sql = await callSqlAs<Body>(client, resident.id, 'public.mark_incident_safe($1)', [
-        incidentId,
-      ]);
-      expect(JSON.stringify(sql)).toBe(withoutUnavailableSinceText(api.body));
-      expect(await snapshot(incidentId)).toEqual(before);
-    });
-
-    it('errors match: not_found and not_open', async () => {
-      const legacy = await legacyIncident('cancelled');
-      const outsider = await createUser(client);
-      const outcome = async (userId: string, id: string) => {
-        const api = await markSafe(app, userId, id);
-        const sql = await callSqlAs(client, userId, 'public.mark_incident_safe($1)', [id]).then(
-          () => 'ok',
-          (error: { message: string }) => error.message,
-        );
-        return { api: errorOf(api).code, sql };
-      };
-      expect(await outcome(outsider.id, legacy.incidentId)).toEqual({
-        api: 'mark_incident_safe:not_found',
-        sql: 'mark_incident_safe:not_found',
-      });
-      expect(await outcome(legacy.resident.id, legacy.incidentId)).toEqual({
-        api: 'mark_incident_safe:not_open',
-        sql: 'mark_incident_safe:not_open',
-      });
     });
   });
 

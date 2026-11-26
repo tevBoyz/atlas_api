@@ -21,7 +21,7 @@ import {
   sendIncidentUpdate,
   submitAlert,
 } from '../support/incident-api';
-import { connectSocket, eventually, sleep, type TestSocket } from '../support/realtime-client';
+import { connectSocket, eventually, type TestSocket } from '../support/realtime-client';
 
 /**
  * SCRUM-60 (Incident Activity Feed) + SCRUM-61 (Live Incident Timeline), decision D71: a member's
@@ -305,31 +305,32 @@ describe('SCRUM-60/61 activity feed events (D71)', () => {
       for (const socket of [resident, milo, ned]) {
         expect(await socket.join(s.incidentId)).toEqual({ ok: true });
       }
-      // Each broadcast runs after its commit, not awaited by the request: wait for it before the
-      // next call so the expected order is the order of the calls.
-      const seen = (count: number) =>
-        eventually(() => {
-          for (const socket of [resident, milo, ned]) {
-            expect(socket.of('incident.event')).toHaveLength(count);
-          }
-        });
+      // Each broadcast runs after its commit, not awaited by the request: every socket waits for
+      // the event itself (gap 60: on the event, not on a fixed time) before the next call, so the
+      // expected order is the order of the calls.
+      const sockets = [resident, milo, ned];
+      const got: Body[][] = sockets.map(() => []);
+      const nextOnEach = async () => {
+        const payloads = await Promise.all(
+          sockets.map((socket) => socket.next<Body>('incident.event', 30_000)),
+        );
+        payloads.forEach((payload, i) => got[i].push(payload));
+      };
       await acknowledgeIncident(app, s.milo.id, s.incidentId);
-      await seen(1);
+      await nextOnEach();
       await respond(s.milo.id, s.incidentId, 'responding');
-      await seen(2);
+      await nextOnEach();
       await respond(s.milo.id, s.incidentId, 'unable');
-      await seen(3);
+      await nextOnEach();
 
       const keys = REALTIME_CONTRACT.server_events['incident.event'];
-      for (const socket of [resident, milo, ned]) {
-        const got: Body[] = [];
-        for (let i = 0; i < 3; i++) got.push(await socket.next<Body>('incident.event'));
-        for (const payload of got) {
+      for (const payloads of got) {
+        for (const payload of payloads) {
           expect(Object.keys(payload)).toEqual(keys.payload);
           expect(Object.keys(payload.event as Body)).toEqual(keys.event_keys);
         }
         expect(
-          got.map((p) => {
+          payloads.map((p) => {
             const e = p.event as Body;
             return [e.event_type, e.actor_name, e.detail];
           }),
@@ -340,14 +341,19 @@ describe('SCRUM-60/61 activity feed events (D71)', () => {
         ]);
       }
       // D11 per receiver: the resident and Milo himself get his id, Ned gets it masked.
-      expect((resident.of('incident.event')[0].event as Body).actor_id).toBe(s.milo.id);
-      expect((milo.of('incident.event')[0].event as Body).actor_id).toBe(s.milo.id);
-      expect((ned.of('incident.event')[0].event as Body).actor_id).toMatch(/\*{4}/);
-      // A repeat acknowledge and the same status again broadcast no event.
+      expect((got[0][0].event as Body).actor_id).toBe(s.milo.id);
+      expect((got[1][0].event as Body).actor_id).toBe(s.milo.id);
+      expect((got[2][0].event as Body).actor_id).toMatch(/\*{4}/);
+      // A repeat acknowledge and the same status again broadcast no event: a status change after
+      // them is the very next event every socket gets (a barrier, not a fixed wait).
       await acknowledgeIncident(app, s.milo.id, s.incidentId);
       await respond(s.milo.id, s.incidentId, 'unable');
-      await sleep(300);
-      expect(ned.of('incident.event')).toHaveLength(3);
+      await respond(s.milo.id, s.incidentId, 'responding');
+      for (const socket of sockets) {
+        const marker = await socket.next<Body>('incident.event', 30_000);
+        expect((marker.event as Body).detail).toEqual({ status: 'responding' });
+        expect(socket.of('incident.event')).toHaveLength(4);
+      }
     });
 
     it('a member never gets recipient_ids live; the resident does', async () => {

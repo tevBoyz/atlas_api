@@ -2,7 +2,7 @@ import { io, type Socket } from 'socket.io-client';
 
 import { REALTIME_NAMESPACE, REALTIME_PATH } from '../../src/realtime/realtime.constants';
 import type { RealtimeAck } from '../../src/realtime/realtime.gateway';
-import { signTestToken, type TestTokenOptions } from '../../src/testing/test-tokens';
+import { authHeader, type TestTokenOptions } from '../../src/testing/test-tokens';
 
 /**
  * A Socket.IO client of the realtime gateway (API-100-39 to 43) for tests: websocket only, no
@@ -37,7 +37,7 @@ export async function connectSocket(
   options: ConnectOptions = {},
 ): Promise<TestSocket> {
   const auth = options.auth ?? {
-    token: await signTestToken({ ...options, claims: { sub: userId, ...options.claims } }),
+    token: (await authHeader(userId, options)).authorization.slice('Bearer '.length),
   };
   const socket = io(`${baseUrl}${options.namespace ?? REALTIME_NAMESPACE}`, {
     path: REALTIME_PATH,
@@ -74,7 +74,8 @@ export async function connectSocket(
     socket,
     received,
     of: <T>(event: string) => received.filter(([name]) => name === event).map(([, p]) => p as T),
-    next: <T>(event: string, timeoutMs = 10_000) =>
+    // Gap 60: a generous default; the wait ends as soon as the event arrives.
+    next: <T>(event: string, timeoutMs = 30_000) =>
       new Promise<T>((resolve, reject) => {
         const queued = unread.get(event);
         if (queued?.length) {
@@ -116,10 +117,13 @@ export async function connectError(
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Waits until `check` passes (polling every 25 ms) or fails after `timeoutMs`. */
+/**
+ * Waits until `check` passes (polling every 25 ms) or fails after `timeoutMs` (generous: the wait
+ * ends as soon as it passes, so only a real failure costs the time, gap 60).
+ */
 export async function eventually(
   check: () => void | Promise<void>,
-  timeoutMs = 5_000,
+  timeoutMs = 20_000,
 ): Promise<void> {
   const started = Date.now();
   for (;;) {

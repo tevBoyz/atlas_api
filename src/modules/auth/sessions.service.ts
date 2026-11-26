@@ -165,7 +165,6 @@ export class SessionsService {
 
   /** A12: revokes the caller's own session and clears its device's push token. */
   async logout(user: AuthenticatedUser): Promise<void> {
-    if (user.issuer !== 'atlas' || !user.sessionId) return;
     const sessionId = user.sessionId;
     await runAuthTransaction(this.database, async (tx) => {
       await this.sessions.clearPushTokenOfSession(tx, sessionId);
@@ -193,7 +192,7 @@ export class SessionsService {
         {
           action: 'auth.logout_all',
           actor_user_id: user.id,
-          actor_session_id: user.issuer === 'atlas' ? user.sessionId : null,
+          actor_session_id: user.sessionId,
           target_type: 'user',
           target_id: user.id,
           detail: { sessions_revoked: revoked },
@@ -205,7 +204,7 @@ export class SessionsService {
 
   /** A19: the caller's live sessions; `current` marks the one of this access token. */
   list(user: AuthenticatedUser): Promise<SessionListEntry[]> {
-    const current = user.issuer === 'atlas' ? user.sessionId : null;
+    const current = user.sessionId;
     return runAuthTransaction(this.database, (tx) =>
       this.sessions.listLive(tx, user.id, current, this.lifetimes.idleDays),
     );
@@ -223,7 +222,7 @@ export class SessionsService {
         {
           action: 'auth.session.revoked',
           actor_user_id: user.id,
-          actor_session_id: user.issuer === 'atlas' ? user.sessionId : null,
+          actor_session_id: user.sessionId,
           target_type: 'device_session',
           target_id: sessionId,
         },

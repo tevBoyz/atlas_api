@@ -4,7 +4,7 @@ import { Body, Controller, Post } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 
 import { createTestApp } from '../../testing/test-app';
-import { authHeader } from '../../testing/test-tokens';
+import { authHeader, withTestSessions } from '../../testing/test-tokens';
 import { DomainError } from '../errors/domain-error';
 import { Operation } from '../errors/operation';
 import { idempotencyKeyOf } from './idempotency.interceptor';
@@ -133,7 +133,7 @@ describe('IdempotencyInterceptor with a fake store (API-100-10)', () => {
   beforeAll(async () => {
     auth = await authHeader(userId);
     ({ app } = await createTestApp({ controllers: [IdempotencyUnitController] }, (builder) =>
-      builder.overrideProvider(IdempotencyStore).useValue(store),
+      withTestSessions(builder).overrideProvider(IdempotencyStore).useValue(store),
     ));
   });
 

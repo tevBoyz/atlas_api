@@ -5,8 +5,9 @@
 # Jobs
 #   checks    install, lint, format check, typecheck, unit tests, baseline checksums, OpenAPI diff
 #   database  the db:* scripts against docker compose (Postgres 17.11, Supabase image + local shim,
-#             and Redis), then test:baseline, test:int and test:parity, which start their own
-#             throwaway containers through Testcontainers (API-100-13)
+#             and Redis), then test:baseline and test:int, which start their own throwaway
+#             containers through Testcontainers (API-100-13). The parity suite was retired with the
+#             old SQL backend (D76).
 #   dart      regenerates the Dart client, fails on any difference, analyzes and tests the package
 #   docker    docker build of the Dockerfile (build only, nothing is pushed)
 #   secrets   gitleaks (.gitleaks.toml + .gitleaksignore) on the commits this push / pull request adds
@@ -84,7 +85,7 @@ jobs:
           fi
 
   database:
-    name: Database, integration and parity tests
+    name: Database and integration tests
     needs: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -123,9 +124,6 @@ jobs:
 
       - name: Integration tests
         run: npm run test:int -- --ci
-
-      - name: Parity tests
-        run: npm run test:parity -- --ci
 
       - name: Service logs
         if: failure()

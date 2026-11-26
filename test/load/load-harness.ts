@@ -13,7 +13,8 @@ import type { StartedTestContainer } from 'testcontainers';
 import { applyBaseline } from '../../src/db/tooling/baseline';
 import { runMigrations } from '../../src/db/tooling/migrate';
 import { assertSafeTarget } from '../../src/db/tooling/target-guard';
-import { TEST_JWT_AUDIENCE, TEST_JWT_ISSUER } from '../../src/testing/test-auth-config';
+import { seedTestSession } from '../../src/testing/mint-test-token';
+import { throwawayAuthKeys } from '../../src/testing/test-auth-keys';
 import { signTestToken } from '../../src/testing/test-tokens';
 import { startPostgres, startRedis } from '../support/global-setup';
 
@@ -355,16 +356,16 @@ export async function withLoadStack(
     const silent = () => undefined;
     await applyBaseline(client, resolve('db/baseline'), silent);
     await runMigrations(client, resolve('db/migrations'), silent);
-    const secret = randomBytes(32).toString('hex');
+    // Own access tokens (D76): throwaway keys for this run, shared by the minter and the apps.
+    const authKeys = throwawayAuthKeys(['load-1']);
+    Object.assign(process.env, authKeys);
 
     const stack: LoadStack = {
       client,
-      token: (sub) =>
-        signTestToken({
-          secret,
-          expiresInSeconds: 3 * 3600,
-          claims: { sub, iss: TEST_JWT_ISSUER, aud: TEST_JWT_AUDIENCE },
-        }),
+      token: async (sub) => {
+        await seedTestSession(dbUrl, sub);
+        return signTestToken({ expiresInSeconds: 3 * 3600, claims: { sub } });
+      },
       startWorker: async (env) => {
         const logFile = join(work, `worker-${children.length + 1}.log`);
         const log = createWriteStream(logFile);
@@ -376,9 +377,7 @@ export async function withLoadStack(
             LOG_LEVEL: 'info',
             DATABASE_URL: dbUrl,
             REDIS_URL: redisUrl,
-            SUPABASE_JWT_SECRET: secret,
-            SUPABASE_JWT_ISSUER: TEST_JWT_ISSUER,
-            SUPABASE_JWT_AUDIENCE: TEST_JWT_AUDIENCE,
+            ...authKeys,
             ...env,
           }),
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -415,9 +414,7 @@ export async function withLoadStack(
             LOG_LEVEL: 'info',
             DATABASE_URL: dbUrl,
             REDIS_URL: redisUrl,
-            SUPABASE_JWT_SECRET: secret,
-            SUPABASE_JWT_ISSUER: TEST_JWT_ISSUER,
-            SUPABASE_JWT_AUDIENCE: TEST_JWT_AUDIENCE,
+            ...authKeys,
             ...env,
           }),
           stdio: ['ignore', 'pipe', 'pipe'],

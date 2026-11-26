@@ -192,8 +192,6 @@ export const passwordResetRequestSchema = z.object({
   device: deviceInfoSchema,
 });
 
-export const exchangeRequestSchema = z.object({ device: deviceInfoSchema });
-
 /** A16 (stage 7.1b, D38). */
 export const passwordChangeRequestSchema = z.object({
   current_password: z.string().max(1024),

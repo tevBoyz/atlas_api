@@ -25,31 +25,6 @@ export async function submitAlert(
   });
 }
 
-/** Runs the SQL function as `userId` in its own committed transaction, as PostgREST would. */
-export async function submitAlertViaSql(
-  client: Client,
-  userId: string,
-  emergencyType: string,
-): Promise<Record<string, unknown>> {
-  await client.query('begin');
-  try {
-    await client.query(
-      `select set_config('request.jwt.claim.sub', $1, true),
-              set_config('request.jwt.claims', $2, true)`,
-      [userId, JSON.stringify({ sub: userId, role: 'authenticated' })],
-    );
-    const { rows } = await client.query<{ body: Record<string, unknown> }>(
-      'select public.submit_emergency_alert($1) as body',
-      [emergencyType],
-    );
-    await client.query('commit');
-    return rows[0].body;
-  } catch (error) {
-    await client.query('rollback');
-    throw error;
-  }
-}
-
 /** `GET /v1/me/incidents/open` as `userId`. */
 export async function getOpenIncident(
   app: NestFastifyApplication,
@@ -73,34 +48,6 @@ export async function listRecentIncidents(app: NestFastifyApplication, userId: s
 }
 
 /**
- * Runs `select <call> as body` as `userId` in its own committed transaction, as PostgREST would
- * against the hosted database (session time zone UTC). E.g.
- * `callSqlAs(client, id, 'public.list_my_recent_incidents($1)', [3])`.
- */
-export async function callSqlAs<T = unknown>(
-  client: Client,
-  userId: string,
-  call: string,
-  params: unknown[] = [],
-): Promise<T> {
-  await client.query('begin');
-  try {
-    await client.query(
-      `select set_config('request.jwt.claim.sub', $1, true),
-              set_config('request.jwt.claims', $2, true),
-              set_config('TimeZone', 'UTC', true)`,
-      [userId, JSON.stringify({ sub: userId, role: 'authenticated' })],
-    );
-    const { rows } = await client.query<{ body: T }>(`select ${call} as body`, params);
-    await client.query('commit');
-    return rows[0].body;
-  } catch (error) {
-    await client.query('rollback');
-    throw error;
-  }
-}
-
-/**
  * `POST /v1/incidents/{id}/mark-safe` as `userId` (API-100-19), with a fresh Idempotency-Key unless
  * one is given (`null` sends none).
  */
@@ -119,17 +66,6 @@ export async function markSafe(
       ...(key === null ? {} : { 'idempotency-key': key }),
     },
   });
-}
-
-/**
- * `mark_incident_safe` through the SQL function, as the resident, the way today's app closes an
- * alert. For tests that prove the API and the SQL function are interchangeable; anything about the
- * API's own behaviour uses {@link markSafe}.
- */
-export function markSafeViaSql(client: Client, userId: string, incidentId: unknown) {
-  return callSqlAs<Record<string, unknown>>(client, userId, 'public.mark_incident_safe($1)', [
-    incidentId,
-  ]);
 }
 
 /**
@@ -187,86 +123,6 @@ export async function getLiveLocationConfig(app: NestFastifyApplication, userId:
   });
 }
 
-/** A SQL call's outcome: its JSON, its `fn:code` (P0001), or the SQLSTATE of any other error. */
-export type SqlOutcome =
-  { ok: true; body: Record<string, unknown> } | { ok: false; code: string; sqlState: string };
-
-/**
- * Calls an RPC the way PostgREST does: the request body (JSON text, as the app sent it) is read with
- * `json_to_record` into the function's parameter types, then the function runs as `userId` in its own
- * committed transaction (TimeZone UTC, as on the hosted database). `argColumns` are the record
- * columns in parameter order (body key and SQL type); `leading` are values placed before them (the
- * path id, as text: its uuid conversion happens in Postgres too).
- */
-export async function callAsPostgrest(
-  client: Client,
-  userId: string,
-  fn: string,
-  leading: { value: string; type: string }[],
-  argColumns: { key: string; type: string }[],
-  body: string,
-): Promise<SqlOutcome> {
-  const lead = leading.map((arg, index) => `$${index + 2}::${arg.type}`);
-  const args = [...lead, ...argColumns.map((col) => `r.${col.key}`)].join(', ');
-  const record = argColumns.map((col) => `${col.key} ${col.type}`).join(', ');
-  try {
-    const result = await callSqlAs<Record<string, unknown>>(
-      client,
-      userId,
-      `(select ${fn}(${args}) from json_to_record($1::json) as r(${record}))`,
-      [body, ...leading.map((arg) => arg.value)],
-    );
-    return { ok: true, body: result };
-  } catch (error) {
-    const { code, message } = error as { code?: string; message?: string };
-    return {
-      ok: false,
-      code: code === 'P0001' ? String(message) : `sqlstate:${code}`,
-      sqlState: String(code),
-    };
-  }
-}
-
-/** `attach_incident_location` through {@link callAsPostgrest}, with the API's body keys. */
-export function attachViaPostgrest(
-  client: Client,
-  userId: string,
-  incidentId: string,
-  body: string,
-): Promise<SqlOutcome> {
-  return callAsPostgrest(
-    client,
-    userId,
-    'public.attach_incident_location',
-    [{ value: incidentId, type: 'uuid' }],
-    [
-      { key: 'location_source', type: 'text' },
-      { key: 'location_lat', type: 'double precision' },
-      { key: 'location_lng', type: 'double precision' },
-      { key: 'location_accuracy_m', type: 'double precision' },
-      { key: 'location_captured_at', type: 'timestamptz' },
-    ],
-    body,
-  );
-}
-
-/** `set_incident_notes` through {@link callAsPostgrest}, with the API's body key. */
-export function setNotesViaPostgrest(
-  client: Client,
-  userId: string,
-  incidentId: string,
-  body: string,
-): Promise<SqlOutcome> {
-  return callAsPostgrest(
-    client,
-    userId,
-    'public.set_incident_notes',
-    [{ value: incidentId, type: 'uuid' }],
-    [{ key: 'incident_notes', type: 'text' }],
-    body,
-  );
-}
-
 /** Row count of a parameterised `select count(*)::int as n ...`. */
 export async function countRows(
   client: Client,
@@ -301,31 +157,6 @@ export async function acknowledgeIncident(
     url: `/v1/incidents/${incidentId}/acknowledge`,
     headers: await authHeader(userId),
   });
-}
-
-/**
- * Runs `select <call>` as `userId` like {@link callSqlAs}, but returns the outcome instead of
- * throwing: the JSON, or the `fn:code` (P0001) / `sqlstate:<code>` of the error.
- */
-export async function sqlOutcomeAs(
-  client: Client,
-  userId: string,
-  call: string,
-  params: unknown[] = [],
-): Promise<SqlOutcome> {
-  try {
-    return {
-      ok: true,
-      body: await callSqlAs<Record<string, unknown>>(client, userId, call, params),
-    };
-  } catch (error) {
-    const { code, message } = error as { code?: string; message?: string };
-    return {
-      ok: false,
-      code: code === 'P0001' ? String(message) : `sqlstate:${code}`,
-      sqlState: String(code),
-    };
-  }
 }
 
 /** `GET /v1/responder/incidents` as `userId` (API-100-21). */

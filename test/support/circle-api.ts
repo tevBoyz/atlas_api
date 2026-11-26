@@ -4,7 +4,7 @@ import type { Client } from 'pg';
 import { authHeader } from '../../src/testing/test-tokens';
 
 /**
- * Circle routes (API-100-24/25/31/32) and their SQL counterparts, for integration and parity tests.
+ * Circle routes (API-100-24/25/31/32), for integration tests.
  * `userId: null` sends no token.
  */
 const headersFor = async (userId: string | null) => (userId ? await authHeader(userId) : {});
@@ -186,129 +186,14 @@ export function leaveCircle(app: NestFastifyApplication, userId: string | null, 
   return postJson(app, userId, `/v1/circles/${circleId}/leave`, undefined);
 }
 
-/**
- * Runs `select <call> as body` as `userId` like {@link sqlAs}, then reads `inspect` (as the
- * migration role, same transaction) and ROLLS BACK: the SQL function's answer and its effect for a
- * state the API is then called on. `error` is the `fn:code` when the function raised.
- */
-export async function sqlRolledBack<T = unknown, R = unknown>(
-  client: Client,
-  userId: string,
-  call: string,
-  params: unknown[] = [],
-  inspect?: { statement: string; params?: unknown[] },
-  options: SqlCallOptions = {},
-): Promise<{ body?: T; error?: string; rows?: R[] }> {
-  await client.query('begin');
-  try {
-    await client.query(
-      `select set_config('request.jwt.claim.sub', $1, true),
-              set_config('request.jwt.claims', $2, true),
-              set_config('request.headers', $3, true),
-              set_config('TimeZone', 'UTC', true)`,
-      [
-        userId,
-        JSON.stringify({ sub: userId, role: 'authenticated' }),
-        JSON.stringify(options.host ? { host: options.host } : {}),
-      ],
-    );
-    await client.query('savepoint call');
-    let body: T | undefined;
-    let error: string | undefined;
-    try {
-      body = (await client.query<{ body: T }>(`select ${call} as body`, params)).rows[0].body;
-    } catch (caught) {
-      error = (caught as Error).message;
-      await client.query('rollback to savepoint call');
-    }
-    const rows = inspect
-      ? (await client.query<R & Record<string, unknown>>(inspect.statement, inspect.params ?? []))
-          .rows
-      : undefined;
-    return { body, error, rows };
-  } finally {
-    await client.query('rollback');
-  }
-}
-
-export interface SqlCallOptions {
-  /**
-   * The request `Host` header PostgREST would pass (`request.headers`), which `_avatars_public_url`
-   * turns into `https://<host>/storage/v1/object/public/avatars/...`. Without it the SQL returns the
-   * bare path (direct SQL).
-   */
-  host?: string;
-}
-
-/**
- * Runs `select <call> as body` as `userId` (role `authenticated`, JWT claims, `TimeZone` UTC) in its
- * own committed transaction, as PostgREST does on the hosted project.
- */
-export async function sqlAs<T = unknown>(
-  client: Client,
-  userId: string,
-  call: string,
-  params: unknown[] = [],
-  options: SqlCallOptions = {},
-): Promise<T> {
-  await client.query('begin');
-  try {
-    await client.query(
-      `select set_config('request.jwt.claim.sub', $1, true),
-              set_config('request.jwt.claims', $2, true),
-              set_config('request.headers', $3, true),
-              set_config('TimeZone', 'UTC', true)`,
-      [
-        userId,
-        JSON.stringify({ sub: userId, role: 'authenticated' }),
-        JSON.stringify(options.host ? { host: options.host } : {}),
-      ],
-    );
-    const { rows } = await client.query<{ body: T }>(`select ${call} as body`, params);
-    await client.query('commit');
-    return rows[0].body;
-  } catch (error) {
-    await client.query('rollback');
-    throw error;
-  }
-}
-
-/**
- * The SQL function's error message (`fn:code`) when `sqlAs` raises, else `undefined` (no error). For
- * asserting the SQL side of an error case.
- */
-export async function sqlErrorAs(
-  client: Client,
-  userId: string,
-  call: string,
-  params: unknown[] = [],
-): Promise<string | undefined> {
-  try {
-    await sqlAs(client, userId, call, params);
-    return undefined;
-  } catch (error) {
-    return (error as Error).message;
-  }
-}
-
-/**
- * The app's own-circle read through RLS, as PostgREST runs it for
- * `from('safety_circles').select().eq('owner_id', uid).maybeSingle()`: `row_to_json` of the row
- * (column order), as the `authenticated` role in UTC. Null when there is none.
- */
-export async function ownCircleViaRls(
+/** The caller's own circle row as JSON (`row_to_json`, time zone UTC), read as the table owner. */
+export async function ownCircleRow(
   client: Client,
   userId: string,
 ): Promise<Record<string, unknown> | null> {
   await client.query('begin');
   try {
-    await client.query(
-      `select set_config('request.jwt.claim.sub', $1, true),
-              set_config('request.jwt.claims', $2, true),
-              set_config('TimeZone', 'UTC', true)`,
-      [userId, JSON.stringify({ sub: userId, role: 'authenticated' })],
-    );
-    await client.query('set local role authenticated');
+    await client.query(`select set_config('TimeZone', 'UTC', true)`);
     const { rows } = await client.query<{ body: Record<string, unknown> }>(
       'select row_to_json(c) as body from public.safety_circles c where c.owner_id = $1',
       [userId],

@@ -40,8 +40,6 @@ export const FULL_CODE_STATUS: Readonly<Record<string, number>> = {
   'auth:session_expired': 401,
   'auth:refresh_token_reused': 401,
   'auth:session_not_found': 404,
-  'auth:exchange_not_allowed': 403,
-  'auth:session_already_exchanged': 409,
   'idempotency:key_mismatch': 422,
   'idempotency:in_progress': 409,
   'idempotency:key_required': 400,

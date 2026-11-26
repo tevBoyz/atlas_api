@@ -8,10 +8,8 @@ import { AccessTokenSigner } from './access-tokens';
 import { AuthLimits } from './auth-limits';
 import { AuthLinksRepository } from './auth-links.repository';
 import { AuthMessenger } from './auth-messenger';
-import { ExchangeController } from './exchange.controller';
 import { ID_TOKEN_VERIFIER, JoseIdTokenVerifier } from './id-token-verifier';
 import { JwksController } from './jwks.controller';
-import { LegacyUsers } from './legacy-users';
 import { LockoutRepository } from './lockout.repository';
 import { LoginController } from './login.controller';
 import { LoginService } from './login.service';
@@ -37,8 +35,7 @@ import { UsersRepository } from './users.repository';
 
 /**
  * Own authentication (Phase 6, spec §11.3 A1-A20): access tokens and their public keys
- * (API-100-51), sign-up and email verification (52), device sessions (56) and the users moved from
- * Supabase Auth (58). Emails and texts go through the Phase 5 channel adapters (`ChannelSenders`).
+ * (API-100-51), sign-up and email verification (52), device sessions (56). Emails and texts go through the Phase 5 channel adapters (`ChannelSenders`).
  */
 @Module({
   imports: [AuthenticationModule, AuditModule, RateLimitModule],
@@ -52,7 +49,6 @@ import { UsersRepository } from './users.repository';
     PasswordResetController,
     PasswordChangeController,
     PhoneChangeController,
-    ExchangeController,
   ],
   providers: [
     AccessTokenSigner,
@@ -64,7 +60,6 @@ import { UsersRepository } from './users.repository';
     AuthLinksRepository,
     SessionsRepository,
     SessionsService,
-    LegacyUsers,
     SignupService,
     PhoneVerifierFactory,
     {
@@ -82,6 +77,6 @@ import { UsersRepository } from './users.repository';
     PasswordChangeService,
     TestMailboxRoute,
   ],
-  exports: [AccessTokenSigner, SessionsRepository, LegacyUsers],
+  exports: [AccessTokenSigner, SessionsRepository],
 })
 export class AuthModule {}

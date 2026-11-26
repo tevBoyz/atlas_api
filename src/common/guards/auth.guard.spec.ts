@@ -4,7 +4,13 @@ import { Controller, Get, Post } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 
 import { createTestApp, type LogCapture } from '../../testing/test-app';
-import { authHeader, signTestToken } from '../../testing/test-tokens';
+import { throwawayJwk } from '../../testing/test-auth-keys';
+import {
+  authHeader,
+  signTestToken,
+  testSessionId,
+  withTestSessions,
+} from '../../testing/test-tokens';
 import { type AuthenticatedUser, CurrentUser } from '../auth/authenticated-user';
 import { TOKEN_VERIFIER, type TokenVerifier } from '../auth/token-verifier';
 import { Operation } from '../errors/operation';
@@ -43,7 +49,7 @@ describe('AuthGuard (API-100-08)', () => {
   let logs: LogCapture;
 
   beforeAll(async () => {
-    ({ app, logs } = await createTestApp({ controllers: [AuthTestController] }));
+    ({ app, logs } = await createTestApp({ controllers: [AuthTestController] }, withTestSessions));
   });
 
   afterAll(async () => {
@@ -61,16 +67,14 @@ describe('AuthGuard (API-100-08)', () => {
   describe('valid token', () => {
     it('runs the handler with the caller from sub (AC3)', async () => {
       const sub = randomUUID();
-      const sessionId = randomUUID();
-      const res = await submit(await authHeader(sub, { claims: { session_id: sessionId } }));
+      const res = await submit(await authHeader(sub));
       expect(res.statusCode).toBe(201);
-      expect(res.json()).toEqual({ user_id: sub, session_id: sessionId });
+      expect(res.json()).toEqual({ user_id: sub, session_id: testSessionId(sub) });
     });
 
-    it('does not need any database row (no auth.users / profiles lookup)', async () => {
-      // Unit tests run without a database: a valid token for an unknown user still passes.
-      const res = await submit(await authHeader(randomUUID()));
-      expect(res.statusCode).toBe(201);
+    it('refuses a token whose session is not live (API-100-51 AC3)', async () => {
+      const res = await submit(await authHeader(randomUUID(), { claims: { sid: randomUUID() } }));
+      expect401(res, 'submit_emergency_alert:not_authenticated');
     });
   });
 
@@ -97,7 +101,7 @@ describe('AuthGuard (API-100-08)', () => {
     });
 
     it('bad signature', async () => {
-      const token = await signTestToken({ secret: 'y'.repeat(40) });
+      const token = await signTestToken({ jwk: throwawayJwk(process.env.AUTH_JWT_ACTIVE_KID!) });
       expect401(
         await submit({ authorization: `Bearer ${token}` }),
         'submit_emergency_alert:not_authenticated',
@@ -112,8 +116,8 @@ describe('AuthGuard (API-100-08)', () => {
       );
     });
 
-    it('anon role', async () => {
-      const token = await signTestToken({ claims: { role: 'anon' } });
+    it('a Supabase-style token (retired, D76)', async () => {
+      const token = await signTestToken({ typ: 'JWT', claims: { role: 'authenticated' } });
       expect401(
         await submit({ authorization: `Bearer ${token}` }),
         'submit_emergency_alert:not_authenticated',

@@ -12,6 +12,7 @@ import {
 import { IncidentDeliveriesRepository } from '../../src/modules/incidents/incident-deliveries.repository';
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
 import { authHeader } from '../../src/testing/test-tokens';
+import { leaveCircle, removeMember } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
   addActiveMember,
@@ -24,22 +25,17 @@ import {
 } from '../support/fixtures';
 import {
   acknowledgeIncident,
-  callSqlAs,
   countRows,
   getDeliveryCounts,
-  markSafeViaSql,
-  type SqlOutcome,
-  sqlOutcomeAs,
+  markSafe,
   submitAlert,
-  submitAlertViaSql,
 } from '../support/incident-api';
 
 /**
  * `GET /v1/incidents/{id}/delivery-counts` and `POST /v1/incidents/{id}/acknowledge` (API-100-20)
- * beyond the SQL scripts: who sees the counts (incident.countsView, rule 54), the acknowledge check
- * order, idempotency, audit and the post-commit hook, interchangeability with the SQL functions
- * `incident_delivery_counts` / `acknowledge_incident`, races on separate connections (no 40P01), the
- * query plan and p99 of the 2 s counts poll.
+ * : who sees the counts (incident.countsView, rule 54), the acknowledge check order, idempotency,
+ * audit and the post-commit hook, races on separate connections (no 40P01), the query plan and p99
+ * of the 2 s counts poll.
  */
 type Body = Record<string, unknown>;
 type Reply = Awaited<ReturnType<typeof getDeliveryCounts>>;
@@ -147,15 +143,6 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
       [incidentId],
     );
 
-  /** The API reply as a {@link SqlOutcome}, to compare with the SQL function's. */
-  const outcomeOf = (reply: Reply): SqlOutcome =>
-    reply.statusCode === 200
-      ? { ok: true, body: reply.json<Body>() }
-      : { ok: false, code: errorOf(reply).code, sqlState: 'P0001' };
-
-  const strip = (o: SqlOutcome) =>
-    o.ok ? { ok: true, body: o.body } : { ok: false, code: o.code };
-
   async function httpAck(userId: string, incidentId: string) {
     const response = await fetch(`${baseUrl}/v1/incidents/${incidentId}/acknowledge`, {
       method: 'POST',
@@ -234,7 +221,7 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
 
     it('resident sees any status; a member sees active only', async () => {
       const s = await scene(1);
-      await markSafeViaSql(client, s.resident.id, s.incidentId);
+      expect((await markSafe(app, s.resident.id, s.incidentId)).statusCode).toBe(200);
       const resident = await getDeliveryCounts(app, s.resident.id, s.incidentId);
       expect(resident.json()).toMatchObject({ status: 'resolved', delivered_count: 1 });
       const member = await getDeliveryCounts(app, s.members[0].id, s.incidentId);
@@ -272,35 +259,12 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
           body: unknown.body,
         });
       }
-      // Removed (hard delete, as remove_circle_member does): nothing any more.
-      await callSqlAs(client, s.resident.id, 'public.remove_circle_member($1)', [
-        s.memberRows[0].id,
-      ]);
+      // Removed (D44: the row ends as `removed`): nothing any more.
+      expect(
+        (await removeMember(app, s.resident.id, s.circle.id, s.memberRows[0].id)).statusCode,
+      ).toBe(200);
       const removed = await getDeliveryCounts(app, s.members[0].id, s.incidentId);
       expect(removed.body).toBe(unknown.body);
-    });
-
-    it('interchangeable with incident_delivery_counts for every caller', async () => {
-      const s = await scene(2);
-      await acknowledgeIncident(app, s.members[1].id, s.incidentId);
-      const joiner = await lateJoinerWithStrayRow(s);
-      const outsider = await createUser(client);
-      const callers = [s.resident, s.members[0], s.members[1], joiner, outsider];
-      for (const caller of callers) {
-        const api = outcomeOf(await getDeliveryCounts(app, caller.id, s.incidentId));
-        const sql = await sqlOutcomeAs(client, caller.id, 'public.incident_delivery_counts($1)', [
-          s.incidentId,
-        ]);
-        expect(strip(api)).toEqual(strip(sql));
-      }
-      const unknownId = '00000000-0000-4000-8000-000000000001';
-      expect(strip(outcomeOf(await getDeliveryCounts(app, outsider.id, unknownId)))).toEqual(
-        strip(
-          await sqlOutcomeAs(client, outsider.id, 'public.incident_delivery_counts($1)', [
-            unknownId,
-          ]),
-        ),
-      );
     });
 
     it('the 2 s poll fits the default authenticated rate limit (60 polls in a row: all 200)', async () => {
@@ -379,10 +343,10 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
       const outsider = await createUser(client);
       const pending = await createUser(client);
       await inviteMember(client, s.circle, { claimedBy: pending });
-      await callSqlAs(client, s.resident.id, 'public.remove_circle_member($1)', [
-        s.memberRows[0].id,
-      ]);
-      await callSqlAs(client, s.members[1].id, 'public.leave_safety_circle($1)', [s.circle.id]);
+      expect(
+        (await removeMember(app, s.resident.id, s.circle.id, s.memberRows[0].id)).statusCode,
+      ).toBe(200);
+      expect((await leaveCircle(app, s.members[1].id, s.circle.id)).statusCode).toBe(200);
       const unknown = await acknowledgeIncident(
         app,
         outsider.id,
@@ -404,7 +368,7 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
     it('not_open after close; not_found wins over not_open', async () => {
       const s = await scene(1);
       const joiner = await lateJoinerWithStrayRow(s);
-      await markSafeViaSql(client, s.resident.id, s.incidentId);
+      expect((await markSafe(app, s.resident.id, s.incidentId)).statusCode).toBe(200);
       const member = await acknowledgeIncident(app, s.members[0].id, s.incidentId);
       expect(member.statusCode).toBe(409);
       expect(errorOf(member).code).toBe('acknowledge_incident:not_open');
@@ -413,71 +377,14 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
       expect((await deliveryRow(s.incidentId, s.members[0].id)).acknowledged_at).toBeNull();
     });
 
-    it('legacy statuses inside the window are not_open, as the SQL function says', async () => {
+    it('legacy statuses inside the window are not_open', async () => {
       const s = await scene(1);
       await client.query(
         `update public.incidents set status = 'activating', sent_at = null where id = $1`,
         [s.incidentId],
       );
       const api = await acknowledgeIncident(app, s.members[0].id, s.incidentId);
-      const sql = await sqlOutcomeAs(client, s.members[0].id, 'public.acknowledge_incident($1)', [
-        s.incidentId,
-      ]);
       expect(errorOf(api).code).toBe('acknowledge_incident:not_open');
-      expect(strip(sql)).toEqual({ ok: false, code: 'acknowledge_incident:not_open' });
-    });
-
-    it('interchangeable with acknowledge_incident: same rows, bodies and errors either side', async () => {
-      const [a, b] = [await scene(2), await scene(2)];
-      const api = await acknowledgeIncident(app, a.members[0].id, a.incidentId);
-      const sql = await callSqlAs<Body>(
-        client,
-        b.members[0].id,
-        'public.acknowledge_incident($1)',
-        [b.incidentId],
-      );
-      expect({ ...api.json<Body>(), incident_id: 'x' }).toEqual({ ...sql, incident_id: 'x' });
-      const stampsEqualNow = async (incidentId: string) =>
-        countRows(
-          client,
-          `select count(*)::int as n from public.incident_deliveries
-            where incident_id = $1 and acknowledged_at is not null`,
-          [incidentId],
-        );
-      expect(await stampsEqualNow(a.incidentId)).toBe(await stampsEqualNow(b.incidentId));
-
-      // Acked through SQL, repeated through the API: no write, and no audit (nothing changed).
-      const before = await deliveryRow(b.incidentId, b.members[0].id);
-      const repeat = await acknowledgeIncident(app, b.members[0].id, b.incidentId);
-      expect(repeat.body).toBe(JSON.stringify(sql));
-      expect(await deliveryRow(b.incidentId, b.members[0].id)).toEqual(before);
-      expect(await ackAudits(b.incidentId)).toBe(0);
-
-      // Acked through the API, repeated through SQL: the same body, no write.
-      const beforeA = await deliveryRow(a.incidentId, a.members[0].id);
-      const sqlRepeat = await callSqlAs<Body>(
-        client,
-        a.members[0].id,
-        'public.acknowledge_incident($1)',
-        [a.incidentId],
-      );
-      expect(JSON.stringify(sqlRepeat)).toBe(api.body);
-      expect(await deliveryRow(a.incidentId, a.members[0].id)).toEqual(beforeA);
-
-      // Errors, caller by caller.
-      const outsider = await createUser(client);
-      const joiner = await lateJoinerWithStrayRow(a);
-      await markSafeViaSql(client, b.resident.id, b.incidentId);
-      for (const [caller, id] of [
-        [outsider.id, a.incidentId],
-        [joiner.id, a.incidentId],
-        [a.resident.id, a.incidentId],
-        [b.members[1].id, b.incidentId],
-      ] as const) {
-        const viaApi = outcomeOf(await acknowledgeIncident(app, caller, id));
-        const viaSql = await sqlOutcomeAs(client, caller, 'public.acknowledge_incident($1)', [id]);
-        expect(strip(viaApi)).toEqual(strip(viaSql));
-      }
     });
 
     it('a failure inside the transaction rolls back the ack and the audit, and runs no hook', async () => {
@@ -497,116 +404,58 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
   describe('races on separate connections (zero 40P01)', () => {
     const isDeadlock = (x: unknown) => JSON.stringify(x).includes('40P01');
 
-    async function sqlAck(sqlClient: Client, userId: string, incidentId: string) {
-      return sqlOutcomeAs(sqlClient, userId, 'public.acknowledge_incident($1)', [incidentId]);
-    }
-
-    it.each([
-      ['api ack', 'api mark safe'],
-      ['api ack', 'sql mark safe'],
-      ['sql ack', 'api mark safe'],
-    ] as const)(
-      `%s racing %s, ${RACE_ROUNDS} rounds`,
-      async (ackVia, closeVia) => {
-        const [ackClient, closeClient] = [await openTestClient(), await openTestClient()];
-        try {
-          for (let round = 0; round < RACE_ROUNDS; round++) {
-            const s = await scene(2);
-            const member = s.members[round % 2];
-            const [acked, closed] = await Promise.all([
-              ackVia === 'api ack'
-                ? httpAck(member.id, s.incidentId).then((r) =>
-                    r.status === 200
-                      ? { ok: true, body: r.body }
-                      : {
-                          ok: false,
-                          code: (r.body.error as { code: string }).code,
-                          sqlState: String(r.status),
-                        },
-                  )
-                : sqlAck(ackClient, member.id, s.incidentId),
-              closeVia === 'api mark safe'
-                ? httpPost(`/v1/incidents/${s.incidentId}/mark-safe`, s.resident.id, randomUUID())
-                : markSafeViaSql(closeClient, s.resident.id, s.incidentId).then(
-                    (body) => ({ status: 200, body }),
-                    (error: { code?: string }) => ({ status: 0, body: { sqlstate: error.code } }),
-                  ),
-            ]);
-            expect(isDeadlock(acked) || isDeadlock(closed)).toBe(false);
-            expect(closed.status).toBe(200);
-            const row = await deliveryRow(s.incidentId, member.id);
-            if (acked.ok) {
-              // Read the incident before the close committed: acknowledged, like the SQL function.
-              expect(row.acknowledged_at).not.toBeNull();
-            } else {
-              expect(acked.code).toBe('acknowledge_incident:not_open');
-              expect(row.acknowledged_at).toBeNull();
-            }
-            const status = await countRows(
-              client,
-              `select count(*)::int as n from public.incidents where id = $1 and status = 'resolved'`,
-              [s.incidentId],
-            );
-            expect(status).toBe(1);
-          }
-        } finally {
-          await Promise.all([ackClient.end(), closeClient.end()]);
+    it(`ack racing mark safe, ${RACE_ROUNDS} rounds`, async () => {
+      for (let round = 0; round < RACE_ROUNDS; round++) {
+        const s = await scene(2);
+        const member = s.members[round % 2];
+        const [acked, closed] = await Promise.all([
+          httpAck(member.id, s.incidentId).then((r) =>
+            r.status === 200
+              ? { ok: true, body: r.body }
+              : {
+                  ok: false,
+                  code: (r.body.error as { code: string }).code,
+                  sqlState: String(r.status),
+                },
+          ),
+          httpPost(`/v1/incidents/${s.incidentId}/mark-safe`, s.resident.id, randomUUID()),
+        ]);
+        expect(isDeadlock(acked) || isDeadlock(closed)).toBe(false);
+        expect(closed.status).toBe(200);
+        const row = await deliveryRow(s.incidentId, member.id);
+        if (acked.ok) {
+          // Read the incident before the close committed: acknowledged.
+          expect(row.acknowledged_at).not.toBeNull();
+        } else {
+          expect(acked.code).toBe('acknowledge_incident:not_open');
+          expect(row.acknowledged_at).toBeNull();
         }
-      },
-      120_000,
-    );
+        const status = await countRows(
+          client,
+          `select count(*)::int as n from public.incidents where id = $1 and status = 'resolved'`,
+          [s.incidentId],
+        );
+        expect(status).toBe(1);
+      }
+    }, 120_000);
 
-    it.each([
-      ['api ack', 'api renotify'],
-      ['api ack', 'sql renotify'],
-      ['sql ack', 'api renotify'],
-      ['api ack', 'api submit (re-notify)'],
-      ['sql ack', 'sql submit (re-notify)'],
-    ] as const)(
-      `%s racing %s, ${RACE_ROUNDS} rounds: both succeed`,
-      async (ackVia, renotifyVia) => {
-        const [ackClient, renotifyClient] = [await openTestClient(), await openTestClient()];
-        try {
-          for (let round = 0; round < RACE_ROUNDS; round++) {
-            const s = await scene(2);
-            const member = s.members[round % 2];
-            const [acked, renotified] = await Promise.all([
-              ackVia === 'api ack'
-                ? httpAck(member.id, s.incidentId)
-                : sqlAck(ackClient, member.id, s.incidentId).then((o) => ({
-                    status: o.ok ? 200 : 0,
-                    body: o as unknown as Body,
-                  })),
-              renotifyVia === 'api renotify'
-                ? httpPost(`/v1/incidents/${s.incidentId}/renotify`, s.resident.id)
-                : renotifyVia === 'sql renotify'
-                  ? callSqlAs<Body>(
-                      renotifyClient,
-                      s.resident.id,
-                      'public.renotify_emergency_alert($1)',
-                      [s.incidentId],
-                    ).then(
-                      (body) => ({ status: 200, body }),
-                      (error: { code?: string }) => ({ status: 0, body: { sqlstate: error.code } }),
-                    )
-                  : renotifyVia === 'api submit (re-notify)'
-                    ? httpSubmit(s.resident.id)
-                    : submitAlertViaSql(renotifyClient, s.resident.id, 'fire').then(
-                        (body) => ({ status: 200, body }),
-                        (error: { code?: string }) => ({
-                          status: 0,
-                          body: { sqlstate: error.code },
-                        }),
-                      ),
-            ]);
-            expect(isDeadlock(acked) || isDeadlock(renotified)).toBe(false);
-            expect(acked.status).toBe(200);
-            expect(renotified.status).toBe(200);
-            expect((await deliveryRow(s.incidentId, member.id)).acknowledged_at).not.toBeNull();
-            expect(await ackAudits(s.incidentId)).toBe(ackVia === 'api ack' ? 1 : 0);
-          }
-        } finally {
-          await Promise.all([ackClient.end(), renotifyClient.end()]);
+    it.each(['renotify', 'submit (re-notify)'] as const)(
+      `ack racing %s, ${RACE_ROUNDS} rounds: both succeed`,
+      async (renotifyVia) => {
+        for (let round = 0; round < RACE_ROUNDS; round++) {
+          const s = await scene(2);
+          const member = s.members[round % 2];
+          const [acked, renotified] = await Promise.all([
+            httpAck(member.id, s.incidentId),
+            renotifyVia === 'renotify'
+              ? httpPost(`/v1/incidents/${s.incidentId}/renotify`, s.resident.id)
+              : httpSubmit(s.resident.id),
+          ]);
+          expect(isDeadlock(acked) || isDeadlock(renotified)).toBe(false);
+          expect(acked.status).toBe(200);
+          expect(renotified.status).toBe(200);
+          expect((await deliveryRow(s.incidentId, member.id)).acknowledged_at).not.toBeNull();
+          expect(await ackAudits(s.incidentId)).toBe(1);
         }
       },
       120_000,
@@ -669,17 +518,15 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
     });
 
     it('member removed while acknowledging: either acked then removed, or not_found; never an error', async () => {
-      const sqlClient = await openTestClient();
       const outcomes = new Set<string>();
-      try {
+      {
         for (let round = 0; round < RACE_ROUNDS; round++) {
           const s = await scene(1);
-          const [acked] = await Promise.all([
+          const [acked, removed] = await Promise.all([
             httpAck(s.members[0].id, s.incidentId),
-            callSqlAs(sqlClient, s.resident.id, 'public.remove_circle_member($1)', [
-              s.memberRows[0].id,
-            ]),
+            removeMember(app, s.resident.id, s.circle.id, s.memberRows[0].id),
           ]);
+          expect(removed.statusCode).toBe(200);
           if (acked.status === 200) outcomes.add('acked');
           else {
             expect(acked.status).toBe(404);
@@ -688,11 +535,9 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
             );
             outcomes.add('not_found');
           }
-          // Either way the delivery row went with the member row (on delete cascade).
+          // Either way the delivery row went with the membership (D44: deleted by the remove).
           expect(await deliveryRow(s.incidentId, s.members[0].id)).toBeUndefined();
         }
-      } finally {
-        await sqlClient.end();
       }
       expect(outcomes.size).toBeGreaterThan(0);
     }, 120_000);
@@ -717,9 +562,8 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
       // Realistic volume around the measured incident (load fixtures stay in this container).
       await client.query(
         `with users as (
-           insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
-           select '00000000-0000-0000-0000-000000000000', gen_random_uuid(), 'authenticated',
-                  'authenticated', 'load-' || gen_random_uuid() || '@example.test', now(), now()
+           insert into public.users (id, email)
+           select gen_random_uuid(), 'load-' || gen_random_uuid() || '@example.test'
              from generate_series(1, 400)
            returning id),
          profiles as (

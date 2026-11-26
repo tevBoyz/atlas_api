@@ -240,8 +240,6 @@ export const PARITY_ERROR_CODES = {
     'session_expired',
     'refresh_token_reused',
     'session_not_found',
-    'exchange_not_allowed',
-    'session_already_exchanged',
   ],
 
   // §11.2 / §11.3 E1 Idempotency-Key (enforced by API-100-10; `invalid_key` from its AC3)

@@ -16,11 +16,11 @@ import { createCircle, createUser, type UserFixture } from '../support/fixtures'
 import { insertMember, memberRow } from '../support/invite-rows';
 
 /**
- * Gap 16 (D47): phone invitations match the caller's phone read from the API's own account
- * (`public.users.phone` with `phone_confirmed_at` set), falling back to `auth.users.phone` for
- * migrated / Supabase accounts. An API-signup account (no `auth.users` row) with a confirmed phone
- * sees, previews, accepts and declines a phone invite; an unconfirmed phone never matches; a
- * migrated account keeps matching its `auth.users` phone; a phone changed through the API wins.
+ * Gap 16 (D47), D76: phone invitations match the caller's phone read from the API's own account
+ * only (`public.users.phone` with `phone_confirmed_at` set); Supabase's `auth.users` is never read.
+ * An account with a confirmed phone sees, previews, accepts and declines a phone invite; an
+ * unconfirmed phone never matches; a phone left only in `auth.users` never matches; after a phone
+ * change only the new phone matches.
  */
 type Body = Record<string, unknown>;
 
@@ -46,8 +46,8 @@ describe('phone invites for API accounts (gap 16, D47)', () => {
   });
 
   /**
-   * An account created by the API's own auth (Phase 6): a `public.users` row only (no
-   * `auth.users` row), with a complete profile. `confirmed` sets `phone_confirmed_at`.
+   * An account created by the API's own auth (Phase 6): a `public.users` row with a complete
+   * profile. `confirmed` sets `phone_confirmed_at`.
    */
   const apiUser = async (phone: string, confirmed: boolean): Promise<UserFixture> => {
     const id = randomUUID();
@@ -66,8 +66,6 @@ describe('phone invites for API accounts (gap 16, D47)', () => {
                '+12015550199', 'Unknown', now(), now())`,
       [id],
     );
-    const auth = await client.query('select 1 from auth.users where id = $1', [id]);
-    expect(auth.rowCount).toBe(0);
     return { id, email, phone, fullName: 'Api Person' };
   };
 
@@ -148,27 +146,27 @@ describe('phone invites for API accounts (gap 16, D47)', () => {
     expect((await invitesOf(user)).map((x) => x.member_id)).toEqual([row.id]);
   });
 
-  it('migrated accounts are unchanged: the auth.users phone still matches', async () => {
+  it('D76: a phone held only by Supabase’s auth.users is never read (no match, no claim)', async () => {
     const phone = phoneNumber();
-    const migrated = await createUser(client, { phone });
-    // An `auth.users` phone stored without "+" and with spaces, the `public.users` copy dropped
-    // (e.g. a duplicate at migration): the fallback still finds it.
-    await client.query(`update auth.users set phone = $2 where id = $1`, [
-      migrated.id,
-      `  ${phone.slice(1)} `,
-    ]);
+    const user = await createUser(client);
+    // The account has no phone; an `auth.users` row of the same id holds one (as a Supabase-era
+    // account could): the API must not see it.
     await client.query(
-      'update public.users set phone = null, phone_confirmed_at = null where id = $1',
-      [migrated.id],
+      `insert into auth.users (instance_id, id, aud, role, email, phone, phone_confirmed_at,
+                               created_at, updated_at)
+       values ('00000000-0000-0000-0000-000000000000', $1, 'authenticated', 'authenticated',
+               $2, $3, now(), now(), now())`,
+      [user.id, user.email, phone.slice(1)],
     );
     const circle = await newCircle();
     const row = await insertMember(client, circle.id, { phone });
-    expect((await invitesOf(migrated)).map((x) => x.member_id)).toEqual([row.id]);
-    const accept = await acceptInvite(app, migrated.id, row.token);
-    expect(accept.statusCode).toBe(200);
+    expect(await invitesOf(user)).toEqual([]);
+    expect((await memberRow(client, row.id)).user_id).toBeNull();
+    const preview = await previewInvite(app, user.id, row.token);
+    expect(preview.json()).toMatchObject({ recipient_ok: false });
   });
 
-  it('a phone changed through the API wins over the old auth.users phone', async () => {
+  it('after a phone change only the new confirmed phone matches', async () => {
     const oldPhone = phoneNumber();
     const newPhone = phoneNumber();
     const user = await createUser(client, { phone: oldPhone });

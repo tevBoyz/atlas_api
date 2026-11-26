@@ -27,16 +27,18 @@ Plain SQL migrations owned by the Atlas API, applied **after** the Supabase base
 | `0020_incident_events_status_update.sql` | SCRUM-44/59 (D70) | `incident_events_type_allowed` widened: `status_update` (the resident's status update, detail `{preset}` or `{text}`; may repeat, so not in the once-per-incident index). Written only by the API |
 | `0021_incident_events_responder.sql` | SCRUM-60/61 (D71) | `incident_events_type_allowed` widened: `responder_acknowledged` (a member's first acknowledge, detail `{}`) and `responder_status` (a member's response status change, detail `{status}`); both repeat per incident, so not in the once-per-incident index. Written only by the API |
 | `0022_notification_deliveries_final_at.sql` | SCRUM-65/66/67/71 (D73) | `notification_deliveries.final_at` (timestamptz, nullable): when the row became final (sent/delivered = `sent_at`; failed/skipped = then); existing final rows back-filled `coalesce(sent_at, updated_at)`; check `notification_deliveries_final_at_shape` (null exactly while `queued`); BEFORE trigger `notification_deliveries_fill_final_at` fills it for a writer that does not set it (older build). `incident_deliveries.delivery_failed_notified_at` (timestamptz, nullable): the resident was told this member did not receive the alert (once per member per incident). Written only by the API worker |
+| `0023_incident_location_unavailable_since.sql` | SCRUM-68 (D74) | `incidents.location_unavailable_since` (timestamptz, nullable): since when live location is reported unavailable; check `incidents_location_unavailable_since_shape` (set only with a stored `location_source`). An `unavailable` report keeps the last known fix and sets it; the next fix clears it |
 | `0024_support_incident_audit_view.sql` | SCRUM-74 (D75) | read-only view `support_incident_audit` (security_invoker): every `audit_log` row with `target_type = 'incident'` in time order, with the incident's resident id and name, circle id, emergency type and status; ids and names only (no coordinates, notes, share payloads, phone numbers, tokens or client IP); no privilege for `anon` / `authenticated`. Support reads it in the SQL editor (runbook §2.8) |
+| `0025_drop_legacy_sql.sql` | Stage 1 (D76) | **non-additive (approved):** drops the 18 RLS policies of the old app's direct access (RLS stays enabled), the 69 Supabase-era `public` SQL functions (the 14 trigger / table-plumbing functions stay) and the 0004 `app_config` row `client_incidents_backend`; self-check at the end; rollback `db/rollback/0025_down.sql` (run it before `0012_down.sql`) |
 
 - File name: `<number>_<snake_case_description>.sql`, e.g. `0001_audit_log.sql`. Applied in number
   order; the id recorded is the file name without `.sql`.
 - Each file runs in its own transaction and is recorded in
   `public.api_schema_migrations (id text primary key, applied_at timestamptz)`.
-- **Additive and backward compatible only** (new tables, new nullable columns, new indexes): the
-  mobile app and the Supabase SQL functions share this database until cutover (AGENTS.md rule 4).
-  The one approved exception is `0012` (API-100-62, D42), which ships with a tested rollback script
-  in `db/rollback/`.
+- **Additive and backward compatible** (new tables, new nullable columns, new indexes), so a deploy
+  never breaks a running build (AGENTS.md rule 4). The approved exceptions are `0012` (API-100-62,
+  D42) and `0025` (D76, the old SQL backend removed), each with a tested rollback script in
+  `db/rollback/`. Migrations no longer need to keep the old SQL functions working (they are gone).
 - Never edit a migration that has been applied anywhere; add a new one.
 - Re-runnable on a fresh database after the baseline (epic §5, definition of done 5).
 - Do not write `create index concurrently` (it cannot run inside a transaction).
@@ -47,17 +49,8 @@ Plain SQL migrations owned by the Atlas API, applied **after** the Supabase base
   `api_schema_migrations`. `npm run build` records the ids in `dist/migrations-manifest.json` (the
   Docker image ships that list, not this folder), so rebuild after adding a migration.
 
-## The incidents backend switch (`0004`)
+## The incidents backend switch (`0004`, removed by `0025`)
 
-`public.app_config` key `client_incidents_backend` chooses the backend of the mobile app's incident
-area (docs/phase1_handoff.md section 5). The row exists from `0004` with the value `"supabase"`
-(JSON string). Values: `"supabase"` (the SQL RPCs) or `"api"` (this API). Signed-in users can read
-it through the existing `app_config` SELECT policy; they cannot write it. Flip it as the service
-role / `postgres`:
-
-```sql
-update public.app_config set value = '"api"'::jsonb where key = 'client_incidents_backend';
-update public.app_config set value = '"supabase"'::jsonb where key = 'client_incidents_backend'; -- rollback
-```
-
-Re-running `0004` never resets a value ops already set (`on conflict do nothing`).
+`0004` seeded the `app_config` row `client_incidents_backend` (`"supabase"` / `"api"`), the Phase 1
+per-area rollback switch (docs/phase1_handoff.md section 5). D13 made it unused (one switch at the
+end) and `0025` (D76) deletes the row; `db/rollback/0025_down.sql` restores it with `"supabase"`.

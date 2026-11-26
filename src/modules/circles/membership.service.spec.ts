@@ -14,8 +14,7 @@ import { MembershipOperationFailedError, MembershipService } from './membership.
 
 const OWNER: AuthenticatedUser = {
   id: '11111111-1111-4111-8111-111111111111',
-  issuer: 'supabase',
-  sessionId: null,
+  sessionId: '99999999-9999-4999-8999-999999999999',
   email: null,
   phone: null,
 };
@@ -105,7 +104,7 @@ describe('MembershipService (API-100-32)', () => {
       {
         action: 'circle.member.removed',
         actor_user_id: OWNER.id,
-        actor_session_id: null,
+        actor_session_id: OWNER.sessionId,
         target_type: 'circle_member',
         target_id: ROW.id,
         detail: { circle_id: CIRCLE, member_user_id: MEMBER.id, previous_status: 'active' },
