@@ -6,6 +6,7 @@ import bcrypt from 'bcryptjs';
 import { ChannelSenders } from '../../src/modules/notifications/channels/channel-senders';
 import { type MailboxMessage, mailboxFor } from '../../src/modules/auth/test-mailbox.route';
 import { createTestApp, type TestApp, withTestConfig } from '../../src/testing/test-app';
+import { openTestClient } from './database';
 import { createUser, type Queryable } from './fixtures';
 
 /**
@@ -109,16 +110,23 @@ export interface SessionBody {
   user: { id: string; email: string | null; phone: string | null; [key: string]: unknown };
 }
 
-let phoneCounter = Math.floor(Math.random() * 1000);
+let phoneCounter = Math.floor(Math.random() * 1_000_000);
 /**
- * A fictional UK drama number (+44 7700 900000-900999, reserved by Ofcom for fiction): a range
- * `fixtures.ts` (+1 201 555-01xx) never uses, so both can be mixed in one file.
+ * A fictional UK drama number (+44 7700 900xxx, reserved by Ofcom for fiction) with three more
+ * random digits (15 digits, still E.164): a range `fixtures.ts` (+1 201 555-01xx) never uses, so
+ * both can be mixed in one file. Wide on purpose: since D78 a duplicate phone is a 409 at sign-up,
+ * so numbers must not repeat across runs on the same local database.
  */
 export function authFakePhone(): string {
-  return `+447700900${String(phoneCounter++ % 1000).padStart(3, '0')}`;
+  return `+447700900${String(phoneCounter++ % 1_000_000).padStart(6, '0')}`;
 }
 
-/** Signs up and confirms the email; returns the session and the credentials used. */
+/**
+ * Signs up and confirms the email; returns the session and the credentials used. The account gets
+ * its phone stored unconfirmed, as before D78: the sign-up goes in with the email only (so no code
+ * is texted and the number's OTP counters stay untouched for the suites that count them), then the
+ * phone is written on the row. Sign-up with a phone itself is covered by auth-signup.int-spec.ts.
+ */
 export async function signedUpUser(
   app: NestFastifyApplication,
   options: { email?: string; phone?: string; password?: string } = {},
@@ -129,11 +137,16 @@ export async function signedUpUser(
   const signup = await post(app, '/v1/auth/signup', {
     email,
     password,
-    phone,
     full_name: 'Auth Example',
     device: DEVICE,
   });
   if (signup.statusCode !== 202) throw new Error(`signup answered ${signup.statusCode}`);
+  const client = await openTestClient();
+  try {
+    await client.query('update public.users set phone = $1 where email = $2', [phone, email]);
+  } finally {
+    await client.end();
+  }
   const link = latestLink(app, email);
   if (!link) throw new Error('no verification link was sent');
   const verified = await post(app, '/v1/auth/email/verify', { token: link.token, device: DEVICE });

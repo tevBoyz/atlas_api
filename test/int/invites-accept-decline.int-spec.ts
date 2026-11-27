@@ -8,11 +8,14 @@ import { InviteeInvitesService } from '../../src/modules/invites/invitee-invites
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
 import {
   acceptInvite,
+  cancelInvite,
   declineInvite,
   errorOf,
   getCapacity,
   listMembers,
   lookupInvite,
+  removeMember,
+  resendInvite,
 } from '../support/circle-api';
 import { openTestClient } from '../support/database';
 import {
@@ -438,6 +441,37 @@ describe('accept and decline (API-100-30)', () => {
       ]);
       const again = await compareDecline(dan, row.token, [circle.id]);
       expectCode(again.reply, 409, 'decline_circle_invite:canceled');
+    });
+
+    it("Stage 3 [B10b] (SCRUM-28): the owner's list shows the invitee's decline as declined until a re-invite or a remove; an owner cancel is not listed", async () => {
+      const { owner, circle } = await ownerWithCircle('Owner B10');
+      const dan = await createUser(client, { phone: true });
+      const row = await insertMember(client, circle.id, { phone: dan.phone });
+      const statusOf = async (memberId: string) =>
+        (await listMembers(app, owner.id, circle.id))
+          .json<Body[]>()
+          .find((m) => m.member_id === memberId)?.status;
+      expect(await statusOf(row.id)).toBe('pending');
+      expect((await declineInvite(app, dan.id, row.token)).statusCode).toBe(200);
+      expect(await statusOf(row.id)).toBe('declined');
+      expect((await memberRow(client, row.id)).declined_at).not.toBeNull();
+      // The member view never lists it.
+      // Re-invite (resend) -> pending again, declined_at cleared.
+      expect((await resendInvite(app, owner.id, row.id)).statusCode).toBe(200);
+      expect(await statusOf(row.id)).toBe('pending');
+      expect((await memberRow(client, row.id)).declined_at).toBeNull();
+      // The owner cancels the pending invite: stored declined, but not the invitee's "no": not listed.
+      expect((await cancelInvite(app, owner.id, row.id)).statusCode).toBe(200);
+      expect((await memberRow(client, row.id)).status).toBe('declined');
+      expect(await statusOf(row.id)).toBeUndefined();
+
+      // A second invitee declines; the owner removes the declined row: gone.
+      const eve = await createUser(client, { phone: true });
+      const other = await insertMember(client, circle.id, { phone: eve.phone });
+      await declineInvite(app, eve.id, other.token);
+      expect(await statusOf(other.id)).toBe('declined');
+      expect((await removeMember(app, owner.id, circle.id, other.id)).statusCode).toBe(200);
+      expect(await statusOf(other.id)).toBeUndefined();
     });
 
     it('errors in order', async () => {

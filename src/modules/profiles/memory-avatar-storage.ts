@@ -6,6 +6,7 @@ import {
   type AvatarStorage,
   SIGNED_UPLOAD_TTL_SECONDS,
   type SignedUpload,
+  AvatarStorageUnavailableError,
 } from './avatar-storage';
 
 /** Path of the fake's upload endpoint (only registered when `AVATAR_STORAGE=memory`). */
@@ -62,6 +63,16 @@ export class MemoryAvatarStorage implements AvatarStorage {
 
   exists(objectPath: string): Promise<boolean> {
     return Promise.resolve(this.objects.has(objectPath));
+  }
+
+  copy(from: string, to: string): Promise<void> {
+    const object = this.objects.get(from);
+    if (!object) return Promise.reject(new AvatarStorageUnavailableError('copy source missing'));
+    if (this.objects.has(to)) {
+      return Promise.reject(new AvatarStorageUnavailableError('copy target exists'));
+    }
+    this.objects.set(to, { ...object });
+    return Promise.resolve();
   }
 
   remove(objectPath: string): Promise<void> {

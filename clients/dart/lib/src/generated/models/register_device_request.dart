@@ -18,6 +18,7 @@ class RegisterDeviceRequest {
     required this.platform,
     this.pushProvider,
     this.pushToken,
+    this.timeZone,
   });
 
   factory RegisterDeviceRequest.fromJson(Map<String, Object?> json) =>
@@ -35,6 +36,10 @@ class RegisterDeviceRequest {
   /// The device push token. Left out (with `push_provider`): the stored token is kept. `null`: the stored token is cleared. A token is on one device only: registering it here clears it from any other device.
   @JsonKey(name: 'push_token')
   final String? pushToken;
+
+  /// The phone's current IANA time zone, e.g. `Africa/Addis_Ababa` (Stage 2 [TZ]); sent on every registration. Push times for this installation are shown in it (else the profile time zone, else Africa/Banjul). Left out: the stored zone is kept. A value that is not a known IANA zone is stored as null (never an error).
+  @JsonKey(name: 'time_zone')
+  final String? timeZone;
 
   Map<String, Object?> toJson() =>
       enumValuesAsStrings(this, _$RegisterDeviceRequestToJson(this));

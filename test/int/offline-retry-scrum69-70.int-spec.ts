@@ -108,7 +108,12 @@ describe('SCRUM-69/70 offline retries are idempotent (no API change)', () => {
         components: { schemas: Record<string, { properties: Body; required?: string[] }> };
       }>();
       const request = doc.components.schemas.SubmitEmergencyAlertRequest;
-      expect(Object.keys(request.properties)).toEqual(['emergency_type']);
+      // Stage 2 [B6] / [B9]: plus the optional place keys (never coordinates).
+      expect(Object.keys(request.properties).sort()).toEqual([
+        'country_code',
+        'emergency_type',
+        'place_name',
+      ]);
       expect(request.required).toEqual(['emergency_type']);
     });
 

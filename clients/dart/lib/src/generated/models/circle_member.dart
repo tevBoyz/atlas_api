@@ -16,6 +16,7 @@ class CircleMember {
   const CircleMember({
     required this.avatarUrl,
     required this.displayName,
+    required this.handle,
     required this.invitedAt,
     required this.isOwner,
     required this.memberId,
@@ -44,6 +45,9 @@ class CircleMember {
   /// Owner view only.
   final String? email;
 
+  /// D79: the row's opaque key: the member row id (the same as member_id).
+  final String handle;
+
   /// Owner view only.
   @JsonKey(name: 'invite_canceled_at')
   final String? inviteCanceledAt;
@@ -69,6 +73,8 @@ class CircleMember {
   final String? relationship;
   final CircleMemberRole role;
   final CircleMemberStatus status;
+
+  /// D79: the caller's own user id on their own row; null on every other row (no other user's id is ever sent).
   @JsonKey(name: 'user_id')
   final String? userId;
 

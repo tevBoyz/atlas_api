@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 
-import { incidentAlias, incidentMemberView } from '../../common/policies';
+import { incidentAlias, incidentHistoryView } from '../../common/policies';
 import type { IncidentTransaction } from './incidents.repository';
 
 /**
@@ -48,7 +48,7 @@ export class ResponderIncidentsRepository {
             from public.incidents i
             left join public.profiles p
               on p.id = i.resident_id
-           where ${incidentMemberView.where({ callerId, incident: incidentAlias('i') })}
+           where ${incidentHistoryView.where({ callerId, incident: incidentAlias('i') })}
         ) as incoming`);
     return result.rows[0].body;
   }
@@ -86,6 +86,8 @@ export class ResponderIncidentsRepository {
                'location_captured_at', rec.location_captured_at,
                'location_source', rec.location_source,
                'location_unavailable_since', rec.location_unavailable_since,
+               'place_name', rec.place_name,
+               'country_code', rec.country_code,
                'location_sharing_ended_at', rec.location_sharing_ended_at,
                'incident_notes', rec.incident_notes,
                'incident_notes_updated_at', rec.incident_notes_updated_at,
@@ -98,7 +100,7 @@ export class ResponderIncidentsRepository {
         left join public.profiles p
           on p.id = rec.resident_id
        where rec.id = ${incidentId}::uuid
-         and ${incidentMemberView.where({ callerId, incident: incidentAlias('rec') })}`);
+         and ${incidentHistoryView.where({ callerId, incident: incidentAlias('rec') })}`);
     return result.rows[0]?.body;
   }
 }

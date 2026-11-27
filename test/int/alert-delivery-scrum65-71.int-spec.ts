@@ -54,6 +54,7 @@ const CONFIG = {
 };
 const MEMBER_KEYS = [
   'user_id',
+  'handle',
   'display_name',
   'avatar_url',
   'status',
@@ -84,6 +85,25 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
   let workerLogs: LogCapture;
   const open: TestSocket[] = [];
   const tokens: string[] = [];
+  const tokensOf = new Map<string, string[]>();
+
+  /**
+   * Stage 2 [B7] (D77): the member's phone confirms every push it received (the app posts the
+   * push's receipt_token); only then is the member Delivered.
+   */
+  async function confirmReceipts(user: UserFixture): Promise<void> {
+    const mine = new Set(tokensOf.get(user.id) ?? []);
+    for (const s of push().sent) {
+      if (!mine.has(s.to.token) || !s.to.receipt_token) continue;
+      const reply = await app.inject({
+        method: 'POST',
+        url: '/v1/notifications/receipts',
+        headers: { 'content-type': 'application/json' },
+        payload: JSON.stringify({ receipt_token: s.to.receipt_token }),
+      });
+      expect(reply.statusCode).toBe(204);
+    }
+  }
 
   beforeAll(async () => {
     ({ app } = await createTestApp({}, withTestConfig(CONFIG)));
@@ -121,6 +141,7 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
 
   async function device(user: UserFixture, token: string): Promise<void> {
     tokens.push(token);
+    tokensOf.set(user.id, [...(tokensOf.get(user.id) ?? []), token]);
     const reply = await registerDevice(app, user.id, randomUUID(), {
       platform: 'android',
       app_version: '1.0.0',
@@ -156,11 +177,26 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
     return reply.json<Body[]>();
   }
 
+  /** D79: rows carry a handle (member row id), never another user's id: handle -> user id. */
+  const handleUser = new Map<string, string>();
+  async function loadHandles(): Promise<void> {
+    for (const row of (
+      await client.query<{ id: string; user_id: string }>(
+        'select id::text, user_id::text from public.safety_circle_members where user_id is not null',
+      )
+    ).rows) {
+      handleUser.set(row.id, row.user_id);
+    }
+  }
+  const userOf = (row: Body) => handleUser.get(row.handle as string) ?? 'unknown';
+
   /** The resident's rows by user id: `status|at set|reason`. */
   async function statusOf(residentId: string, incidentId: string): Promise<Record<string, string>> {
     const out: Record<string, string> = {};
+    await loadHandles();
     for (const row of await responders(residentId, incidentId)) {
-      out[row.user_id as string] =
+      expect(row.user_id).toBeNull();
+      out[userOf(row)] =
         `${String(row.delivery_status)}|${row.delivery_at === null ? 'null' : 'at'}|${String(row.delivery_failed_reason)}`;
     }
     return out;
@@ -201,6 +237,7 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
     await startWorker();
 
     await waitLong(async () => {
+      await confirmReceipts(ada);
       expect(await statusOf(resident.id, incidentId)).toEqual({
         [ada.id]: 'delivered|at|null',
         [ned.id]: 'failed|at|no_device',
@@ -208,12 +245,13 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
       });
     }, 20_000);
 
-    // delivery_at: delivered = the first acceptance; failed = the final time of the rows.
+    // delivery_at: delivered = the first receipt (D77); failed = the final time of the rows.
     const rows = await responders(resident.id, incidentId);
-    const at = (id: string) => rows.find((r) => r.user_id === id)!.delivery_at as string;
+    await loadHandles();
+    const at = (id: string) => rows.find((r) => userOf(r) === id)!.delivery_at as string;
     const times = await query<{ user: string; first_sent: string; last_final: string }>(
       `select recipient_user_id::text as user,
-              to_jsonb(min(sent_at) filter (where status in ('sent','delivered'))) #>> '{}' as first_sent,
+              to_jsonb(min(delivered_at) filter (where status = 'delivered')) #>> '{}' as first_sent,
               to_jsonb(max(final_at)) #>> '{}' as last_final
          from public.notification_deliveries
         where incident_id = $1 and channel = 'push' and recipient_user_id <> $2
@@ -286,13 +324,14 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
     live.push(await rita.next<Body>('incident.delivery_failed'));
     for (const payload of live) {
       expect(Object.keys(payload)).toEqual(['incident_id', 'member', 'reason', 'occurred_at']);
-      expect(Object.keys(payload.member as Body)).toEqual(['user_id', 'display_name']);
+      expect(Object.keys(payload.member as Body)).toEqual(['handle', 'display_name']);
     }
+    await loadHandles();
     expect(
       live
         .map(
           (p) =>
-            `${(p.member as Body).user_id as string}:${(p.member as Body).display_name as string}:${p.reason as string}`,
+            `${userOf(p.member as Body)}:${(p.member as Body).display_name as string}:${p.reason as string}`,
         )
         .sort(),
     ).toEqual([`${fay.id}:Fay Fails:failed`, `${ned.id}:Ned No Phone:no_device`].sort());
@@ -301,7 +340,7 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
       const last = new Map<string, Body>();
       for (const p of rita.of<Body>('incident.responders')) {
         const r = p.responder as Body;
-        last.set(r.user_id as string, r);
+        last.set(userOf(r), r);
       }
       expect(Object.keys(last.get(ada.id) ?? {})).toEqual(RESIDENT_KEYS);
       expect(last.get(ada.id)?.delivery_status).toBe('delivered');
@@ -369,13 +408,14 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
     const renotifiedAt = Date.now();
     expect((await renotifyAlert(app, resident.id, incidentId)).statusCode).toBe(200);
     await waitLong(async () => {
+      await confirmReceipts(ned);
       expect(await statusOf(resident.id, incidentId)).toEqual({ [ned.id]: 'delivered|at|null' });
     }, 30_000);
     // Live: Ned's row reaches Rita again (sent after the re-notify's fan-out, then delivered).
     await waitLong(() => {
       const rows = rita.of<Body>('incident.responders').map((p) => p.responder as Body);
       expect(rows.length).toBeGreaterThan(0);
-      expect(rows.every((r) => r.user_id === ned.id)).toBe(true);
+      expect(rows.every((r) => userOf(r) === ned.id)).toBe(true);
       expect(rows.at(-1)!.delivery_status).toBe('delivered');
     }, 15_000);
     await sleep(300);
@@ -419,13 +459,15 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
     await device(resident, fakePushToken('rita2'));
     const incidentId = (await submitAlert(app, resident.id, 'medical')).json<Body>().id as string;
     await waitLong(async () => {
+      await confirmReceipts(ada);
       expect(await statusOf(resident.id, incidentId)).toEqual({ [ada.id]: 'delivered|at|null' });
     }, 15_000);
     expect((await markSafe(app, resident.id, incidentId)).statusCode).toBe(200);
     // Ada's alert rows turn failed after the close (as if the provider had refused them): the
     // status is failed, but no notice is recorded or sent.
     await client.query(
-      `update public.notification_deliveries d set status = 'failed', error_code = 'timeout'
+      `update public.notification_deliveries d
+          set status = 'failed', error_code = 'timeout', delivered_at = null
          from public.notification_outbox o
         where o.id = d.outbox_id and o.topic in ('incident.created','incident.renotified')
           and d.incident_id = $1`,
@@ -533,7 +575,8 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
         recovers,
         otherTopics,
         sms,
-      ] = Array.from({ length: 9 }, () => randomUUID());
+        acceptedOnly,
+      ] = Array.from({ length: 10 }, () => randomUUID());
       const created = await outbox('incident.created', [
         retrying,
         failedOnly,
@@ -542,6 +585,7 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
         recovers,
         otherTopics,
         sms,
+        acceptedOnly,
       ]);
       // A second alert notice already fanned out (one push row per member and notice).
       const second = await outbox('incident.renotified', [retrying, failedOnly, oneAccepted]);
@@ -551,7 +595,9 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
       await row(second, failedOnly, 'skipped', { at: '2026-11-25T10:00:09+00:00' });
       await row(created, skippedOnly, 'skipped', { error: 'channel_disabled' });
       await row(created, oneAccepted, 'failed', { at: '2026-11-25T10:00:00+00:00' });
-      await row(second, oneAccepted, 'sent', { at: '2026-11-25T10:00:03+00:00' });
+      // D77: the phone confirmed receipt (row delivered); acceptedOnly was only accepted (sent).
+      await row(second, oneAccepted, 'delivered', { at: '2026-11-25T10:00:03+00:00' });
+      await row(created, acceptedOnly, 'sent', { at: '2026-11-25T10:00:07+00:00' });
       await row(created, recovers, 'failed', { at: '2026-11-25T10:00:04+00:00' });
       await row(created, otherTopics, 'failed', { at: '2026-11-25T10:00:05+00:00' });
       await row(created, sms, 'failed', { at: '2026-11-25T10:00:06+00:00' });
@@ -580,11 +626,13 @@ describe('alert delivery status and the failed alert notice (SCRUM-65/66/67/71, 
         delivery_failed_reason: null,
       });
       expect(await status(recovers)).toEqual(sent);
+      // D77: accepted by the push service, no receipt yet: sent (not failed, not delivered).
+      expect(await status(acceptedOnly)).toEqual(sent);
       expect(await status(otherTopics)).toEqual(failed('2026-11-25T10:00:05+00:00', 'failed'));
       expect(await status(sms)).toEqual(failed('2026-11-25T10:00:06+00:00', 'failed'));
 
-      // The re-notify is fanned out: `recovers` accepted -> delivered; `pending` failed.
-      await row(renotified, recovers, 'sent', { at: '2026-11-25T10:01:00+00:00' });
+      // The re-notify is fanned out: `recovers` received -> delivered; `pending` failed.
+      await row(renotified, recovers, 'delivered', { at: '2026-11-25T10:01:00+00:00' });
       await row(renotified, pending, 'skipped', { at: '2026-11-25T10:01:01+00:00' });
       expect(await status(recovers)).toMatchObject({
         delivery_status: 'delivered',

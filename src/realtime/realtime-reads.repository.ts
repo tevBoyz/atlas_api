@@ -1,11 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { type SQL, sql } from 'drizzle-orm';
 
-import { incidentAlias, incidentMemberView } from '../common/policies';
+import { incidentAlias, incidentMemberView, liveDeliverySql } from '../common/policies';
 import { ApiConfigService } from '../config';
 import { DatabaseService } from '../db/database.service';
 import { type AvatarUrlBase, avatarUrlBase } from '../modules/circles/circles.repository';
-import { eventActorNameSql } from '../modules/incidents/incident-events.service';
+import {
+  eventActorHandleSql,
+  eventActorNameSql,
+} from '../modules/incidents/incident-events.service';
 import {
   type ResponderRow,
   responderRowsSql,
@@ -44,6 +47,10 @@ export interface IncidentBroadcastState {
   location_captured_at: string | null;
   /** SCRUM-68 (D74): since when live location is reported unavailable; null = not reported. */
   location_unavailable_since: string | null;
+  /** Stage 2 [B6]: the reverse-geocoded place of the alert; null = not known. */
+  place_name: string | null;
+  /** Stage 2 [B9]: ISO 3166-1 alpha-2 country of the alert; null = not known. */
+  country_code: string | null;
   incident_notes: string | null;
   incident_notes_updated_at: string | null;
   /** `incidents.updated_at`: database time of the last write of the row. */
@@ -64,7 +71,10 @@ export interface IncidentEventRow {
     id: string;
     event_type: string;
     occurred_at: string;
+    /** Internal (the payload carries it only to the actor's own sockets, D79). */
     actor_id: string | null;
+    /** D79: the actor member's membership row id; null for the resident or no actor. */
+    actor_handle: string | null;
     /** D71: the actor's display name (`eventActorNameSql`); null when `actor_id` is null. */
     actor_name: string | null;
     detail: Record<string, unknown>;
@@ -89,6 +99,8 @@ const INCIDENT_UPDATED_JSON = sql`jsonb_build_object(
     'location_captured_at', rec.location_captured_at,
     'location_source', rec.location_source,
     'location_unavailable_since', rec.location_unavailable_since,
+    'place_name', rec.place_name,
+    'country_code', rec.country_code,
     'location_sharing_ended_at', rec.location_sharing_ended_at,
     'incident_notes', rec.incident_notes,
     'incident_notes_updated_at', rec.incident_notes_updated_at,
@@ -151,6 +163,8 @@ export class RealtimeReadsRepository {
                'location_sharing_ended_at', rec.location_sharing_ended_at,
                'location_source', rec.location_source,
                'location_unavailable_since', rec.location_unavailable_since,
+               'place_name', rec.place_name,
+               'country_code', rec.country_code,
                'location_lat', rec.location_lat,
                'location_lng', rec.location_lng,
                'location_accuracy_m', rec.location_accuracy_m,
@@ -171,6 +185,7 @@ export class RealtimeReadsRepository {
                 count(*) filter (where d.acknowledged_at is not null)::int as acknowledged_count
            from public.incident_deliveries d
           where d.incident_id = rec.id
+            and ${liveDeliverySql('d')}
        ) c
        where rec.id = ${incidentId}::uuid`);
   }
@@ -243,6 +258,7 @@ export class RealtimeReadsRepository {
                  'event_type', e.event_type,
                  'occurred_at', e.occurred_at,
                  'actor_id', e.actor_id,
+                 'actor_handle', ${eventActorHandleSql('e')},
                  'actor_name', ${eventActorNameSql('e', 'rec')},
                  'detail', e.detail
                )

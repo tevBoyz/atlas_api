@@ -8,9 +8,9 @@ part of 'personal_info_request.dart';
 
 PersonalInfoRequest _$PersonalInfoRequestFromJson(Map<String, dynamic> json) =>
     PersonalInfoRequest(
-      dateOfBirth: json['date_of_birth'] as String,
       fullName: json['full_name'] as String,
       avatarPath: json['avatar_path'] as String?,
+      dateOfBirth: json['date_of_birth'] as String?,
       gender: json['gender'] == null
           ? null
           : Gender.fromJson(json['gender'] as String),

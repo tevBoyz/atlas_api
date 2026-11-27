@@ -6,7 +6,9 @@ import { circleActiveMember, circleActiveMemberSince, circleOwner } from './circ
 import { deliveryOwn } from './delivery.policies';
 import {
   incidentCountsView,
+  incidentEventsHistoryView,
   incidentEventsView,
+  incidentHistoryView,
   incidentMemberView,
   incidentResident,
 } from './incident.policies';
@@ -32,12 +34,16 @@ export {
   incidentAlias,
   type IncidentArgs,
   incidentCountsView,
+  incidentEndedMemberPastSql,
+  incidentEventsHistoryView,
   incidentEventsView,
+  incidentHistoryView,
   incidentMemberView,
   type IncidentPolicy,
   type IncidentRef,
   incidentResident,
   INCIDENTS_TABLE,
+  liveDeliverySql,
   type NotFoundOperation,
   requireIncident,
 } from './incident.policies';
@@ -89,6 +95,8 @@ export const POLICIES = {
   'incident.memberView': incidentMemberView,
   'incident.eventsView': incidentEventsView,
   'incident.countsView': incidentCountsView,
+  'incident.historyView': incidentHistoryView,
+  'incident.eventsHistoryView': incidentEventsHistoryView,
   'delivery.own': deliveryOwn,
   'invite.recipient': inviteRecipient,
   'membership.activate': membershipActivate,

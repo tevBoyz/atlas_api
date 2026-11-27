@@ -14,6 +14,7 @@ IncidentLive _$IncidentLiveFromJson(Map<String, dynamic> json) => IncidentLive(
   cancelledAt: json['cancelled_at'] as String?,
   circleId: json['circle_id'] as String?,
   closedAt: json['closed_at'] as String?,
+  countryCode: json['country_code'] as String?,
   deliveredCount: (json['delivered_count'] as num).toInt(),
   emergencyServices: (json['emergency_services'] as List<dynamic>)
       .map((e) => EmergencyService.fromJson(e as Map<String, dynamic>))
@@ -33,6 +34,7 @@ IncidentLive _$IncidentLiveFromJson(Map<String, dynamic> json) => IncidentLive(
       ? null
       : IncidentLiveLocationSource.fromJson(json['location_source'] as String),
   locationUnavailableSince: json['location_unavailable_since'] as String?,
+  placeName: json['place_name'] as String?,
   renotifiedAt: json['renotified_at'] as String?,
   residentId: json['resident_id'] as String,
   resolvedAt: json['resolved_at'] as String?,
@@ -51,6 +53,7 @@ Map<String, dynamic> _$IncidentLiveToJson(IncidentLive instance) =>
       'cancelled_at': instance.cancelledAt,
       'circle_id': instance.circleId,
       'closed_at': instance.closedAt,
+      'country_code': instance.countryCode,
       'delivered_count': instance.deliveredCount,
       'emergency_services': instance.emergencyServices,
       'emergency_type': instance.emergencyType,
@@ -64,6 +67,7 @@ Map<String, dynamic> _$IncidentLiveToJson(IncidentLive instance) =>
       'location_sharing_ended_at': instance.locationSharingEndedAt,
       'location_source': instance.locationSource,
       'location_unavailable_since': instance.locationUnavailableSince,
+      'place_name': instance.placeName,
       'renotified_at': instance.renotifiedAt,
       'resident_id': instance.residentId,
       'resolved_at': instance.resolvedAt,

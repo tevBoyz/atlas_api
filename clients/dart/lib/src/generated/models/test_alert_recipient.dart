@@ -17,9 +17,9 @@ class TestAlertRecipient {
     required this.deliveredAt,
     required this.displayName,
     required this.failureReason,
+    required this.handle,
     required this.seenAt,
     required this.status,
-    required this.userId,
   });
 
   factory TestAlertRecipient.fromJson(Map<String, Object?> json) =>
@@ -37,12 +37,13 @@ class TestAlertRecipient {
   @JsonKey(name: 'failure_reason')
   final TestAlertFailureReason? failureReason;
 
+  /// D79 (replaces user_id): the recipient's member row id in the circle (CircleMember.handle); null once they hold no row there.
+  final String? handle;
+
   /// When the member opened it in Atlas.
   @JsonKey(name: 'seen_at')
   final String? seenAt;
   final TestAlertMemberState status;
-  @JsonKey(name: 'user_id')
-  final String userId;
 
   Map<String, Object?> toJson() =>
       enumValuesAsStrings(this, _$TestAlertRecipientToJson(this));

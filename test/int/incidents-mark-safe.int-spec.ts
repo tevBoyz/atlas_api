@@ -372,7 +372,8 @@ describe('POST /v1/incidents/{id}/mark-safe (API-100-19)', () => {
         delivered_count: 3,
         acknowledged_count: 1,
       });
-      expect(Object.keys(res.json<Body>())).toHaveLength(25); // 24 + location_unavailable_since (D74)
+      // 24 + location_unavailable_since (D74) + place_name, country_code (Stage 2 [B6] / [B9]).
+      expect(Object.keys(res.json<Body>())).toHaveLength(27);
 
       const { rows } = await client.query<Body>(
         `select status, resolved_reason, auto_closed,

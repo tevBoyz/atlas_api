@@ -15,6 +15,7 @@ import { ChannelSenders } from './channels/channel-senders';
 import { DeliveriesRepository } from './deliveries.repository';
 import { AlertDeliveryOutcomes } from './alert-delivery-outcomes';
 import { DeliveryPlanner, DeliverySender } from './deliveries.service';
+import { ReceiptTokens } from './receipt-token';
 import {
   DeliveryFailedNotificationsHandler,
   IncidentNotificationsHandler,
@@ -35,6 +36,7 @@ import { TestAlertNotificationsHandler } from './test-alert-notifications';
     DeliveriesRepository,
     DeliveryPlanner,
     DeliverySender,
+    ReceiptTokens,
     AlertDeliveryOutcomes,
     IncidentNotificationsHandler,
     DeliveryFailedNotificationsHandler,

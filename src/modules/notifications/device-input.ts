@@ -15,6 +15,9 @@ import { requireJsonObject } from '../incidents/incident-input';
  *
  * `push_provider` / `push_token`: left out (both) = keep what is stored; `null` = clear the token;
  * a token always comes with its provider (and a provider with its token).
+ *
+ * `time_zone` (Stage 2 [TZ]): optional IANA zone; left out = keep the stored zone; anything that is
+ * not a known zone is stored as null, never refused.
  */
 
 export const INSTALLATION_ID_HEADER = 'x-atlas-installation-id';
@@ -40,6 +43,32 @@ export interface DeviceRegistration {
   platform: Platform;
   app_version: string;
   push?: { provider: PushProvider; token: string } | null;
+  /**
+   * Stage 2 [TZ]: the installation's IANA time zone. Undefined (left out) = keep the stored zone;
+   * null = none (sent as null, or not a known IANA zone: stored null, never an error).
+   */
+  time_zone?: string | null;
+}
+
+/** Longest `time_zone` accepted (IANA names are at most about 30 characters). */
+export const TIME_ZONE_MAX = 64;
+/** An IANA zone name: `Area/Location[/Sub]`, or a single name such as `UTC`. No offsets. */
+const IANA_ZONE = /^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9][A-Za-z0-9_+-]*){0,2}$/;
+
+/**
+ * Stage 2 [TZ]: the zone to store for a `time_zone` value: the name when it is a time zone this
+ * runtime knows (IANA), else null. Never throws.
+ */
+export function knownTimeZone(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const zone = value.trim();
+  if (!zone || zone.length > TIME_ZONE_MAX || !IANA_ZONE.test(zone)) return null;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone });
+    return zone;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -118,6 +147,8 @@ export function deviceRegistrationFromBody(body: unknown): DeviceRegistration {
   }
 
   const registration: DeviceRegistration = { platform, app_version: appVersion };
+  // [TZ]: never refused; an unknown zone is stored as null.
+  if (input.time_zone !== undefined) registration.time_zone = knownTimeZone(input.time_zone);
   if (typeof token === 'string' && typeof provider === 'string') {
     registration.push = { provider, token };
   } else if (token === null || provider === null) {

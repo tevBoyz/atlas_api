@@ -28,7 +28,8 @@ import {
 
 /** One recipient in the owner's status (D68). */
 export interface TestAlertRecipientJson {
-  user_id: string;
+  /** D79: the member row id (never a user id). */
+  handle: string | null;
   display_name: string | null;
   status: TestAlertMemberState;
   failure_reason: TestAlertFailureReason | null;
@@ -213,7 +214,7 @@ function statusJson(row: OwnerTestAlertRow): TestAlertStatusJson {
   const recipients: TestAlertRecipientJson[] = row.recipients.map((r) => {
     const state = recipientState(r);
     return {
-      user_id: r.user_id,
+      handle: r.handle,
       display_name: r.display_name,
       status: state.status,
       failure_reason: state.failure_reason,

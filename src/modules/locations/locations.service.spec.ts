@@ -38,6 +38,7 @@ function serviceWith(
       .fn()
       .mockResolvedValue({ id: INCIDENT_ID, status: 'active', sharing_ended: false }),
     sharedResult: jest.fn().mockResolvedValue({ circle_id: null, location_lat: 1 }),
+    writePlace: jest.fn().mockResolvedValue(undefined),
     ...incidents,
   };
   const postCommit = { afterLocation: jest.fn().mockResolvedValue(undefined) };

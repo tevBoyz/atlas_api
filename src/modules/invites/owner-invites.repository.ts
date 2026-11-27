@@ -283,6 +283,7 @@ export class OwnerInvitesRepository {
              invite_expires_at = now() + interval '7 days',
              invite_consumed_at = null,
              invite_canceled_at = null,
+             declined_at = null,
              updated_at = now()
        where scm.id = ${values.memberId}::uuid
       returning ${payloadSql(inviteUrlBase, true)} as body`);
@@ -297,6 +298,7 @@ export class OwnerInvitesRepository {
     const result = await tx.execute<{ body: CanceledInviteJson }>(sql`
       update public.safety_circle_members as scm
          set status = 'declined',
+             declined_at = null,
              invite_canceled_at = now()
        where scm.id = ${memberId}::uuid
       returning jsonb_build_object(

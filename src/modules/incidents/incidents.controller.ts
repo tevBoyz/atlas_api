@@ -15,8 +15,10 @@ import {
   incidentSharedSchema,
   incidentSubmitResultSchema,
   setIncidentNotesRequestSchema,
+  submitEmergencyAlertRequestContractSchema,
   submitEmergencyAlertRequestSchema,
 } from './incident.schemas';
+import { placeFromBody } from './incident-place';
 import { IncidentsService } from './incidents.service';
 
 @Controller('incidents')
@@ -31,7 +33,10 @@ export class IncidentsController {
     operationId: 'submitEmergencyAlert',
     summary: 'Create the emergency alert, or re-notify the one already open',
     tag: 'incidents',
-    body: { name: 'SubmitEmergencyAlertRequest', schema: submitEmergencyAlertRequestSchema },
+    body: {
+      name: 'SubmitEmergencyAlertRequest',
+      schema: submitEmergencyAlertRequestContractSchema,
+    },
     responses: {
       200: {
         description: 'An alert was already open: its members were re-notified',
@@ -56,9 +61,11 @@ export class IncidentsController {
       fallback: 'submit_emergency_alert:invalid_type',
     })
     body: z.output<typeof submitEmergencyAlertRequestSchema>,
+    @Body() raw: unknown,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<Record<string, unknown>> {
-    const result = await this.incidents.submit(user, body.emergency_type);
+    // Stage 2 [B6] / [B9]: the optional place, read leniently (never refuses the SOS).
+    const result = await this.incidents.submit(user, body.emergency_type, placeFromBody(raw));
     void reply.status(result.status);
     return result.body;
   }

@@ -7,8 +7,8 @@ import { type SQL, sql } from 'drizzle-orm';
  * only when the list's share flag is on and the list is not empty. A profile with no item but a
  * non-blank old text column (written outside the API, e.g. by a test fixture or the retired SQL
  * paths) counts as ONE item, the trimmed text, as the 0014 back-fill does. Every other key is the
- * trimmed text as before; `resident_phone` (D59) is the confirmed account phone when `share_phone`
- * is on; blank and unshared values are left out (`jsonb_strip_nulls`); `{}` when
+ * trimmed text as before; `resident_phone` (D59; Stage 2 [39]) is the account phone when
+ * `share_phone` is on, confirmed or not; blank and unshared values are left out (`jsonb_strip_nulls`); `{}` when
  * nothing is shared.
  *
  * Built in SQL on purpose: `btrim` removes spaces only (a tab-only value is kept), which
@@ -26,13 +26,16 @@ function sharedList(flag: string, table: string, column: string): SQL {
 }
 
 /**
- * SCRUM-52 (D59): `resident_phone`, the account's CONFIRMED phone (`users.phone`, E.164, with
- * `phone_confirmed_at` set) when `share_phone` is on; null (left out) when the flag is off or the
- * account has no confirmed phone. Never in logs or audit rows (the scrubber redacts the key).
+ * SCRUM-52 (D59), Stage 2 [39]: `resident_phone` when `share_phone` is on: the account's phone
+ * (`users.phone`, E.164) whether `phone_confirmed_at` is set or not. `users` holds one phone per
+ * account, so "the confirmed phone if any, else the stored (unconfirmed) one" is that column (a
+ * confirmed phone is preferred by construction: a confirmed phone change replaces it). Null (left
+ * out) when the flag is off or the account has no phone. Never in logs or audit rows (the scrubber
+ * redacts the key).
  */
 const RESIDENT_PHONE_SQL = sql.raw(`to_jsonb(case when p.share_phone then (
           select u.phone from public.users u
-           where u.id = p.id and u.phone is not null and u.phone_confirmed_at is not null
+           where u.id = p.id and u.phone is not null
         ) end)`);
 
 export const SHARE_PAYLOAD_SQL = sql`coalesce(

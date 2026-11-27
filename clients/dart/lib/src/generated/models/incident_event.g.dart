@@ -8,6 +8,7 @@ part of 'incident_event.dart';
 
 IncidentEvent _$IncidentEventFromJson(Map<String, dynamic> json) =>
     IncidentEvent(
+      actorHandle: json['actor_handle'] as String?,
       actorId: json['actor_id'] as String?,
       actorName: json['actor_name'] as String?,
       detail: json['detail'] as Map<String, dynamic>,
@@ -18,6 +19,7 @@ IncidentEvent _$IncidentEventFromJson(Map<String, dynamic> json) =>
 
 Map<String, dynamic> _$IncidentEventToJson(IncidentEvent instance) =>
     <String, dynamic>{
+      'actor_handle': instance.actorHandle,
       'actor_id': instance.actorId,
       'actor_name': instance.actorName,
       'detail': instance.detail,

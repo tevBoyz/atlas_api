@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { locationSourceSchema } from '../../openapi/schemas';
+import { incidentPlaceRequestShape } from '../incidents/incident.schemas';
 
 /**
  * `POST /v1/incidents/{id}/locations` (spec §11.3 L1), for the documentation and the Dart client. The
@@ -25,4 +26,5 @@ export const attachIncidentLocationRequestSchema = z.object({
     .describe(
       'Device fix time, ISO-8601 with an offset (a time without one is read as UTC). A fix older than the stored one is ignored.',
     ),
+  ...incidentPlaceRequestShape,
 });

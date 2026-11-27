@@ -242,6 +242,10 @@ export const PARITY_ERROR_CODES = {
     'session_not_found',
   ],
 
+  // Gaps_Adressed Stage 3 [B1] (SCRUM-14, D78): sign-up with email OR phone (at least one), and a
+  // duplicate email / phone answered with a prompt to sign in or reset the password.
+  signup: ['contact_required', 'already_registered'],
+
   // §11.2 / §11.3 E1 Idempotency-Key (enforced by API-100-10; `invalid_key` from its AC3)
   idempotency: ['key_mismatch', 'in_progress', 'key_required', 'invalid_key'],
 } as const;

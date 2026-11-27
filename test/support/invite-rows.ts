@@ -15,6 +15,7 @@ export interface MemberRowOptions {
   name?: string;
   /** E.164 phone of a phone invite; null (default) = link invite. */
   phone?: string | null;
+  /** `declined` = as the invitee's decline leaves it (Stage 3 [B10b]: `declined_at` set). */
   status?: 'pending' | 'declined' | 'active';
   /** SQL for `invited_at` (default `now()`). */
   invitedSql?: string;
@@ -41,10 +42,11 @@ export async function insertMember(
   await q.query(
     `insert into public.safety_circle_members (id, circle_id, role, status, display_name,
        relationship, phone, user_id, invite_token, invited_at, invite_expires_at,
-       invite_canceled_at, invite_consumed_at)
+       invite_canceled_at, invite_consumed_at, declined_at)
      values ($1, $2, 'member', $3, $4, 'friend', $5, $6, $7, ${options.invitedSql ?? 'now()'},
              ${options.expiresSql ?? "now() + interval '7 days'"},
-             case when $8::boolean then now() end, case when $9::boolean then now() end)`,
+             case when $8::boolean then now() end, case when $9::boolean then now() end,
+             case when $3 = 'declined' then now() end)`,
     [
       id,
       circleId,

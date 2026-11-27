@@ -7,7 +7,7 @@ part of 'verification.dart';
 // **************************************************************************
 
 Verification _$VerificationFromJson(Map<String, dynamic> json) => Verification(
-  channel: json['channel'] as String,
+  channel: Channel.fromJson(json['channel'] as String),
   expiresInSeconds: (json['expires_in_seconds'] as num).toInt(),
 );
 

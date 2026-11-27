@@ -12,18 +12,22 @@ AttachIncidentLocationRequest _$AttachIncidentLocationRequestFromJson(
   locationSource: AttachIncidentLocationRequestLocationSource.fromJson(
     json['location_source'] as String,
   ),
+  countryCode: json['country_code'] as String?,
   locationAccuracyM: json['location_accuracy_m'] as num?,
   locationCapturedAt: json['location_captured_at'] as String?,
   locationLat: json['location_lat'] as num?,
   locationLng: json['location_lng'] as num?,
+  placeName: json['place_name'] as String?,
 );
 
 Map<String, dynamic> _$AttachIncidentLocationRequestToJson(
   AttachIncidentLocationRequest instance,
 ) => <String, dynamic>{
+  'country_code': instance.countryCode,
   'location_accuracy_m': instance.locationAccuracyM,
   'location_captured_at': instance.locationCapturedAt,
   'location_lat': instance.locationLat,
   'location_lng': instance.locationLng,
   'location_source': instance.locationSource,
+  'place_name': instance.placeName,
 };

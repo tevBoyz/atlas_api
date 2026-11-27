@@ -103,13 +103,14 @@ describe('remove, leave and the incoming-list claim under concurrency (API-100-3
       expect(removed.statusCode).toBe(200);
       expect(['ok', 'acknowledge_incident:not_found']).toContain(codeOf(acked));
       await expectMembershipGone(client, benRow.id);
+      // Stage 2 [B13]: the delivery row is kept as history (no longer deleted with the membership).
       expect(
         (
           await client.query('select 1 from public.incident_deliveries where member_id = $1', [
             benRow.id,
           ])
         ).rowCount,
-      ).toBe(0);
+      ).toBe(1);
     }
   });
 

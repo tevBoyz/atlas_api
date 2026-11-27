@@ -34,7 +34,7 @@ export const safetyCircleSchema = componentSchema(
 );
 
 /**
- * One element of `list_circle_members` (spec §7.2). Every caller gets the first 8 keys; the circle
+ * One element of `list_circle_members` (spec §7.2). Every caller gets the first 9 keys; the circle
  * owner also gets the 6 contact/invite keys (always present for the owner, never for a member).
  * `invite_token` is never returned.
  */
@@ -53,7 +53,15 @@ export const circleMemberSchema = componentSchema(
       ),
     is_owner: z.boolean(),
     invited_at: z.string(),
-    user_id: z.uuid().nullable(),
+    user_id: z
+      .uuid()
+      .nullable()
+      .describe(
+        "D79: the caller's own user id on their own row; null on every other row (no other user's id is ever sent).",
+      ),
+    handle: z
+      .uuid()
+      .describe("D79: the row's opaque key: the member row id (the same as member_id)."),
     avatar_url: z
       .string()
       .nullable()

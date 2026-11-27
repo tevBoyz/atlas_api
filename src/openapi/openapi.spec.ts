@@ -301,6 +301,7 @@ describe('OpenAPI document (API-100-12)', () => {
         '/v1/me/profile/sharing-flags',
         '/v1/me/sessions',
         '/v1/me/sessions/{session_id}',
+        '/v1/notifications/receipts',
         '/v1/openapi.json',
         '/v1/responder/incidents',
         '/v1/test-alerts/{id}',
@@ -426,8 +427,8 @@ describe('OpenAPI document (API-100-12)', () => {
       expect(doc.components.schemas.OpenIncidentResult.properties.open_incident).toEqual({
         anyOf: [{ $ref: '#/components/schemas/IncidentLive' }, { type: 'null' }],
       });
-      // 24 keys + location_unavailable_since (SCRUM-68, D74).
-      expect(Object.keys(doc.components.schemas.IncidentSend.properties)).toHaveLength(25);
+      // 24 keys + location_unavailable_since (SCRUM-68, D74) + place_name, country_code (Stage 2).
+      expect(Object.keys(doc.components.schemas.IncidentSend.properties)).toHaveLength(27);
       expect(doc.components.schemas.IncidentSend.properties).toHaveProperty(
         'location_unavailable_since',
       );
@@ -517,6 +518,7 @@ describe('OpenAPI document (API-100-12)', () => {
         'registerCurrentDevice',
         'removeCircleMember',
         'renotifyEmergencyAlert',
+        'reportNotificationReceipt',
         'resendCircleInvite',
         'resendEmail',
         'resendOtp',

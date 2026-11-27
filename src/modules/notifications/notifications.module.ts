@@ -1,9 +1,16 @@
 import { Module } from '@nestjs/common';
 
+import { RealtimeModule } from '../../realtime/realtime.module';
+import { AuditModule } from '../audit/audit.module';
 import { DevicesRepository } from './devices.repository';
 import { DevicesService } from './devices.service';
 import { IncidentNotificationsHook, IncidentNotificationsOutbox } from './incident-notifications';
 import { MeDevicesController } from './me-devices.controller';
+import {
+  NotificationReceiptsController,
+  NotificationReceiptsService,
+} from './notification-receipts';
+import { ReceiptTokens } from './receipt-token';
 
 /**
  * Notifications in the API process (Phase 5, spec §11.3 U1/U2, §11.6, §11.7): device registration
@@ -11,8 +18,11 @@ import { MeDevicesController } from './me-devices.controller';
  * worker side (fan-out, channels, deliveries) is `NotificationWorkersModule`.
  */
 @Module({
-  controllers: [MeDevicesController],
+  imports: [AuditModule, RealtimeModule],
+  controllers: [MeDevicesController, NotificationReceiptsController],
   providers: [
+    ReceiptTokens,
+    NotificationReceiptsService,
     DevicesRepository,
     DevicesService,
     IncidentNotificationsOutbox,

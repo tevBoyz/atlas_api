@@ -167,12 +167,12 @@ export class ProfilesRepository {
         id, full_name, date_of_birth, gender, avatar_path, personal_info_completed_at
       )
       values (
-        ${callerId}::uuid, ${input.fullName}, ${input.dateOfBirth}::date,
+        ${callerId}::uuid, ${input.fullName}, ${input.dateOfBirth ?? null}::date,
         ${input.gender ?? null}::text, ${input.avatarPath ?? null}::text, now()
       )
       on conflict (id) do update
          set full_name = excluded.full_name,
-             date_of_birth = excluded.date_of_birth,
+             date_of_birth = ${keep('date_of_birth', input.dateOfBirth)},
              gender = ${keep('gender', input.gender)},
              avatar_path = ${keep('avatar_path', input.avatarPath)},
              personal_info_completed_at = coalesce(p.personal_info_completed_at, now())

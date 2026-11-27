@@ -535,8 +535,10 @@ describe('delivery counts and acknowledge (API-100-20)', () => {
             );
             outcomes.add('not_found');
           }
-          // Either way the delivery row went with the membership (D44: deleted by the remove).
-          expect(await deliveryRow(s.incidentId, s.members[0].id)).toBeUndefined();
+          // Stage 2 [B13]: either way the delivery row stays as history (no longer deleted).
+          const kept = await deliveryRow(s.incidentId, s.members[0].id);
+          expect(kept).toBeDefined();
+          if (acked.status !== 200) expect(kept.acknowledged_at).toBeNull();
         }
       }
       expect(outcomes.size).toBeGreaterThan(0);

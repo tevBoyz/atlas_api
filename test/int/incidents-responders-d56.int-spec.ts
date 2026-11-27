@@ -23,7 +23,7 @@ import { connectSocket, eventually, sleep, type TestSocket } from '../support/re
  * SCRUM-49 / 50 / 51 / 55, decision D56: the member's response (`POST /v1/incidents/{id}/response`),
  * the responder list (`GET /v1/incidents/{id}/responders`) and the `incident.responders` broadcast.
  * Migration 0015 (two nullable columns on `incident_deliveries`), the check order and error codes,
- * idempotency, implied acknowledge, list content / order / masking (D11 style), ended memberships
+ * idempotency, implied acknowledge, list content / order / ids (D79: own id only, handle), ended memberships
  * left out, audit, realtime per receiver on two instances, and races on separate connections
  * (acknowledge, mark safe, member removal: never a 40P01).
  */
@@ -31,11 +31,11 @@ type Body = Record<string, unknown>;
 type Reply = Awaited<ReturnType<NestFastifyApplication['inject']>>;
 
 const UTC_TEXT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?\+00:00$/;
-const MASKED = /^[0-9a-f]{4}\*{4}-\*{4}-\*{4}-\*{4}-\*{8}[0-9a-f]{4}$/;
 const EVENT = 'incident.responders';
 const RACE_ROUNDS = 20;
 const KEYS = [
   'user_id',
+  'handle',
   'display_name',
   'avatar_url',
   'status',
@@ -45,8 +45,6 @@ const KEYS = [
 ];
 /** SCRUM-65 (D73): the resident's rows also carry the delivery status, after `is_me`. */
 const RESIDENT_KEYS = [...KEYS, 'delivery_status', 'delivery_at', 'delivery_failed_reason'];
-
-const mask = (id: string) => `${id.slice(0, 4)}****-****-****-****-********${id.slice(-4)}`;
 
 describe('responder status (SCRUM-49/50/51/55, D56)', () => {
   let app: NestFastifyApplication;
@@ -220,6 +218,7 @@ describe('responder status (SCRUM-49/50/51/55, D56)', () => {
       expect(Object.keys(body)).toEqual(KEYS);
       expect(body).toEqual({
         user_id: s.members[0].id,
+        handle: s.memberRows[0].id,
         display_name: 'Member 0',
         avatar_url: null,
         status: 'responding',
@@ -389,7 +388,7 @@ describe('responder status (SCRUM-49/50/51/55, D56)', () => {
   });
 
   describe('GET /v1/incidents/{id}/responders', () => {
-    it('content, order, masking: resident full ids; a member others masked, own full', async () => {
+    it('content, order, ids (D79): no other user id, handles; a member sees only their own id', async () => {
       const s = await scene(4, true);
       const [a, b, c, d] = s.members;
       await client.query(`update public.profiles set avatar_path = 'u/b.png' where id = $1`, [
@@ -420,12 +419,13 @@ describe('responder status (SCRUM-49/50/51/55, D56)', () => {
       expect(asResident.statusCode).toBe(200);
       const list = asResident.json<Body[]>();
       expect(list.map((r) => Object.keys(r))).toEqual(list.map(() => RESIDENT_KEYS));
-      expect(list.map((r) => [r.user_id, r.status, r.is_me])).toEqual([
-        [b.id, 'responding', false],
-        [a.id, 'responding', false],
-        [d.id, 'acknowledged', false],
-        [c.id, 'unable', false],
-        [e.id, 'no_response', false],
+      const h = (n: number) => s.memberRows[n].id;
+      expect(list.map((r) => [r.user_id, r.handle, r.status, r.is_me])).toEqual([
+        [null, h(1), 'responding', false],
+        [null, h(0), 'responding', false],
+        [null, h(3), 'acknowledged', false],
+        [null, h(2), 'unable', false],
+        [null, eRow.id, 'no_response', false],
       ]);
       expect(list[0].avatar_url).toMatch(/\/storage\/v1\/object\/public\/avatars\/u\/b\.png$/);
       expect(list[4]).toMatchObject({
@@ -449,13 +449,13 @@ describe('responder status (SCRUM-49/50/51/55, D56)', () => {
 
       const asMember = (await responders(d.id, s.incidentId)).json<Body[]>();
       expect(asMember.map((r) => [r.user_id, r.is_me])).toEqual([
-        [mask(b.id), false],
-        [mask(a.id), false],
+        [null, false],
+        [null, false],
         [d.id, true],
-        [mask(c.id), false],
-        [mask(e.id), false],
+        [null, false],
+        [null, false],
       ]);
-      for (const r of asMember.filter((x) => !x.is_me)) expect(r.user_id).toMatch(MASKED);
+      for (const id of [a.id, b.id, c.id, e.id]) expect(JSON.stringify(asMember)).not.toContain(id);
       // Everything but the ids is the same.
       const strip = (rows: Body[]) =>
         rows.map((r) => {
@@ -482,7 +482,7 @@ describe('responder status (SCRUM-49/50/51/55, D56)', () => {
       ).toBe(200);
       expect((await leaveCircle(app, b.id, s.circle.id)).statusCode).toBe(200);
       const list = (await responders(s.resident.id, s.incidentId)).json<Body[]>();
-      expect(list.map((r) => r.user_id)).toEqual([c.id]);
+      expect(list.map((r) => r.handle)).toEqual([s.memberRows[2].id]);
       const unknown = await responders(outsider.id, '00000000-0000-4000-8000-0000000000bb');
       expect(unknown.statusCode).toBe(404);
       expect(errorOf(unknown).code).toBe('incident_responders:not_found');
@@ -524,7 +524,7 @@ describe('responder status (SCRUM-49/50/51/55, D56)', () => {
       return socket;
     }
 
-    it('per receiver: resident full, own row full with is_me, other members masked; outsider nothing', async () => {
+    it('per receiver (D79): own row with own id and is_me, everyone else null + handle; outsider nothing', async () => {
       const s = await scene(3);
       const [a, b, c] = s.members;
       const outsider = await createUser(client);
@@ -544,26 +544,31 @@ describe('responder status (SCRUM-49/50/51/55, D56)', () => {
       expect(Object.keys(ackR)).toEqual(['incident_id', 'responder', 'occurred_at']);
       expect(ackR).toMatchObject({
         incident_id: s.incidentId,
-        responder: { user_id: a.id, status: 'acknowledged', is_me: false },
+        responder: {
+          user_id: null,
+          handle: s.memberRows[0].id,
+          status: 'acknowledged',
+          is_me: false,
+        },
         occurred_at: expect.stringMatching(UTC_TEXT) as unknown,
       });
       await expect(aSock.next<Body>(EVENT)).resolves.toMatchObject({
         responder: { user_id: a.id, status: 'acknowledged', is_me: true },
       });
       await expect(bSock.next<Body>(EVENT)).resolves.toMatchObject({
-        responder: { user_id: mask(a.id), status: 'acknowledged', is_me: false },
+        responder: { user_id: null, status: 'acknowledged', is_me: false },
       });
 
       // Responding through instance B, then unable.
       await respond(a.id, s.incidentId, { status: 'responding' }, appB);
       const resp = await bSock.next<Body>(EVENT);
-      expect(resp.responder).toMatchObject({ user_id: mask(a.id), status: 'responding' });
+      expect(resp.responder).toMatchObject({ user_id: null, status: 'responding' });
       expect(Object.keys(resp.responder as Body)).toEqual(KEYS);
       // The event row equals what the list gives that receiver.
       const listB = (await responders(b.id, s.incidentId)).json<Body[]>();
-      expect(listB.find((r) => r.user_id === mask(a.id))).toEqual(resp.responder);
+      expect(listB.find((r) => r.handle === s.memberRows[0].id)).toEqual(resp.responder);
       await expect(rita.next<Body>(EVENT)).resolves.toMatchObject({
-        responder: { user_id: a.id, status: 'responding' },
+        responder: { user_id: null, handle: s.memberRows[0].id, status: 'responding' },
       });
       await expect(aSock.next<Body>(EVENT)).resolves.toMatchObject({
         responder: { user_id: a.id, is_me: true, status: 'responding' },

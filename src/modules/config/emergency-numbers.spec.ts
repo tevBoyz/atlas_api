@@ -1,4 +1,8 @@
-import { DEFAULT_EMERGENCY_NUMBERS, emergencyServicesFrom } from './emergency-numbers';
+import {
+  DEFAULT_EMERGENCY_NUMBERS,
+  emergencyServicesForCountry,
+  emergencyServicesFrom,
+} from './emergency-numbers';
 
 const GM = [
   { service: 'ambulance', label: 'Ambulance', number: '116' },
@@ -56,5 +60,19 @@ describe('emergencyServicesFrom (SCRUM-54, D60)', () => {
       { service: 'ambulance', label: 'Ambulance', number: '+220116' },
       { service: 'fire_rescue', label: 'Fire and Rescue', number: '119' },
     ]);
+  });
+});
+
+describe('emergency numbers by the incident country (Stage 2 [B9])', () => {
+  const ET = [{ service: 'police', label: 'Police', number: '991' }];
+  const config = { GM: DEFAULT_EMERGENCY_NUMBERS.GM, ET, KE: [{ service: 'x', number: '1' }] };
+
+  it('a country with numbers gets its own; missing, unknown or unusable -> The Gambia (D60)', () => {
+    expect(emergencyServicesForCountry(config, 'ET')).toEqual(ET);
+    for (const country of [null, undefined, '', 'GM', 'FR', 'KE']) {
+      expect(emergencyServicesForCountry(config, country)).toEqual(DEFAULT_EMERGENCY_NUMBERS.GM);
+    }
+    // A broken row: the built-in Gambian numbers.
+    expect(emergencyServicesForCountry(null, 'ET')).toEqual(DEFAULT_EMERGENCY_NUMBERS.GM);
   });
 });

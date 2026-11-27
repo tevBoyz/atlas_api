@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { AvatarNames } from '../../src/modules/profiles/avatar-names';
 
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
@@ -263,7 +264,9 @@ describe('Phase 3 gate: every profile error code of the spec is produced (API-10
     'profiles:avatar_not_found': async () => {
       const user = await createUser(client);
       record(
-        await setAvatar(app, user.id, { object_path: `${user.id}/avatar-missing.jpg` }),
+        await setAvatar(app, user.id, {
+          object_path: app.get(AvatarNames).newPath(user.id, 'jpg'),
+        }),
         'profiles:avatar_not_found',
       );
     },

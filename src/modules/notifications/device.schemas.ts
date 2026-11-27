@@ -7,6 +7,7 @@ import {
   PUSH_PROVIDERS,
   PUSH_TOKEN_MAX,
   PUSH_TOKEN_STATUSES,
+  TIME_ZONE_MAX,
 } from './device-input';
 
 /**
@@ -32,6 +33,14 @@ export const registerDeviceRequestSchema = z.object({
     .optional()
     .describe(
       'The device push token. Left out (with `push_provider`): the stored token is kept. `null`: the stored token is cleared. A token is on one device only: registering it here clears it from any other device.',
+    ),
+  time_zone: z
+    .string()
+    .max(TIME_ZONE_MAX)
+    .nullable()
+    .optional()
+    .describe(
+      "The phone's current IANA time zone, e.g. `Africa/Addis_Ababa` (Stage 2 [TZ]); sent on every registration. Push times for this installation are shown in it (else the profile time zone, else Africa/Banjul). Left out: the stored zone is kept. A value that is not a known IANA zone is stored as null (never an error).",
     ),
 });
 

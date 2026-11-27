@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
@@ -26,8 +28,8 @@ import { connectSocket, eventually, sleep, type TestSocket } from '../support/re
  * SCRUM-52 (Call Resident, D59) and SCRUM-54 (Emergency services shortcut, D60), migration 0016.
  *
  * D59: `profiles.share_phone` (not null, default TRUE: on for new and existing profiles). When on,
- * the share payload carries `resident_phone`, the account's CONFIRMED phone (`users.phone` with
- * `phone_confirmed_at`); absent when off or when there is no confirmed phone. Accepted by
+ * the share payload carries `resident_phone`, the account's phone (`users.phone`; Stage 2 [39]: confirmed
+ * or not); absent when off or when there is no phone. Accepted by
  * `PATCH /v1/me/profile/sharing-flags` and (optional) by the Emergency Info PUT. Turning it on or off
  * during an active alert rewrites the live view and sends `incident.shared_info_updated` (D53). Never
  * to a non-member, a removed member or a member outside the window; never in the audit log.
@@ -146,9 +148,17 @@ describe('Call resident and emergency numbers (SCRUM-52/54, D59/D60)', () => {
       await markSafe(app, rita.id, id);
     });
 
-    it('absent without a confirmed phone (unconfirmed, or none), and absent when turned off', async () => {
-      for (const kind of ['unconfirmed', 'none'] as const) {
-        const { rita, milo } = await scene({ phone: kind });
+    it('Stage 2 [39]: an unconfirmed stored phone is shared too; absent with no phone or when turned off', async () => {
+      {
+        const { rita, milo, phone } = await scene({ phone: 'unconfirmed' });
+        const { id, body } = await raise(rita);
+        const details = (await getIncidentDetails(app, milo.id, id)).json<Body>();
+        expect(details.share_payload).toEqual({ resident_phone: phone });
+        expect(body.share_payload).toEqual({ resident_phone: phone });
+        await markSafe(app, rita.id, id);
+      }
+      {
+        const { rita, milo } = await scene({ phone: 'none' });
         const { id } = await raise(rita);
         const details = (await getIncidentDetails(app, milo.id, id)).json<Body>();
         expect(details.share_payload).toEqual({});
@@ -212,6 +222,46 @@ describe('Call resident and emergency numbers (SCRUM-52/54, D59/D60)', () => {
       await sleep(300);
       expect(miloSocket.of(EVENT)).toHaveLength(2);
       await markSafe(app, rita.id, id);
+    });
+
+    it('Stage 3 [B3] (SCRUM-23/24/79): emergency_preferred_language reaches members only while share_emergency_preferred_language is on; the app language never', async () => {
+      const { rita, milo } = await scene({ phone: 'none' });
+      const saved = await putEmergencyInfo(
+        app,
+        rita.id,
+        emergencyInfoBody({
+          emergency_preferred_language: ' Wolof ',
+          share_emergency_preferred_language: true,
+        }),
+      );
+      expect(saved.statusCode).toBe(200);
+      await client.query(`update public.profiles set preferred_language = 'wo' where id = $1`, [
+        rita.id,
+      ]);
+      const { id, body } = await raise(rita);
+      expect(body.share_payload).toEqual({ emergency_preferred_language: 'Wolof' });
+      const miloSocket = await connect(milo);
+      await expect(miloSocket.join(id)).resolves.toEqual({ ok: true });
+      let details = (await getIncidentDetails(app, milo.id, id)).json<Body>();
+      expect(details.share_payload).toEqual({ emergency_preferred_language: 'Wolof' });
+      expect(details.share_payload_at_activation).toEqual({
+        emergency_preferred_language: 'Wolof',
+      });
+      expect(JSON.stringify(details)).not.toContain('"preferred_language"');
+
+      await patchSharingFlags(app, rita.id, { share_emergency_preferred_language: false });
+      const off = await miloSocket.next<Body>(EVENT);
+      expect(off.share_payload).toEqual({});
+      details = (await getIncidentDetails(app, milo.id, id)).json<Body>();
+      expect(details.share_payload).toEqual({});
+      await markSafe(app, rita.id, id);
+
+      // Off from the start: never in the snapshot either.
+      const second = await raise(rita);
+      expect(second.body.share_payload).toEqual({});
+      const later = (await getIncidentDetails(app, milo.id, second.id)).json<Body>();
+      expect(later.share_payload_at_activation).toEqual({});
+      await markSafe(app, rita.id, second.id);
     });
 
     it('never to a removed member, an outsider or a member who joined after the alert', async () => {
@@ -327,6 +377,62 @@ describe('Call resident and emergency numbers (SCRUM-52/54, D59/D60)', () => {
           [JSON.stringify({ GM })],
         );
         await markSafe(app, rita.id, id);
+      }
+    });
+
+    it('Stage 2 [B9]: chosen by the incident country_code; unknown or missing -> The Gambia', async () => {
+      const ET = [
+        { service: 'ambulance', label: 'Ambulance', number: '907' },
+        { service: 'police', label: 'Police', number: '991' },
+      ];
+      const original = await client.query<{ value: unknown }>(
+        `select value from public.app_config where key = 'emergency_numbers'`,
+      );
+      await client.query(
+        `update public.app_config set value = $1::jsonb where key = 'emergency_numbers'`,
+        [JSON.stringify({ GM, ET })],
+      );
+      const submitIn = async (rita: UserFixture, country: string | undefined) =>
+        app.inject({
+          method: 'POST',
+          url: '/v1/incidents',
+          headers: {
+            ...(await authHeader(rita.id)),
+            'idempotency-key': randomUUID(),
+            'content-type': 'application/json',
+          },
+          payload: JSON.stringify({ emergency_type: 'medical', country_code: country }),
+        });
+      try {
+        const et = await scene();
+        const etSubmit = await submitIn(et.rita, 'et');
+        expect(etSubmit.statusCode).toBe(201);
+        const etId = etSubmit.json<Body>().id as string;
+        expect(etSubmit.json<Body>()).toMatchObject({ country_code: 'ET', emergency_services: ET });
+        const open = (await getOpenIncident(app, et.rita.id)).json<{ open_incident: Body }>();
+        expect(open.open_incident.emergency_services).toEqual(ET);
+        const details = (await getIncidentDetails(app, et.milo.id, etId)).json<Body>();
+        expect(details).toMatchObject({ country_code: 'ET', emergency_services: ET });
+        expect(
+          (await renotifyAlert(app, et.rita.id, etId)).json<Body>().emergency_services,
+        ).toEqual(ET);
+        await markSafe(app, et.rita.id, etId);
+
+        for (const country of ['FR', undefined]) {
+          const other = await scene();
+          const reply = await submitIn(other.rita, country);
+          expect(reply.json<Body>().emergency_services).toEqual(GM);
+          const otherId = reply.json<Body>().id as string;
+          expect(
+            (await getIncidentDetails(app, other.milo.id, otherId)).json<Body>().emergency_services,
+          ).toEqual(GM);
+          await markSafe(app, other.rita.id, otherId);
+        }
+      } finally {
+        await client.query(
+          `update public.app_config set value = $1::jsonb where key = 'emergency_numbers'`,
+          [JSON.stringify(original.rows[0].value)],
+        );
       }
     });
 

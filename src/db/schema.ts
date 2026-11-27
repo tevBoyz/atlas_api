@@ -61,7 +61,7 @@ export const profiles = pgTable(
   {
     id: uuid().primaryKey().notNull(),
     fullName: text('full_name').notNull(),
-    dateOfBirth: date('date_of_birth').notNull(),
+    dateOfBirth: date('date_of_birth'),
     gender: text(),
     avatarPath: text('avatar_path'),
     personalInfoCompletedAt: timestamp('personal_info_completed_at', {

@@ -92,9 +92,9 @@ class Profile {
   @JsonKey(name: 'created_at')
   final String createdAt;
 
-  /// `YYYY-MM-DD`.
+  /// `YYYY-MM-DD`; null = not given (optional since Stage 3 [B2], SCRUM-17).
   @JsonKey(name: 'date_of_birth')
-  final String dateOfBirth;
+  final String? dateOfBirth;
   @JsonKey(name: 'emergency_contact_email')
   final String? emergencyContactEmail;
   @JsonKey(name: 'emergency_contact_full_name')
@@ -164,7 +164,7 @@ class Profile {
   @JsonKey(name: 'share_medical_conditions')
   final bool shareMedicalConditions;
 
-  /// Share my phone number (SCRUM-52, D59): when on, members of an alert get the account's confirmed phone as `resident_phone` in the shared info. On by default.
+  /// Share my phone number (SCRUM-52, D59): when on, members of an alert get the account's phone (confirmed, else the stored unconfirmed one; Stage 2 [39]) as `resident_phone` in the shared info. On by default.
   @JsonKey(name: 'share_phone')
   final bool sharePhone;
   final String timezone;

@@ -31,7 +31,10 @@ export class ResponderIncidentsService {
   async details(user: AuthenticatedUser, incidentId: string): Promise<Record<string, unknown>> {
     const body = await this.read(async (tx) => {
       const found = await this.repository.details(tx, incidentId, user.id);
-      return found && { ...found, emergency_services: await this.incidents.emergencyServices(tx) };
+      if (!found) return found;
+      // Stage 2 [B9]: the numbers of the incident's country (else The Gambia).
+      const country = (found as { country_code?: string | null }).country_code;
+      return { ...found, emergency_services: await this.incidents.emergencyServices(tx, country) };
     });
     if (!body) throw new DomainError('get_incident_details:not_found');
     return body;

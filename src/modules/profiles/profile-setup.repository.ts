@@ -52,8 +52,7 @@ export class ProfileSetupRepository {
     const result = await tx.execute<SetupProfileRow>(sql`
       select coalesce(
                p.personal_info_completed_at is null
-                 or char_length(trim(p.full_name)) = 0
-                 or p.date_of_birth is null,
+                 or char_length(trim(p.full_name)) = 0,
                false
              ) as personal_incomplete,
              coalesce(

@@ -29,7 +29,7 @@ import { connectSocket, eventually, type TestSocket } from '../support/realtime-
  * repeat none; each change of their response writes one `responder_status` event `{status}` (the
  * same status again none; the first response also acknowledges, so `responder_acknowledged` comes
  * first); every event of `GET /v1/incidents/{id}/events` and `incident.event` carries `actor_name`
- * (the same for every caller; members still never get `recipient_ids`); no push for them; and the
+ * (the same for every caller; D79: nobody gets `recipient_ids`); no push for them; and the
  * new lock order (profile → incident → delivery) never deadlocks with a re-notify or mark safe.
  */
 type Body = Record<string, unknown>;
@@ -237,7 +237,6 @@ describe('SCRUM-60/61 activity feed events (D71)', () => {
           'Rita Resident',
           {
             recipient_count: 2,
-            recipient_ids: [s.milo.id, s.ned.id].sort(),
             emergency_type: 'fire',
           },
         ],
@@ -250,18 +249,14 @@ describe('SCRUM-60/61 activity feed events (D71)', () => {
         ['renotified', null, { recipient_count: 2 }],
       ];
       expect(view(resident)).toEqual(expected);
-      // D3: a member never gets recipient_ids; recipient_count and every name stay.
-      expect(view(member)).toEqual(
-        expected.map(([type, name, detail]) => {
-          const copy = { ...(detail as Body) };
-          delete copy.recipient_ids;
-          return [type, name, copy];
-        }),
-      );
+      // D79: nobody gets recipient_ids; recipient_count and every name stay.
+      expect(view(member)).toEqual(expected);
+      expect(resident.body).not.toContain('recipient_ids');
       expect(member.body).not.toContain('recipient_ids');
       expect(member.body).not.toContain(s.ned.id);
       for (const event of member.json<Body[]>()) {
         expect(Object.keys(event).sort()).toEqual([
+          'actor_handle',
           'actor_id',
           'actor_name',
           'detail',
@@ -270,11 +265,11 @@ describe('SCRUM-60/61 activity feed events (D71)', () => {
           'occurred_at',
         ]);
       }
-      // D11 unchanged: Milo sees his own id in full and the others masked.
+      // D79: Milo sees his own id in full and the others null.
       const milo = member.json<Body[]>().filter((e) => e.actor_name === 'Milo Member');
       for (const event of milo) expect(event.actor_id).toBe(s.milo.id);
       const ned = member.json<Body[]>().filter((e) => e.actor_name === 'Ned Member');
-      for (const event of ned) expect(event.actor_id).toMatch(/\*{4}/);
+      for (const event of ned) expect(event.actor_id).toBeNull();
     });
 
     it('the timeline stays readable after the close (SCRUM-61)', async () => {
@@ -340,10 +335,11 @@ describe('SCRUM-60/61 activity feed events (D71)', () => {
           ['responder_status', 'Milo Member', { status: 'unable' }],
         ]);
       }
-      // D11 per receiver: the resident and Milo himself get his id, Ned gets it masked.
-      expect((got[0][0].event as Body).actor_id).toBe(s.milo.id);
-      expect((got[1][0].event as Body).actor_id).toBe(s.milo.id);
-      expect((got[2][0].event as Body).actor_id).toMatch(/\*{4}/);
+      // D79 per receiver: only Milo himself gets his id; the same handle for everyone.
+      expect(got.map((p) => (p[0].event as Body).actor_id).filter((x) => x !== null)).toEqual([
+        s.milo.id,
+      ]);
+      expect(new Set(got.map((p) => (p[0].event as Body).actor_handle)).size).toBe(1);
       // A repeat acknowledge and the same status again broadcast no event: a status change after
       // them is the very next event every socket gets (a barrier, not a fixed wait).
       await acknowledgeIncident(app, s.milo.id, s.incidentId);
@@ -356,7 +352,7 @@ describe('SCRUM-60/61 activity feed events (D71)', () => {
       }
     });
 
-    it('a member never gets recipient_ids live; the resident does', async () => {
+    it('D79: nobody gets recipient_ids live, the resident included', async () => {
       const s = await scene();
       const [resident, ned] = await Promise.all([connect(s.resident), connect(s.ned)]);
       expect(await resident.join(s.incidentId)).toEqual({ ok: true });
@@ -373,7 +369,7 @@ describe('SCRUM-60/61 activity feed events (D71)', () => {
       expect(forNed.detail).toEqual({ recipient_count: 2 });
       expect(forNed.actor_name).toBe('Rita Resident');
       const forResident = await closure(resident);
-      expect((forResident.detail as Body).recipient_ids).toEqual([s.milo.id, s.ned.id].sort());
+      expect(forResident.detail).toEqual({ recipient_count: 2 });
       expect(forResident.actor_name).toBe('Rita Resident');
     });
   });

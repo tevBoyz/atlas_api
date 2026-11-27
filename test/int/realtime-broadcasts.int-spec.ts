@@ -39,6 +39,7 @@ type Body = Record<string, unknown>;
 const UPDATED_KEYS = [
   'auto_closed',
   'closed_at',
+  'country_code', // Stage 2 [B9]
   'emergency_type',
   'incident_notes',
   'incident_notes_updated_at',
@@ -49,6 +50,7 @@ const UPDATED_KEYS = [
   'location_sharing_ended_at',
   'location_source',
   'location_unavailable_since', // SCRUM-68 (D74)
+  'place_name', // Stage 2 [B6]
   'renotified_at',
   'resolved_at',
   'resolved_reason',
@@ -57,7 +59,6 @@ const UPDATED_KEYS = [
   'status',
 ];
 
-const MASKED = /^[0-9a-f]{4}\*{4}-\*{4}-\*{4}-\*{4}-\*{8}[0-9a-f]{4}$/;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?\+00:00$/;
 const A_TIMESTAMP: unknown = expect.stringMatching(TIMESTAMP);
 
@@ -218,6 +219,8 @@ describe('incident broadcasts (API-100-41)', () => {
       location_accuracy_m: details.location_accuracy_m,
       location_captured_at: details.location_captured_at,
       location_unavailable_since: null,
+      place_name: null,
+      country_code: null,
       updated_at: A_TIMESTAMP,
       occurred_at: A_TIMESTAMP,
     });
@@ -262,9 +265,9 @@ describe('incident broadcasts (API-100-41)', () => {
       occurred_at: A_TIMESTAMP,
     });
     const renotifyEvent = await s.s1.next<Body>('incident.event');
-    // The member view: actor masked, no recipient_ids (none on `renotified` anyway).
+    // The member view (D79): actor null, no recipient_ids (none on `renotified` anyway).
     expect((renotifyEvent.event as Body).event_type).toBe('renotified');
-    expect((renotifyEvent.event as Body).actor_id).toMatch(MASKED);
+    expect((renotifyEvent.event as Body).actor_id).toBeNull();
     const residentRenotify = await s.r.next<Body>('incident.event');
     expect((residentRenotify.event as Body).actor_id).toBe(s.resident.id);
 
@@ -330,9 +333,9 @@ describe('incident broadcasts (API-100-41)', () => {
       socket
         .of<Body>('incident.event')
         .find((e) => (e.event as Body).event_type === 'closure_notified')!.event as Body;
-    expect((closure(s.r).detail as Body).recipient_ids).toEqual([s.m1.id, s.m2.id].sort());
+    expect(closure(s.r).detail).toEqual({ recipient_count: 2 });
     expect(closure(s.s1).detail).toEqual({ recipient_count: 2 });
-    expect(closure(s.s1).actor_id).toMatch(MASKED);
+    expect(closure(s.s1).actor_id).toBeNull();
 
     // Every event of every socket carries incident_id and occurred_at.
     for (const socket of [s.r, s.s1, s.s2]) {

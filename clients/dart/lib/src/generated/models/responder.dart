@@ -18,6 +18,7 @@ class Responder {
     required this.acknowledgedAt,
     required this.avatarUrl,
     required this.displayName,
+    required this.handle,
     required this.isMe,
     required this.status,
     required this.statusAt,
@@ -38,7 +39,7 @@ class Responder {
   @JsonKey(name: 'avatar_url')
   final String? avatarUrl;
 
-  /// RESIDENT ONLY (D73): delivered = the first acceptance; failed = when the last attempt became final (null when nothing was ever sent); sent = null.
+  /// RESIDENT ONLY (D73): delivered = the first receipt confirmed by a phone (D77); failed = when the last attempt became final (null when nothing was ever sent); sent = null.
   @JsonKey(name: 'delivery_at')
   final String? deliveryAt;
 
@@ -46,13 +47,16 @@ class Responder {
   @JsonKey(name: 'delivery_failed_reason')
   final ResponderDeliveryFailedReason? deliveryFailedReason;
 
-  /// RESIDENT ONLY (SCRUM-65, D73; absent on a member's rows): the alert's delivery to this member. delivered = the push service accepted the alert (or a re-notify) for at least one of their devices; sent = still being sent or retried; failed = every attempt failed after its retries, or nothing could be sent (no device with notifications, push switched off). A re-notify recomputes it (failed can become delivered).
+  /// RESIDENT ONLY (SCRUM-65, D73; absent on a member's rows): the alert's delivery to this member. delivered (D77) = at least one of their phones confirmed it received the alert (or a re-notify); sent = accepted by the push service but no receipt yet, or still being sent or retried; failed = every attempt failed after its retries, or nothing could be sent (no device with notifications, push switched off). A re-notify recomputes it (failed can become delivered).
   @JsonKey(name: 'delivery_status')
   final ResponderDeliveryStatus? deliveryStatus;
 
   /// The member's profile name (trimmed), else the name stored on their membership.
   @JsonKey(name: 'display_name')
   final String displayName;
+
+  /// D79: the member's opaque key (their membership row id, the same for every viewer and for the incident.responders / incident.delivery_failed events and IncidentEvent.actor_handle).
+  final String handle;
 
   /// True on the caller's own row.
   @JsonKey(name: 'is_me')
@@ -65,9 +69,9 @@ class Responder {
   @JsonKey(name: 'status_at')
   final String? statusAt;
 
-  /// The member. The resident gets the full UUID. A member gets the ids of other members obscured as incident event actor ids (D11): the first 4 and the last 4 hex characters kept, every other hex character "*", hyphens kept (e.g. "4f3a****-****-****-****-********9c2d"); their own id in full. Not a usable UUID when obscured.
+  /// D79: the caller's own user id on their own row (is_me true), null on every other row (the resident gets null on all rows). No other user id is ever sent: match rows by handle.
   @JsonKey(name: 'user_id')
-  final String userId;
+  final String? userId;
 
   Map<String, Object?> toJson() =>
       enumValuesAsStrings(this, _$ResponderToJson(this));

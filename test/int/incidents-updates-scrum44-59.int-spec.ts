@@ -566,7 +566,7 @@ describe('SCRUM-44/59 resident status updates (D70)', () => {
       expect(fake?.text).toEqual({ title: 'Tess Resident', body: `${short} · ${hhmm[0].t}` });
     });
 
-    it('window applied at fan-out: a member removed since the alert is skipped not_eligible', async () => {
+    it('a member removed since the alert is not a recipient at all (Stage 2 [B13]: no row after ended_at)', async () => {
       const s = await scene();
       await client.query(
         `update public.safety_circle_members set status = 'removed', ended_at = now()
@@ -575,13 +575,13 @@ describe('SCRUM-44/59 resident status updates (D70)', () => {
       );
       await send(s.resident.id, s.incidentId, { preset: 'help_is_here' });
       const [outbox] = await outboxRows(s.incidentId);
+      expect((outbox.payload as { recipient_user_ids: string[] }).recipient_user_ids).not.toContain(
+        s.other.id,
+      );
       await eventually(async () => {
-        const rows = await pushRows(outbox.id);
-        expect(rows.find((r) => r.recipient_user_id === s.other.id)).toMatchObject({
-          status: 'skipped',
-          error_code: 'not_eligible',
-        });
+        expect((await pushRows(outbox.id)).length).toBeGreaterThan(0);
       }, 15_000);
+      expect((await pushRows(outbox.id)).map((r) => r.recipient_user_id)).not.toContain(s.other.id);
       // Only the alert's recipients: never the resident or an outsider.
       const ids = (await pushRows(outbox.id)).map((r) => r.recipient_user_id);
       expect(ids).not.toContain(s.resident.id);

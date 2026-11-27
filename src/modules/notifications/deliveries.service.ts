@@ -23,6 +23,7 @@ import {
 } from './channels/channel.types';
 import { pushMessageOf, pushText } from './channels/push-content';
 import { AlertDeliveryOutcomes, isAlertDeliveryTopic } from './alert-delivery-outcomes';
+import { ReceiptTokens } from './receipt-token';
 import {
   DeliveriesRepository,
   type DeliveryFinalOutcome,
@@ -164,6 +165,7 @@ export class DeliverySender implements JobProcessor {
     private readonly channels: ChannelSenders,
     @Inject(ROOT_LOGGER) private readonly logger: Logger,
     private readonly alerts: AlertDeliveryOutcomes,
+    private readonly receipts: ReceiptTokens,
   ) {}
 
   async process(job: Job): Promise<void> {
@@ -172,6 +174,12 @@ export class DeliverySender implements JobProcessor {
     if (!delivery) return;
     if (delivery.status !== 'queued') {
       await this.afterFinal(delivery, undefined);
+      return;
+    }
+    // Stage 2 [B7] (D77): the phone already confirmed this push (a retry after a lost answer).
+    if (delivery.delivered_at) {
+      const outcome = await this.guard(() => this.repository.markSent(id, 'delivered', null));
+      await this.afterFinal(delivery, outcome);
       return;
     }
     if (!this.channels.isEnabled(delivery.channel)) {
@@ -214,6 +222,11 @@ export class DeliverySender implements JobProcessor {
     const permanent = isPermanentFailure(code);
     const final = permanent || job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
     const outcome = await this.guard(() => this.repository.recordFailure(id, code, final));
+    // Stage 2 [B7] (D77): the phone confirmed receipt meanwhile: delivered, no retry.
+    if (outcome?.status === 'delivered') {
+      await this.afterFinal(delivery, outcome);
+      return;
+    }
     if (final) await this.afterFinal(delivery, outcome);
     if (permanent) throw new PermanentJobFailure(code);
     throw new JobFailedError(code);
@@ -222,7 +235,11 @@ export class DeliverySender implements JobProcessor {
   private async send(
     delivery: DeliveryToSend,
   ): Promise<SendResult | { skip: 'no_device' | 'no_address' }> {
-    const message = pushMessageOf(delivery.topic, delivery.payload);
+    // Stage 2 [B6]: the place of the alert as known now, at send time (alert notices only).
+    const message = pushMessageOf(delivery.topic, {
+      ...delivery.payload,
+      place_name: delivery.place_name,
+    });
     if (!message) return failed('invalid_request');
     switch (delivery.channel) {
       case 'push':
@@ -232,6 +249,8 @@ export class DeliverySender implements JobProcessor {
             provider: delivery.push_provider,
             token: delivery.push_token,
             time_zone: delivery.time_zone,
+            // Stage 2 [B7] (D77): the phone confirms receipt with it.
+            receipt_token: this.receipts.sign(delivery.id),
           },
           message,
         );

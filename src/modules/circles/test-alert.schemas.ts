@@ -35,7 +35,12 @@ export const testAlertFailureReasonSchema = componentSchema(
 export const testAlertRecipientSchema = componentSchema(
   'TestAlertRecipient',
   z.object({
-    user_id: z.uuid(),
+    handle: z
+      .uuid()
+      .nullable()
+      .describe(
+        "D79 (replaces user_id): the recipient's member row id in the circle (CircleMember.handle); null once they hold no row there.",
+      ),
     display_name: z
       .string()
       .nullable()

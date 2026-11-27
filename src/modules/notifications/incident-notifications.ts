@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { type SQL, sql } from 'drizzle-orm';
 
-import { incidentAlias, incidentMemberView } from '../../common/policies';
+import { incidentAlias, incidentMemberView, liveDeliverySql } from '../../common/policies';
 import { DatabaseService } from '../../db/database.service';
 import type { OutboxTopicHandler } from '../../jobs/job-workers';
 import {
@@ -56,7 +56,8 @@ function incidentPayload(incidentId: string, time: SQL, recipients: SQL): SQL {
 function deliveryRecipients(incidentId: string): SQL {
   return sql`(select coalesce(jsonb_agg(d.member_user_id order by d.member_user_id), '[]'::jsonb)
                 from public.incident_deliveries d
-               where d.incident_id = ${incidentId}::uuid)`;
+               where d.incident_id = ${incidentId}::uuid
+                 and ${liveDeliverySql('d')})`;
 }
 
 /**

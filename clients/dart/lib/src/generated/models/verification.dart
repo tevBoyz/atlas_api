@@ -4,6 +4,10 @@
 
 import 'package:json_annotation/json_annotation.dart';
 
+import 'package:atlas_api_client/src/unknown_enum_values.dart';
+
+import 'channel.dart';
+
 part 'verification.g.dart';
 
 @JsonSerializable()
@@ -11,13 +15,15 @@ class Verification {
   const Verification({required this.channel, required this.expiresInSeconds});
 
   factory Verification.fromJson(Map<String, Object?> json) =>
-      _$VerificationFromJson(json);
+      keepRawJson(_$VerificationFromJson(json), json);
 
-  final String channel;
+  /// email: a link was emailed; phone: a code was texted.
+  final Channel channel;
 
-  /// Lifetime of the emailed link.
+  /// Lifetime of the link or the code.
   @JsonKey(name: 'expires_in_seconds')
   final int expiresInSeconds;
 
-  Map<String, Object?> toJson() => _$VerificationToJson(this);
+  Map<String, Object?> toJson() =>
+      enumValuesAsStrings(this, _$VerificationToJson(this));
 }

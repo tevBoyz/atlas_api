@@ -15,6 +15,7 @@ import {
   runIncidentTransaction,
 } from './incident-transaction';
 import type { SubmitOutcome, SubmittableEmergencyType } from './incident.schemas';
+import type { IncidentPlace } from './incident-place';
 import { IncidentsRepository, type LockedIncidentRow } from './incidents.repository';
 
 // Kept importable from here (API-100-15 callers and tests).
@@ -63,11 +64,12 @@ export class IncidentsService {
   async submit(
     user: AuthenticatedUser,
     emergencyType: SubmittableEmergencyType,
+    place: IncidentPlace = {},
   ): Promise<SubmitResponse> {
     const committed = await runIncidentTransaction(
       this.database,
       async (tx) => ({
-        ...(await this.submitInTransaction(tx, user, emergencyType)),
+        ...(await this.submitInTransaction(tx, user, emergencyType, place)),
         events: this.events.drain(tx),
       }),
       (sqlState) => new IncidentSubmitFailedError(sqlState),
@@ -231,6 +233,7 @@ export class IncidentsService {
     tx: IncidentWriteTransaction,
     user: AuthenticatedUser,
     emergencyType: SubmittableEmergencyType,
+    place: IncidentPlace,
   ): Promise<CommittedSubmit> {
     const residentId = user.id;
     await this.repository.useUtcTimestamps(tx);
@@ -242,7 +245,11 @@ export class IncidentsService {
     }
 
     const open = await this.repository.lockOpenIncident(tx, residentId);
-    if (open?.status === 'active') return this.submitRenotify(tx, user, open.id);
+    if (open?.status === 'active') {
+      // [B6] / [B9]: the latest place sent wins, also on a re-notify.
+      await this.repository.writePlace(tx, open.id, place);
+      return this.submitRenotify(tx, user, open.id);
+    }
 
     let outcome: SubmitOutcome;
     let incident;
@@ -255,10 +262,12 @@ export class IncidentsService {
         // Lost a race the profile lock should have prevented: never insert a second incident.
         const raced = await this.repository.lockActiveIncident(tx, residentId);
         if (!raced) throw new Error('_incident_apply_renotify:not_open');
+        await this.repository.writePlace(tx, raced.id, place);
         return this.submitRenotify(tx, user, raced.id);
       }
       outcome = 'created';
     }
+    await this.repository.writePlace(tx, incident.id, place);
 
     if (incident.circle_id !== null) {
       await this.repository.insertDeliveries(tx, incident.id, incident.circle_id, residentId);
@@ -355,7 +364,13 @@ export class IncidentsService {
     tx: IncidentWriteTransaction,
     body: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    return { ...body, emergency_services: await this.repository.emergencyServices(tx) };
+    return {
+      ...body,
+      emergency_services: await this.repository.emergencyServices(
+        tx,
+        body.country_code as string | null | undefined,
+      ),
+    };
   }
 
   /** Realtime `incident.event` for the events a committed write inserted. Not awaited. */

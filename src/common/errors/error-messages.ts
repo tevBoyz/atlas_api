@@ -104,6 +104,9 @@ const SUFFIX_MESSAGES: Record<ErrorSuffix, string> = {
   session_expired: 'Your session has ended. Sign in again.',
   refresh_token_reused: 'Your session has ended. Sign in again.',
   session_not_found: 'Session not found.',
+  contact_required: 'Enter an email address or a phone number.',
+  already_registered:
+    'This email or phone number already has an account. Sign in or reset your password.',
   key_mismatch: 'This Idempotency-Key was already used with a different request.',
   in_progress: 'A request with this Idempotency-Key is still being processed.',
   key_required: 'An Idempotency-Key header is required.',

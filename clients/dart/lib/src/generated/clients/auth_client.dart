@@ -134,7 +134,7 @@ abstract class AuthClient {
   @POST('/v1/auth/refresh')
   Future<Session> refreshSession({@Body() required RefreshRequest body});
 
-  /// Create an account (email, password, phone, name); a confirmation link is emailed.
+  /// Create an account (email or phone, password, name); a link is emailed and/or a code texted.
   ///
   /// [xAtlasInstallationId] - The app installation id (the same UUID as for `PUT /v1/me/devices/current`). Links the new session to that device, so signing out clears its push token.
   @POST('/v1/auth/signup')

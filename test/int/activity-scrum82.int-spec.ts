@@ -380,13 +380,16 @@ describe('SCRUM-82 activity log (D72)', () => {
     expect(exact.next_cursor).toBeNull();
   });
 
-  it('a removed or departed member and an outsider see nothing of the alert; a later joiner neither', async () => {
+  it('Stage 2 [B13]: a removed or departed member keeps the past alert read-only; an outsider and a later joiner see nothing', async () => {
     const s = await scene();
-    expect((await all(s.zed.id)).length).toBeGreaterThan(0);
+    const zedBefore = await all(s.zed.id);
+    expect(zedBefore.length).toBeGreaterThan(0);
+    const nedBefore = await all(s.ned.id);
     expect((await removeMember(app, s.rita.id, s.circle.id, s.zedRow.id)).statusCode).toBe(200);
-    expect(await all(s.zed.id)).toEqual([]);
+    // The alert was resolved before the removal and he was notified of it: same entries as before.
+    expect(await all(s.zed.id)).toEqual(zedBefore);
     expect((await leaveCircle(app, s.ned.id, s.circle.id)).statusCode).toBe(200);
-    expect(await all(s.ned.id)).toEqual([]);
+    expect(await all(s.ned.id)).toEqual(nedBefore);
     expect(await all(s.outsider.id)).toEqual([]);
     const late = await createUser(client);
     await addActiveMember(client, s.circle, late);

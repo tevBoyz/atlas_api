@@ -3,7 +3,7 @@ import { type SQL, sql } from 'drizzle-orm';
 
 import type { AuthenticatedUser } from '../../common/auth';
 import { DomainError } from '../../common/errors';
-import { incidentAlias, incidentMemberView } from '../../common/policies';
+import { incidentAlias, incidentHistoryView } from '../../common/policies';
 import { DatabaseService } from '../../db/database.service';
 import { eventActorNameSql } from '../incidents/incident-events.service';
 import {
@@ -108,14 +108,19 @@ export class ActivityService {
            and i.status in ('active', 'resolved', 'closed')`);
     }
     if (category !== 'mine') {
-      // The membership pre-filter only narrows the scan; the policy is the rule.
+      // The pre-filter only narrows the scan (the circles of an active membership, or the incidents
+      // the caller had a delivery row for: Stage 2 [B13], an ended member's past alerts); the policy
+      // is the rule.
       parts.push(sql`
         select i.id, i.resident_id, i.circle_id, i.status, i.emergency_type, 'circle'::text as category
           from public.incidents i
-         where i.circle_id in (
-                 select m.circle_id from public.safety_circle_members m
-                  where m.user_id = ${caller} and m.status = 'active')
-           and ${incidentMemberView.where({ callerId, incident: incidentAlias('i') })}`);
+         where (i.circle_id in (
+                  select m.circle_id from public.safety_circle_members m
+                   where m.user_id = ${caller} and m.status = 'active')
+                or i.id in (
+                  select hd.incident_id from public.incident_deliveries hd
+                   where hd.member_user_id = ${caller}))
+           and ${incidentHistoryView.where({ callerId, incident: incidentAlias('i') })}`);
     }
     const visible = sql.join(parts, sql` union all `);
     const responseStatus = sql`e.detail ->> 'status' in ('responding', 'unable')`;

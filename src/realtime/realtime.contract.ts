@@ -66,6 +66,8 @@ export const REALTIME_CONTRACT = {
         'share_payload',
         'closed_at',
         'location_unavailable_since',
+        'place_name',
+        'country_code',
       ],
     },
     [SERVER_EVENTS.location]: {
@@ -78,6 +80,8 @@ export const REALTIME_CONTRACT = {
         'location_accuracy_m',
         'location_captured_at',
         'location_unavailable_since',
+        'place_name',
+        'country_code',
         ...TIMES,
       ],
       note:
@@ -141,12 +145,21 @@ export const REALTIME_CONTRACT = {
       payload: ['incident_id', 'delivered_count', 'acknowledged_count', 'status', ...TIMES],
     },
     [SERVER_EVENTS.event]: {
-      room: 'incident:{id} (per receiver: recipient_ids only for the resident, actor_id masked for others except their own id)',
+      room: "incident:{id} (per receiver, D79: recipient_ids never; actor_id only the receiver's own id, else null)",
       payload: ['incident_id', 'event', 'occurred_at'],
-      event_keys: ['id', 'event_type', 'occurred_at', 'actor_id', 'actor_name', 'detail'],
+      event_keys: [
+        'id',
+        'event_type',
+        'occurred_at',
+        'actor_id',
+        'actor_handle',
+        'actor_name',
+        'detail',
+      ],
       note:
         'One per inserted incident_events row, as GET /v1/incidents/{id}/events shows it to that ' +
-        'receiver. actor_name (D71) is the display name of the actor (null when actor_id is null), ' +
+        'receiver. D79: no other user id is sent; actor_handle is the actor member handle (null for ' +
+        'the resident or no actor). actor_name (D71) is the display name of the actor (null when actor_id is null), ' +
         'the same for every receiver: show it instead of any id. SCRUM-60/61 (D71) event types ' +
         'responder_acknowledged (detail {}) and responder_status (detail {status: "responding" | ' +
         '"unable"}) are sent when a member acknowledges or changes their response; no push.',
@@ -173,10 +186,11 @@ export const REALTIME_CONTRACT = {
         'turning share_phone on or off adds or removes resident_phone here.',
     },
     [SERVER_EVENTS.responders]: {
-      room: 'incident:{id} (per receiver: user_id in full for the resident and for the member whose row it is, masked as incident.event actor_id for other members)',
+      room: "incident:{id} (per receiver, D79: user_id only on the receiver's own row, else null; handle for everyone)",
       payload: ['incident_id', 'responder', 'occurred_at'],
       responder_keys: [
         'user_id',
+        'handle',
         'display_name',
         'avatar_url',
         'status',
@@ -186,6 +200,7 @@ export const REALTIME_CONTRACT = {
       ],
       resident_responder_keys: [
         'user_id',
+        'handle',
         'display_name',
         'avatar_url',
         'status',
@@ -200,7 +215,7 @@ export const REALTIME_CONTRACT = {
         'SCRUM-49/50/51/55 (D56): sent after a member acknowledged for the first time or set or ' +
         'changed their response (responding / unable). responder is the row of that member exactly ' +
         'as GET /v1/incidents/{id}/responders shows it to the receiver; replace the row with the ' +
-        'same user_id (the masked id is stable per member). Not sent for a repeat that changed ' +
+        'same handle (D79: the member row id, stable per member). Not sent for a repeat that changed ' +
         "nothing. After a reconnect, re-fetch the list over REST. SCRUM-65 (D73): the resident's " +
         'copy (room incident:{id}:resident) has resident_responder_keys (the 3 delivery keys after ' +
         'is_me); members get exactly responder_keys. The resident also gets it (alone) whenever a ' +
@@ -209,13 +224,13 @@ export const REALTIME_CONTRACT = {
     [SERVER_EVENTS.deliveryFailed]: {
       room: "incident:{id}:resident (the resident's sockets of the incident only; never a member)",
       payload: ['incident_id', 'member', 'reason', 'occurred_at'],
-      member_keys: ['user_id', 'display_name'],
+      member_keys: ['handle', 'display_name'],
       note:
         'SCRUM-71 (D73): a member did not receive the alert: every push attempt failed after the ' +
         'retries (reason "failed"), or nothing could be sent (reason "no_device": no device with ' +
         'notifications, or push switched off). Sent once per member per incident (a later failure ' +
-        'after a re-notify is not reported again), only while the incident is active. member.user_id ' +
-        "is the full id (as on the resident's responder list). The resident also gets a push " +
+        'after a re-notify is not reported again), only while the incident is active. member.handle ' +
+        "is the member's handle (D79, as on the resident's responder list; no user id). The resident also gets a push " +
         '(topic incident.delivery_failed, title "Alert not delivered", body "<display name> ' +
         'didn\'t receive your alert"). Not replayed after a reconnect: the responder list ' +
         '(delivery_status) is the state.',

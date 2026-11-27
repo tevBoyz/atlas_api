@@ -2,6 +2,7 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
 import {
+  authFakePhone,
   createAuthApp,
   DEVICE,
   errorOf,
@@ -125,7 +126,7 @@ describe('password reset (API-100-57)', () => {
     await post(app, '/v1/auth/signup', {
       email: other,
       password: NEW_PASSWORD,
-      phone: '+447700900999',
+      phone: authFakePhone(),
       full_name: 'Other',
       device: DEVICE,
     });
@@ -138,7 +139,7 @@ describe('password reset (API-100-57)', () => {
     await post(app, '/v1/auth/signup', {
       email,
       password: NEW_PASSWORD,
-      phone: '+447700900998',
+      phone: authFakePhone(),
       full_name: 'Unconfirmed',
       device: DEVICE,
     });

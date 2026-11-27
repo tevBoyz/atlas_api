@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:retrofit/retrofit.dart';
 
 import '../models/device_registered.dart';
+import '../models/notification_receipt_request.dart';
 import '../models/register_device_request.dart';
 
 part 'devices_client.g.dart';
@@ -29,5 +30,11 @@ abstract class DevicesClient {
   @DELETE('/v1/me/devices/current/push-token')
   Future<void> clearCurrentDevicePushToken({
     @Header('X-Atlas-Installation-Id') required String xAtlasInstallationId,
+  });
+
+  /// Report that this phone received a push (no sign-in needed)
+  @POST('/v1/notifications/receipts')
+  Future<void> reportNotificationReceipt({
+    @Body() required NotificationReceiptRequest body,
   });
 }

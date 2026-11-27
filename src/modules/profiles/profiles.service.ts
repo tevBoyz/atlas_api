@@ -15,6 +15,7 @@ import {
   profileWriteError,
   sqlStateOfProfileError,
 } from './profile-errors';
+import { AvatarNames } from './avatar-names';
 import {
   emergencyInfoFromBody,
   locationSharingFromBody,
@@ -68,6 +69,7 @@ export class ProfilesService {
     private readonly incidents: IncidentsRepository,
     private readonly postCommit: IncidentPostCommitRunner,
     private readonly audit: AuditService,
+    private readonly avatarNames: AvatarNames,
     config: ApiConfigService,
   ) {
     this.avatars = avatarUrlBase(config);
@@ -89,7 +91,12 @@ export class ProfilesService {
   /** P2. Creates the row when missing; `personal_info_completed_at` set once by the server. */
   upsertPersonalInfo(user: AuthenticatedUser, body: unknown): Promise<ProfileJson> {
     return this.write(async (tx) => {
-      const input = personalInfoFromBody(body, user.id, await this.repository.today(tx));
+      const current = await this.repository.lockAvatarPath(tx, user.id);
+      const input = personalInfoFromBody(
+        body,
+        (path) => path === current || this.avatarNames.issuedTo(path, user.id),
+        await this.repository.today(tx),
+      );
       return this.repository.upsertPersonalInfo(tx, user.id, input, this.avatars);
     });
   }

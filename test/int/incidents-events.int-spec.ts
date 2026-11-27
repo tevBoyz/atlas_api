@@ -4,7 +4,6 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
 import { DatabaseService } from '../../src/db/database.service';
-import { maskActorId } from '../../src/modules/incidents/incident-actor-mask';
 import {
   IncidentEventService,
   UnknownIncidentEventTypeError,
@@ -31,8 +30,8 @@ import { getIncidentEvents, markSafe, renotifyAlert, submitAlert } from '../supp
 /**
  * `IncidentEventService` and `GET /v1/incidents/{id}/events` (API-100-22): the one event writer
  * (`ON CONFLICT DO NOTHING` on the once-only index, unknown types refused in code), the read with
- * `incident.eventsView` (rule 54) and `recipient_ids` hidden from everyone but the resident (epic §18
- * D3), `actor_id` obscured for everyone but the resident and the actor themselves (epic §18 D11),
+ * `incident.eventsView` (rule 54) and (D79, Stage 3 [IDS]) `recipient_ids` hidden from everyone,
+ * `actor_id` only the caller's own id (else null) plus `actor_handle` (the actor member's row id),
  * events never rewritten, the `incident.event` post-commit hook, and reads racing a close and a
  * removal.
  */
@@ -103,6 +102,7 @@ describe('incident events (API-100-22)', () => {
     const { rows } = await client.query<{ body: Body[] }>(
       `select coalesce(jsonb_agg(jsonb_build_object('id', e.id, 'event_type', e.event_type,
                 'occurred_at', e.occurred_at, 'actor_id', e.actor_id,
+                'actor_handle', d.member_id,
                 'actor_name', case
                   when e.actor_id is null then null
                   when e.actor_id = i.resident_id then coalesce(trim(p.full_name), '')
@@ -122,15 +122,13 @@ describe('incident events (API-100-22)', () => {
     return rows[0].body;
   }
 
-  /** What a caller who is not the resident gets: no recipient_ids (D3), actor_id masked (D11). */
-  const memberView = (events: Body[], callerId: string) =>
+  /** What any caller gets (D79): no recipient_ids, actor_id only when it is the caller's own id. */
+  const viewOf = (events: Body[], callerId: string) =>
     events.map((event) => {
       const detail = { ...(event.detail as Body) };
       delete detail.recipient_ids;
-      return { ...event, actor_id: maskActorId(event.actor_id, callerId), detail };
+      return { ...event, actor_id: event.actor_id === callerId ? callerId : null, detail };
     });
-
-  const MASKED = /^[0-9a-f]{4}\*{4}-\*{4}-\*{4}-\*{4}-\*{8}[0-9a-f]{4}$/;
 
   async function lateJoiner(s: Scene): Promise<UserFixture> {
     const joiner = await createUser(client);
@@ -161,17 +159,18 @@ describe('incident events (API-100-22)', () => {
       });
     });
 
-    it('resident: every stored event, exactly 6 keys, ordered occurred_at then id, with recipient_ids', async () => {
+    it('resident: every stored event, exactly 7 keys, ordered occurred_at then id, no recipient_ids (D79)', async () => {
       const s = await scene(2);
       await renotifyAlert(app, s.resident.id, s.incidentId);
       await markSafe(app, s.resident.id, s.incidentId);
       const reply = await getIncidentEvents(app, s.resident.id, s.incidentId);
       expect(reply.statusCode).toBe(200);
       const events = reply.json<Body[]>();
-      expect(events).toEqual(await storedEvents(s.incidentId));
+      expect(events).toEqual(viewOf(await storedEvents(s.incidentId), s.resident.id));
       expect(events).toHaveLength(6); // SCRUM-63 (D62): no incident_closed at mark safe
       for (const event of events) {
         expect(Object.keys(event).sort()).toEqual([
+          'actor_handle',
           'actor_id',
           'actor_name',
           'detail',
@@ -180,16 +179,14 @@ describe('incident events (API-100-22)', () => {
           'occurred_at',
         ]);
       }
-      const ids = s.members.map((m) => m.id).sort();
       expect(events.find((e) => e.event_type === 'alert_sent')?.detail).toEqual({
         recipient_count: 2,
-        recipient_ids: ids,
         emergency_type: 'medical',
       });
       expect(events.find((e) => e.event_type === 'closure_notified')?.detail).toEqual({
         recipient_count: 2,
-        recipient_ids: ids,
       });
+      for (const member of s.members) expect(reply.body).not.toContain(member.id);
     });
 
     it('AC4 (D3): a member gets the same events without recipient_ids; recipient_count stays', async () => {
@@ -198,13 +195,13 @@ describe('incident events (API-100-22)', () => {
       const stored = await storedEvents(s.incidentId);
       const reply = await getIncidentEvents(app, s.members[0].id, s.incidentId);
       expect(reply.statusCode).toBe(200);
-      expect(reply.json()).toEqual(memberView(stored, s.members[0].id));
+      expect(reply.json()).toEqual(viewOf(stored, s.members[0].id));
       for (const other of s.members) expect(reply.body).not.toContain(other.id);
       const alert = reply.json<Body[]>().find((e) => e.event_type === 'alert_sent');
       expect(alert?.detail).toEqual({ recipient_count: 3, emergency_type: 'medical' });
     });
 
-    it('D11: the resident gets full actor ids; a member gets them masked, never the full UUID', async () => {
+    it('D79: the resident sees their own id as actor; a member never sees the resident id (null)', async () => {
       const s = await scene(2);
       await renotifyAlert(app, s.resident.id, s.incidentId);
       await markSafe(app, s.resident.id, s.incidentId);
@@ -221,17 +218,14 @@ describe('incident events (API-100-22)', () => {
       // Same rows in the same order as the stored log.
       expect(member.map((e) => e.id)).toEqual(stored.map((e) => e.id));
       for (const event of member) {
-        const actor = event.actor_id as string;
-        expect(actor).toMatch(MASKED);
-        expect(actor).toHaveLength(36);
-        expect(actor.slice(0, 4)).toBe(s.resident.id.slice(0, 4));
-        expect(actor.slice(-4)).toBe(s.resident.id.slice(-4));
+        expect([event.actor_id, event.actor_handle]).toEqual([null, null]);
       }
       expect(reply.body).not.toContain(s.resident.id);
+      expect(reply.body).not.toContain(s.resident.id.slice(-12));
       expect(reply.body.toLowerCase()).not.toContain(s.resident.id.toLowerCase());
     });
 
-    it('D11: an actor who is the caller is shown in full; a null actor stays null', async () => {
+    it('D79: an actor who is the caller is shown in full; others null; a member actor carries its handle', async () => {
       const s = await scene(1);
       const [mine] = await client
         .query<{ id: string }>(
@@ -244,11 +238,15 @@ describe('incident events (API-100-22)', () => {
         .then((result) => result.rows);
       const member = (await getIncidentEvents(app, s.members[0].id, s.incidentId)).json<Body[]>();
       expect(member.find((e) => e.id === mine.id)?.actor_id).toBe(s.members[0].id);
-      expect(member.filter((e) => e.actor_id === null)).toHaveLength(1);
-      for (const event of member.filter((e) => e.id !== mine.id && e.actor_id !== null)) {
-        expect(event.actor_id).toMatch(MASKED);
-      }
-      expect(member).toEqual(memberView(await storedEvents(s.incidentId), s.members[0].id));
+      expect(member.filter((e) => e.id !== mine.id).every((e) => e.actor_id === null)).toBe(true);
+      expect(member.find((e) => e.id === mine.id)?.actor_handle).toEqual(expect.any(String));
+      expect(member).toEqual(viewOf(await storedEvents(s.incidentId), s.members[0].id));
+      const resident = (await getIncidentEvents(app, s.resident.id, s.incidentId)).json<Body[]>();
+      const seen = resident.find((e) => e.id === mine.id);
+      expect([seen?.actor_id, seen?.actor_handle]).toEqual([
+        null,
+        member.find((e) => e.id === mine.id)?.actor_handle,
+      ]);
     });
 
     it('rule 54 and hidden existence: every denied caller gets the body of an unknown id', async () => {

@@ -64,6 +64,12 @@ export interface PushMessage {
   emergency_type: string | null;
   resident_name: string | null;
   occurred_at: string | null;
+  /**
+   * Stage 2 [B6]: alert notices only (`incident.created` / `incident.renotified`): the incident's
+   * reverse-geocoded place at send time (null = not known: the text says "Location unavailable").
+   * Only in the visible text, never a data key. Undefined for every other notice.
+   */
+  place_name?: string | null;
 }
 
 /** SCRUM-35 (D67): the outbox / push topic of a test alert. */
@@ -139,10 +145,16 @@ export interface PushTarget {
   provider: PushProviderName;
   token: string;
   /**
-   * The recipient's display time zone (`profiles.timezone`, D54): the time in the visible text is
+   * The display time zone (D54, Stage 2 [TZ]: the receiving device's `time_zone`, else the
+   * recipient's `profiles.timezone`): the time in the visible text is
    * shown in it. Never sent to the provider as a value of its own.
    */
   time_zone?: string | null;
+  /**
+   * Stage 2 [B7] (D77): the opaque signed token naming this push's delivery row; sent as the data key
+   * `receipt_token` so the phone can confirm receipt. Never logged.
+   */
+  receipt_token?: string;
 }
 
 export interface PushSender {

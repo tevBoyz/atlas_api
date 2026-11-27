@@ -38,7 +38,8 @@ export interface OwnerTestAlertRow {
   created_at: string;
   recipient_count: number;
   recipients: (RecipientDeliveryCounts & {
-    user_id: string;
+    /** D79: the recipient's member row id in the test's circle (never a user id). */
+    handle: string | null;
     display_name: string | null;
     delivered_at: string | null;
   })[];
@@ -192,9 +193,16 @@ export class TestAlertsRepository {
                'created_at', t.created_at,
                'recipient_count', t.recipient_count,
                'recipients', coalesce((
-                 select jsonb_agg(per order by lower(coalesce(per.display_name, '')), per.user_id)
+                 select jsonb_agg(to_jsonb(per) - 'user_id'
+                                  order by lower(coalesce(per.display_name, '')), per.user_id)
                    from (
                      select r.member_user_id as user_id,
+                            (select hm.id
+                               from public.safety_circle_members hm
+                              where hm.circle_id = t.circle_id
+                                and hm.user_id = r.member_user_id
+                              order by (hm.status = 'active') desc, hm.updated_at desc
+                              limit 1) as handle,
                             r.seen_at,
                             coalesce(
                               nullif(btrim(p.full_name), ''),

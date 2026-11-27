@@ -56,6 +56,8 @@ export type PolicyName =
   | 'incident.memberView'
   | 'incident.eventsView'
   | 'incident.countsView'
+  | 'incident.historyView'
+  | 'incident.eventsHistoryView'
   | 'delivery.own'
   | 'invite.recipient'
   | 'membership.activate';

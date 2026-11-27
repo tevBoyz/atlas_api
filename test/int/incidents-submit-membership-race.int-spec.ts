@@ -112,8 +112,10 @@ describe('D14: an SOS always goes through while members leave or are removed', (
   const deliveredUsers = async (incidentId: string) =>
     (
       await client.query<{ u: string }>(
-        `select member_user_id::text as u from public.incident_deliveries
-          where incident_id = $1 order by member_user_id`,
+        // Stage 2 [B13]: rows of an ended membership are kept as history; the live ones count.
+        `select d.member_user_id::text as u from public.incident_deliveries d
+           join public.safety_circle_members m on m.id = d.member_id and m.status = 'active'
+          where d.incident_id = $1 order by d.member_user_id`,
         [incidentId],
       )
     ).rows.map((r) => r.u);
@@ -213,7 +215,7 @@ describe('D14: an SOS always goes through while members leave or are removed', (
       expect(sent.recipient_ids).toContain(s.cara.id);
       expect(sent.recipient_count).toBe(sent.recipient_ids.length);
       expect(body.delivered_count).toBe(sent.recipient_count);
-      // Ben and Dan are gone; their delivery rows (if they were notified) went with them.
+      // Ben and Dan are gone; their rows (if they were notified) are history, not live.
       expect(await deliveredUsers(incidentId)).toEqual([s.cara.id]);
     }
     expect(statuses.every((code) => code === 201)).toBe(true);

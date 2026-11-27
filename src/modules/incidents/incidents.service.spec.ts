@@ -46,6 +46,7 @@ function serviceWith(
     useUtcTimestamps: jest.fn().mockResolvedValue(undefined),
     lockProfile: jest.fn().mockResolvedValue({ setup_complete: true }),
     lockOpenIncident: jest.fn().mockResolvedValue(undefined),
+    writePlace: jest.fn().mockResolvedValue(undefined),
     lockActiveIncident: jest.fn().mockResolvedValue(undefined),
     insertActiveIncident: jest.fn().mockResolvedValue({ id: INCIDENT_ID, circle_id: null }),
     promoteIncident: jest.fn(),
@@ -272,7 +273,7 @@ describe('IncidentsService.renotify (API-100-18)', () => {
       emergency_services: SERVICES,
     });
     expect(repository.sendResult).not.toHaveBeenCalled();
-    expect(repository.emergencyServices).toHaveBeenCalledWith({});
+    expect(repository.emergencyServices).toHaveBeenCalledWith({}, undefined);
     expect(repository.applyRenotify).toHaveBeenCalledWith({}, INCIDENT_ID, USER.id);
     expect(repository.submitResult).not.toHaveBeenCalled();
     expect(audit.record).toHaveBeenCalledWith(

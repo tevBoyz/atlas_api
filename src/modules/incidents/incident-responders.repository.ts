@@ -3,7 +3,7 @@ import { type SQL, sql } from 'drizzle-orm';
 
 import {
   incidentAlias,
-  incidentEventsView,
+  incidentEventsHistoryView,
   incidentMemberView,
   incidentResident,
 } from '../../common/policies';
@@ -24,7 +24,10 @@ export type ResponderStatus = (typeof RESPONDER_STATUSES)[number];
  * may see (`user_id` masked for members, `is_me`).
  */
 export interface ResponderRow extends Record<string, unknown>, MemberDelivery {
+  /** Internal only (routing, `is_me`): never sent to anyone but that member (D79). */
   user_id: string;
+  /** D79: the member's membership row id (`incident_deliveries.member_id`), the row's key. */
+  handle: string;
   display_name: string;
   avatar_url: string | null;
   status: ResponderStatus;
@@ -88,6 +91,7 @@ export function responderRowsSql(
       from (
         select jsonb_build_object(
                  'user_id', rd.member_user_id,
+                 'handle', rd.member_id,
                  'display_name', coalesce(nullif(trim(rp.full_name), ''), rm.display_name, ''),
                  'avatar_url', ${avatarUrlSql(sql`rp.avatar_path`, avatars)},
                  'status', rs.status,
@@ -152,7 +156,7 @@ export class IncidentRespondersRepository {
              ${responderRowsSql(sql`rec.id`, avatars)} as rows
         from public.incidents rec
        where rec.id = ${incidentId}::uuid
-         and ${incidentEventsView.where({ callerId, incident })}`);
+         and ${incidentEventsHistoryView.where({ callerId, incident })}`);
     return result.rows[0];
   }
 

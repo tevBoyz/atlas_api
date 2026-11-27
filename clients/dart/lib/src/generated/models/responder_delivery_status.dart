@@ -4,7 +4,7 @@
 
 import 'package:json_annotation/json_annotation.dart';
 
-/// RESIDENT ONLY (SCRUM-65, D73; absent on a member's rows): the alert's delivery to this member. delivered = the push service accepted the alert (or a re-notify) for at least one of their devices; sent = still being sent or retried; failed = every attempt failed after its retries, or nothing could be sent (no device with notifications, push switched off). A re-notify recomputes it (failed can become delivered).
+/// RESIDENT ONLY (SCRUM-65, D73; absent on a member's rows): the alert's delivery to this member. delivered (D77) = at least one of their phones confirmed it received the alert (or a re-notify); sent = accepted by the push service but no receipt yet, or still being sent or retried; failed = every attempt failed after its retries, or nothing could be sent (no device with notifications, push switched off). A re-notify recomputes it (failed can become delivered).
 @JsonEnum()
 enum ResponderDeliveryStatus {
   @JsonValue('sent')

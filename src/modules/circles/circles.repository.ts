@@ -194,14 +194,16 @@ export class CirclesRepository {
   /**
    * The rows of `list_circle_members(circle_id)` (final definition: baseline migration
    * 20261117120000) as one jsonb array:
-   * - owner view: every row of the circle with 14 keys, except ENDED rows (`removed` / `left`,
-   *   D44: history only, never shown); member view: `status = 'active'` rows only, with 8 keys
+   * - owner view: every row of the circle with 15 keys, except ENDED rows (`removed` / `left`,
+   *   D44: history only, never shown); member view: `status = 'active'` rows only, with 9 keys
    *   (never phone, email, relationship, invite timestamps or the token);
    * - `status`: stored status, except a stored `pending` row whose lookup status is `expired` →
    *   `expired` (fix #14);
    * - `display_name`: an `active` row with a `user_id` shows that user's `profiles.full_name`,
    *   trimmed (spaces), when non-empty, else the stored name; every other row the stored name (fix
    *   #18, `_member_profile_name`);
+   * - D79 (Stage 3 [IDS]): `user_id` is the caller's own id on their own row and null on every other
+   *   row (never another user's id); `handle` = the member row id (the row's opaque key);
    * - `avatar_url`: from the row user's `profiles.avatar_path` ({@link avatarUrlSql}), null without a
    *   `user_id`, a profile or a path;
    * - order: owner first, then `active` < `pending` < `expired` < `declined`, then `lower(shown
@@ -213,6 +215,7 @@ export class CirclesRepository {
     circleId: string,
     ownerView: boolean,
     avatars: AvatarUrlBase,
+    callerId: string,
   ): Promise<CircleMemberJson[]> {
     const scm = memberAlias('scm');
     const avatarUrl = sql`case
@@ -225,7 +228,8 @@ export class CirclesRepository {
               'display_name', r.shown_name,
               'is_owner', r.role = 'owner',
               'invited_at', r.invited_at,
-              'user_id', r.user_id,
+              'user_id', case when r.user_id = ${callerId}::uuid then r.user_id end,
+              'handle', r.id,
               'avatar_url', ${avatarUrl}`;
     const payload = ownerView
       ? sql`jsonb_build_object(
@@ -284,6 +288,9 @@ export class CirclesRepository {
                where scm.circle_id = ${circleId}::uuid
                  and ${notEndedSql(sql`scm.status`)}
                  and (${ownerView}::boolean or scm.status = 'active')
+                 -- Stage 3 [B10b]: a declined row is the invitee's "no" (declined_at set); an owner
+                 -- cancel (declined, declined_at null) is no longer listed.
+                 and (scm.status <> 'declined' or scm.declined_at is not null)
             ) r
         ) listed`);
     return result.rows[0].body;

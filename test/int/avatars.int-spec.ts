@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
+import { AvatarNames } from '../../src/modules/profiles/avatar-names';
 import { AVATAR_STORAGE, type AvatarStorage } from '../../src/modules/profiles/avatar-storage';
 import { MemoryAvatarStorage } from '../../src/modules/profiles/memory-avatar-storage';
 import { createTestApp, type LogCapture, withTestConfig } from '../../src/testing/test-app';
@@ -106,7 +107,7 @@ describe('avatars through signed Storage URLs (API-100-37)', () => {
       ['image/png', 'png'],
       ['image/webp', 'webp'],
     ])(
-      '%s → a new object {uid}/avatar-{uuid}.%s, PUT, 2-hour expiry, no-store',
+      '%s → a new random object a/<56 hex>.%s (D79: no user id), PUT, 2-hour expiry, no-store',
       async (type, ext) => {
         const user = await createUser(client);
         const reply = await createAvatarUploadUrl(app, user.id, {
@@ -125,11 +126,8 @@ describe('avatars through signed Storage URLs (API-100-37)', () => {
         ]);
         expect(body.method).toBe('PUT');
         expect(body.headers).toEqual({ 'content-type': type });
-        expect(body.object_path).toMatch(
-          new RegExp(
-            `^${user.id}/avatar-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.${ext}$`,
-          ),
-        );
+        expect(body.object_path).toMatch(new RegExp(`^a/[0-9a-f]{56}\\.${ext}$`));
+        expect(body.object_path as string).not.toContain(user.id);
         const ttl = Date.parse(body.expires_at as string) - Date.now();
         expect(ttl).toBeGreaterThan(7_100_000);
         expect(ttl).toBeLessThanOrEqual(7_200_000);
@@ -290,7 +288,9 @@ describe('avatars through signed Storage URLs (API-100-37)', () => {
         'object_path',
       );
       expectError(
-        await setAvatar(app, user.id, { object_path: `${user.id}/avatar-never-uploaded.jpg` }),
+        await setAvatar(app, user.id, {
+          object_path: app.get(AvatarNames).newPath(user.id, 'jpg'),
+        }),
         404,
         'profiles:avatar_not_found',
         'object_path',
@@ -351,7 +351,7 @@ describe('avatars through signed Storage URLs (API-100-37)', () => {
       expect(profile.avatar_url).toBe(publicUrl(legacy));
       const listed = (await listMembers(app, owner.id, circle.id))
         .json<Body[]>()
-        .find((row) => row.user_id === member.id);
+        .find((row) => row.display_name === 'Photo Member');
       expect(listed?.avatar_url).toBe(publicUrl(legacy));
 
       // Setting the legacy path again is allowed (it exists); a new photo replaces it and deletes it.
@@ -361,16 +361,27 @@ describe('avatars through signed Storage URLs (API-100-37)', () => {
         (await setAvatar(app, member.id, { object_path: fresh })).json<Body>().avatar_url,
       ).toBe(publicUrl(fresh));
       expect(await storage.exists(legacy)).toBe(false);
-      // Personal Info may still carry a path of the caller's folder (as the app sends it today).
+      // D79: Personal Info takes the stored path (unchanged) or one issued to the caller; an old
+      // own-folder path that is no longer stored is refused.
       expect(
         (
           await putPersonalInfo(app, member.id, {
             full_name: 'Photo Member',
             date_of_birth: '1990-01-15',
-            avatar_path: legacy,
+            avatar_path: fresh,
           })
         ).json<Body>().avatar_url,
-      ).toBe(publicUrl(legacy));
+      ).toBe(publicUrl(fresh));
+      expectError(
+        await putPersonalInfo(app, member.id, {
+          full_name: 'Photo Member',
+          date_of_birth: '1990-01-15',
+          avatar_path: legacy,
+        }),
+        422,
+        'profiles:invalid_avatar_path',
+        'avatar_path',
+      );
     });
   });
 
@@ -391,7 +402,9 @@ describe('avatars through signed Storage URLs (API-100-37)', () => {
           'profiles:avatar_storage_unavailable',
         );
         expectError(
-          await setAvatar(bare.app, user.id, { object_path: `${user.id}/avatar.png` }),
+          await setAvatar(bare.app, user.id, {
+            object_path: bare.app.get(AvatarNames).newPath(user.id, 'png'),
+          }),
           503,
           'profiles:avatar_storage_unavailable',
         );

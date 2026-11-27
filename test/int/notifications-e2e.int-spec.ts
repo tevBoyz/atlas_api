@@ -136,7 +136,13 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
     expect(sent.provider_message_id).toMatch(/^fake-/);
     const fake = push().sent.find((s) => s.provider_message_id === sent.provider_message_id);
     // The recipient's profiles.timezone goes with the target (D54); the CHECK allows Africa/Banjul only.
-    expect(fake?.to).toEqual({ provider: 'fcm', token: goodToken, time_zone: 'Africa/Banjul' });
+    // Stage 2 [B7]: plus the delivery's signed receipt token.
+    expect(fake?.to).toEqual({
+      provider: 'fcm',
+      token: goodToken,
+      time_zone: 'Africa/Banjul',
+      receipt_token: expect.stringMatching(/^[0-9a-f]{32}\.[A-Za-z0-9_-]{22}$/) as unknown,
+    });
     expect(fake?.content).toMatchObject({ incident_id: incidentId, topic: 'incident.created' });
     // SCRUM-47 AC2 / D54: resident name, emergency type and the activation time (h:mm AM/PM, 12-hour, in
     // the recipient's time zone; Africa/Banjul = UTC).
@@ -147,7 +153,7 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
     );
     expect(fake?.text).toEqual({
       title: resident.fullName,
-      body: `Emergency alert: Medical · ${at[0].hhmm}`,
+      body: `Emergency alert: Medical · Location unavailable · ${at[0].hhmm}`,
     });
     // SCRUM-47 latency line: one per accepted delivery, ids only, pipeline part well inside the 5 s of AC1 (the guide checks < 2 s).
     const latency = workerLogs.lines.filter(
@@ -247,9 +253,14 @@ describe('Phase 5 gate: submit → outbox → job → fake push → delivery (AP
       )
       .map((s) => s.text?.body);
     expect(texts).toEqual([
-      expect.stringMatching(/^Emergency alert: Medical · \d{1,2}:\d{2} [AP]M$/),
-      expect.stringMatching(/^Alert sent again: Medical · \d{1,2}:\d{2} [AP]M$/),
-      expect.stringMatching(/^Marked safe\. The alert is closed\. · \d{1,2}:\d{2} [AP]M$/),
+      // Stage 2 [B6]: no place sent -> "Location unavailable"; [B8]: "<Name> is safe", no "closed".
+      expect.stringMatching(
+        /^Emergency alert: Medical · Location unavailable · \d{1,2}:\d{2} [AP]M$/,
+      ),
+      expect.stringMatching(
+        /^Alert sent again: Medical · Location unavailable · \d{1,2}:\d{2} [AP]M$/,
+      ),
+      expect.stringMatching(new RegExp(`^${resident.fullName} is safe · \\d{1,2}:\\d{2} [AP]M$`)),
     ]);
   });
 

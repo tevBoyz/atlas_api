@@ -238,7 +238,7 @@ describe('remove and leave (API-100-32)', () => {
     expect(ENDED).toEqual([]);
   });
 
-  it('remove: ends an active row as removed (D44), deletes its deliveries, audits, announces after commit', async () => {
+  it('remove: ends an active row as removed (D44), keeps its deliveries (Stage 2 [B13]), audits, announces after commit', async () => {
     const { owner, circle, ben, benRow, caraRow } = await circleWithMembers();
     const incident = (await submitAlert(app, owner.id, 'medical')).json<Body>();
     expect(await deliveries(benRow.id)).toBe(1);
@@ -250,7 +250,8 @@ describe('remove and leave (API-100-32)', () => {
       JSON.stringify({ removed: true, circle_id: circle.id, member_id: benRow.id }),
     );
     await expectEnded(benRow.id, 'removed', ben.id);
-    expect(await deliveries(benRow.id)).toBe(0);
+    // Stage 2 [B13]: the row is kept as history, but no longer counts.
+    expect(await deliveries(benRow.id)).toBe(1);
     expect(await deliveries(caraRow.id)).toBe(1);
     expect(
       (await getDeliveryCounts(app, owner.id, incident.id as string)).json<Body>().delivered_count,
@@ -335,7 +336,7 @@ describe('remove and leave (API-100-32)', () => {
     expect(ENDED).toEqual([]);
   });
 
-  it('leave: ends the caller’s row as left (D44), deletes its deliveries, audits, announces; a second leave is 403', async () => {
+  it('leave: ends the caller’s row as left (D44), keeps its deliveries (Stage 2 [B13]), audits, announces; a second leave is 403', async () => {
     const { owner, circle, ben, benRow, caraRow } = await circleWithMembers();
     await submitAlert(app, owner.id, 'fire');
     const reply = await leaveCircle(app, ben.id, circle.id);
@@ -344,7 +345,7 @@ describe('remove and leave (API-100-32)', () => {
       JSON.stringify({ left: true, circle_id: circle.id, member_id: benRow.id }),
     );
     await expectEnded(benRow.id, 'left', ben.id);
-    expect(await deliveries(benRow.id)).toBe(0);
+    expect(await deliveries(benRow.id)).toBe(1);
     expect(await deliveries(caraRow.id)).toBe(1);
     expect(await auditOf(benRow.id)).toEqual([
       {
@@ -410,10 +411,11 @@ describe('remove and leave (API-100-32)', () => {
     expect(line).toMatchObject({ reason: 'removed', circle_id: circle.id });
   });
 
-  // --- AC4: every incident read of that circle by that user is 404 afterwards ----------------------
+  // --- AC4: every live incident read of that circle by that user is 404 afterwards; Stage 2 [B13]
+  // (SCRUM-64 AC3): the PAST alert they were notified of stays readable, read-only ------------------
 
   it.each(['removed', 'left'] as const)(
-    'after being %s: 404 on the active incident and on history; gone from the responder list',
+    'after being %s: 404 on the active incident; the past one read-only (Stage 2 [B13])',
     async (how) => {
       const { owner, circle, ben, benRow } = await circleWithMembers();
       const past = (await submitAlert(app, owner.id, 'medical')).json<Body>().id as string;
@@ -435,13 +437,16 @@ describe('remove and leave (API-100-32)', () => {
           : await leaveCircle(app, ben.id, circle.id);
       expect(done.statusCode).toBe(200);
 
+      expectCode(
+        await getIncidentDetails(app, ben.id, live),
+        404,
+        'get_incident_details:not_found',
+      );
+      expectCode(await getIncidentEvents(app, ben.id, live), 404, 'incident_events:not_found');
+      // Stage 2 [B13]: the resolved alert he was notified of stays readable (read-only).
+      expect((await getIncidentDetails(app, ben.id, past)).statusCode).toBe(200);
+      expect((await getIncidentEvents(app, ben.id, past)).statusCode).toBe(200);
       for (const id of [live, past]) {
-        expectCode(
-          await getIncidentDetails(app, ben.id, id),
-          404,
-          'get_incident_details:not_found',
-        );
-        expectCode(await getIncidentEvents(app, ben.id, id), 404, 'incident_events:not_found');
         expectCode(
           await getDeliveryCounts(app, ben.id, id),
           404,
@@ -453,7 +458,9 @@ describe('remove and leave (API-100-32)', () => {
           'acknowledge_incident:not_found',
         );
       }
-      expect((await listResponderIncidents(app, ben.id)).json<Body[]>()).toEqual([]);
+      expect((await listResponderIncidents(app, ben.id)).json<Body[]>().map((i) => i.id)).toEqual([
+        past,
+      ]);
       // The resident still reads both, and Cara still sees the live one.
       expect((await getDeliveryCounts(app, owner.id, live)).statusCode).toBe(200);
       expect((await getIncidentEvents(app, owner.id, past)).statusCode).toBe(200);
@@ -564,13 +571,13 @@ describe('remove and leave (API-100-32)', () => {
     expect(
       (await compareRemove(owner, circle, '00000000-0000-4000-8000-0000000000fd')).apiError,
     ).toBe('remove_circle_member:not_found');
-    // D44: Ben's active row is kept as `removed` and his deliveries go; the pending and declined
-    // rows are deleted.
+    // D44: Ben's active row is kept as `removed` and (Stage 2 [B13]) his deliveries stay; the
+    // pending and declined rows are deleted.
     const ended = await compareRemove(owner, circle, benRow.id);
     expect(ended.apiError).toBeUndefined();
     expect(ended.endedNow).toEqual([benRow.id]);
     await expectEnded(benRow.id, 'removed', ben.id);
-    expect(await deliveriesOf(circle.id, benRow.id)).toEqual([]);
+    expect(await deliveriesOf(circle.id, benRow.id)).toHaveLength(1);
     for (const id of [pending.id, declined.id]) {
       const compared = await compareRemove(owner, circle, id);
       expect(compared.apiError).toBeUndefined();
@@ -591,7 +598,7 @@ describe('remove and leave (API-100-32)', () => {
     expect(left.apiError).toBeUndefined();
     expect(left.endedNow).toEqual([benRow.id]);
     await expectEnded(benRow.id, 'left', ben.id);
-    expect(await deliveriesOf(circle.id, benRow.id)).toEqual([]);
+    expect(await deliveriesOf(circle.id, benRow.id)).toHaveLength(1);
     expect((await compareLeave(ben, circle)).apiError).toBe('leave_safety_circle:not_authorized');
     const ghost: CircleFixture = { ...circle, id: '00000000-0000-4000-8000-0000000000fc' };
     expect((await compareLeave(ben, ghost)).apiError).toBe('leave_safety_circle:not_found');

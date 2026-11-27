@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Client } from 'pg';
 
+import { AvatarNames } from '../../src/modules/profiles/avatar-names';
 import { PROFILE_COLUMNS } from '../../src/modules/profiles/profiles.repository';
 import { SHARE_FLAGS } from '../../src/modules/profiles/profile.schemas';
 import { createTestApp, withTestConfig } from '../../src/testing/test-app';
@@ -114,10 +115,12 @@ describe('profile writes (API-100-35)', () => {
   describe('AC1 PUT /v1/me/profile/personal-info', () => {
     it('creates the row (table defaults), trims the name and stamps personal_info_completed_at', async () => {
       const id = await newAuthUser();
+      // D79: a photo path the API issued to the caller (random name, no user id).
+      const photo = app.get(AvatarNames).newPath(id, 'jpg');
       const reply = await putPersonalInfo(
         app,
         id,
-        personalInfoBody({ full_name: '  Awa  Example ', avatar_path: `${id}/avatar.jpg` }),
+        personalInfoBody({ full_name: '  Awa  Example ', avatar_path: photo }),
       );
       expect(reply.statusCode).toBe(200);
       const body = reply.json<Body>();
@@ -127,8 +130,8 @@ describe('profile writes (API-100-35)', () => {
         full_name: 'Awa  Example',
         date_of_birth: '1990-05-17',
         gender: 'female',
-        avatar_path: `${id}/avatar.jpg`,
-        avatar_url: `https://example-project.supabase.co/storage/v1/object/public/avatars/${id}/avatar.jpg`,
+        avatar_path: photo,
+        avatar_url: `https://example-project.supabase.co/storage/v1/object/public/avatars/${photo}`,
         alert_push_enabled: true,
         location_sharing_enabled: true,
         app_language: 'en',
@@ -145,7 +148,8 @@ describe('profile writes (API-100-35)', () => {
 
     it('keeps the first completion time and leaves gender / avatar_path alone when left out', async () => {
       const id = await newAuthUser();
-      await putPersonalInfo(app, id, personalInfoBody({ avatar_path: `${id}/avatar.png` }));
+      const photo = app.get(AvatarNames).newPath(id, 'png');
+      await putPersonalInfo(app, id, personalInfoBody({ avatar_path: photo }));
       const first = (await row(id)).personal_info_completed_at;
       const reply = await putPersonalInfo(app, id, {
         full_name: 'Renamed',
@@ -159,7 +163,7 @@ describe('profile writes (API-100-35)', () => {
         full_name: 'Renamed',
         date_of_birth: '1991-02-03',
         gender: 'female',
-        avatar_path: `${id}/avatar.png`,
+        avatar_path: photo,
         profile_setup_completed_at: null,
       });
       // null clears both.
@@ -179,7 +183,7 @@ describe('profile writes (API-100-35)', () => {
         'profiles:invalid_full_name',
         'full_name',
       );
-      for (const dob of [tomorrow, '2023-02-29', '1990-1-1', '', null]) {
+      for (const dob of [tomorrow, '2023-02-29', '1990-1-1']) {
         expectError(
           await putPersonalInfo(app, id, personalInfoBody({ date_of_birth: dob })),
           422,
@@ -214,6 +218,31 @@ describe('profile writes (API-100-35)', () => {
       ).toBe(200);
     });
 
+    it('Stage 3 [B2] (SCRUM-17): date of birth optional — left out, null or blank saves; left out keeps, null clears; profile set-up still completes', async () => {
+      const id = await newAuthUser();
+      const withoutDob = { full_name: 'Awa Example', gender: 'female' };
+      const created = await putPersonalInfo(app, id, withoutDob);
+      expect(created.statusCode).toBe(200);
+      expect(created.json<{ date_of_birth: unknown }>().date_of_birth).toBeNull();
+      const set = await putPersonalInfo(app, id, personalInfoBody({ date_of_birth: '1990-05-17' }));
+      expect(set.json<{ date_of_birth: unknown }>().date_of_birth).toBe('1990-05-17');
+      const kept = await putPersonalInfo(app, id, withoutDob);
+      expect(kept.json<{ date_of_birth: unknown }>().date_of_birth).toBe('1990-05-17');
+      for (const cleared of [null, '', '  ']) {
+        await putPersonalInfo(app, id, personalInfoBody({ date_of_birth: '1990-05-17' }));
+        const res = await putPersonalInfo(app, id, personalInfoBody({ date_of_birth: cleared }));
+        expect([res.statusCode, res.json<{ date_of_birth: unknown }>().date_of_birth]).toEqual([
+          200,
+          null,
+        ]);
+      }
+      const { rows } = await client.query<{ dob: string | null; done: boolean }>(
+        'select date_of_birth::text as dob, personal_info_completed_at is not null as done from public.profiles where id = $1',
+        [id],
+      );
+      expect(rows).toEqual([{ dob: null, done: true }]);
+    });
+
     it('a token whose user no longer exists → 401 profiles:not_authenticated (no 23503)', async () => {
       expectError(
         await putPersonalInfo(app, await goneUser(client), personalInfoBody()),
@@ -224,6 +253,41 @@ describe('profile writes (API-100-35)', () => {
   });
 
   describe('AC2 PUT /v1/me/profile/emergency-info', () => {
+    it('Stage 3 [B5] (SCRUM-79): one emergency contact only — a second save replaces it; a contact list is refused and nothing is written', async () => {
+      const id = await freshProfile();
+      await putEmergencyInfo(app, id, emergencyInfoBody({ emergency_contact_full_name: 'First' }));
+      const second = await putEmergencyInfo(
+        app,
+        id,
+        emergencyInfoBody({
+          emergency_contact_full_name: 'Second',
+          emergency_contact_phone: '+2207009911',
+        }),
+      );
+      expect(second.statusCode).toBe(200);
+      expect(second.json<Record<string, unknown>>()).toMatchObject({
+        emergency_contact_full_name: 'Second',
+        emergency_contact_phone: '+2207009911',
+      });
+      const list = await putEmergencyInfo(
+        app,
+        id,
+        emergencyInfoBody({
+          emergency_contact_full_name: 'Third',
+          emergency_contacts: [
+            { full_name: 'Third', phone: '+2207009912' },
+            { full_name: 'Fourth', phone: '+2207009913' },
+          ],
+        }),
+      );
+      expectError(list, 422, 'validation:invalid_request', 'emergency_contacts');
+      const { rows } = await client.query<{ name: string }>(
+        'select emergency_contact_full_name as name from public.profiles where id = $1',
+        [id],
+      );
+      expect(rows).toEqual([{ name: 'Second' }]);
+    });
+
     it('stores the values, blank → null, every flag, location sharing; completion once', async () => {
       const id = await freshProfile();
       const reply = await putEmergencyInfo(

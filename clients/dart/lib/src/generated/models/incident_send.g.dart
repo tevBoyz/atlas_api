@@ -13,6 +13,7 @@ IncidentSend _$IncidentSendFromJson(Map<String, dynamic> json) => IncidentSend(
   autoClosed: json['auto_closed'] as bool,
   cancelledAt: json['cancelled_at'] as String?,
   circleId: json['circle_id'] as String?,
+  countryCode: json['country_code'] as String?,
   deliveredCount: (json['delivered_count'] as num).toInt(),
   emergencyType: IncidentSendEmergencyType.fromJson(
     json['emergency_type'] as String,
@@ -29,6 +30,7 @@ IncidentSend _$IncidentSendFromJson(Map<String, dynamic> json) => IncidentSend(
       ? null
       : IncidentSendLocationSource.fromJson(json['location_source'] as String),
   locationUnavailableSince: json['location_unavailable_since'] as String?,
+  placeName: json['place_name'] as String?,
   renotifiedAt: json['renotified_at'] as String?,
   residentId: json['resident_id'] as String,
   resolvedAt: json['resolved_at'] as String?,
@@ -46,6 +48,7 @@ Map<String, dynamic> _$IncidentSendToJson(IncidentSend instance) =>
       'auto_closed': instance.autoClosed,
       'cancelled_at': instance.cancelledAt,
       'circle_id': instance.circleId,
+      'country_code': instance.countryCode,
       'delivered_count': instance.deliveredCount,
       'emergency_type': instance.emergencyType,
       'id': instance.id,
@@ -58,6 +61,7 @@ Map<String, dynamic> _$IncidentSendToJson(IncidentSend instance) =>
       'location_sharing_ended_at': instance.locationSharingEndedAt,
       'location_source': instance.locationSource,
       'location_unavailable_since': instance.locationUnavailableSince,
+      'place_name': instance.placeName,
       'renotified_at': instance.renotifiedAt,
       'resident_id': instance.residentId,
       'resolved_at': instance.resolvedAt,

@@ -3,9 +3,8 @@ import { isSQLWrapper, type SQL, sql } from 'drizzle-orm';
 
 import type { AuthenticatedUser } from '../../common/auth';
 import { DomainError } from '../../common/errors';
-import { incidentAlias, incidentEventsView, incidentResident } from '../../common/policies';
+import { incidentAlias, incidentEventsHistoryView } from '../../common/policies';
 import { DatabaseService } from '../../db/database.service';
-import { maskActorId } from './incident-actor-mask';
 import type { IncidentTransaction } from './incidents.repository';
 
 /**
@@ -78,8 +77,36 @@ export const ONCE_PER_INCIDENT_EVENT_TYPES = [
   'closure_notified',
 ] as const satisfies readonly IncidentEventType[];
 
-/** `detail` keys only the resident (incident owner) may read (epic §18 D3, API-100-22 AC4). */
-export const RESIDENT_ONLY_DETAIL_KEYS = ['recipient_ids'] as const;
+/**
+ * `detail` keys never sent to anyone (D79, Stage 3 [IDS]; before: resident only, epic §18 D3):
+ * `recipient_ids` are user ids of the members. `recipient_count` stays. Kept in the stored row for
+ * the closure notice.
+ */
+export const HIDDEN_DETAIL_KEYS = ['recipient_ids'] as const;
+
+/**
+ * D79 (Stage 3 [IDS], replaces the D11 masking): an event's `actor_id` as `callerId` sees it: the
+ * caller's own id when they are the actor, else null (another user's id is never sent).
+ */
+export function actorIdFor(actorId: unknown, callerId: string | null): string | null {
+  if (typeof actorId !== 'string' || !callerId) return null;
+  return actorId.toLowerCase() === callerId.toLowerCase() ? actorId.toLowerCase() : null;
+}
+
+/**
+ * D79: `actor_handle` of the event aliased `event`: the actor's membership row id in that incident
+ * (`incident_deliveries.member_id`, the responder row's `handle`) when a member caused it; null for
+ * the resident and for events no user caused.
+ */
+export function eventActorHandleSql(event: string): SQL {
+  const e = sql.raw(event);
+  return sql`(select ah_d.member_id
+      from public.incident_deliveries ah_d
+     where ah_d.incident_id = ${e}.incident_id
+       and ${e}.actor_id is not null
+       and ah_d.member_user_id = ${e}.actor_id
+     limit 1)`;
+}
 
 /** A programming error: an event type the API does not know (never stored). */
 export class UnknownIncidentEventTypeError extends Error {
@@ -210,8 +237,8 @@ export class IncidentEventService {
    * `actor_name` ({@link eventActorNameSql}, D71, the same for every caller), when the caller
    * passes `incident.eventsView` (the resident; or an active member inside the window while the
    * incident is `active`/`resolved`/`closed`, rule 54; SCRUM-63: history stays readable). A caller who is not the resident never gets
-   * `recipient_ids` (epic §18 D3); `recipient_count` stays. For that caller each `actor_id` is
-   * obscured by {@link maskActorId} (epic §18 D11), except the caller's own id. Undefined when the
+   * `recipient_ids` (D79: nobody does); `recipient_count` stays. Each `actor_id` is the caller's own
+   * id or null ({@link actorIdFor}, D79), `actor_handle` the actor member's handle. Undefined when the
    * incident is unknown or hidden from the caller (both `not_found`). One statement: the access check
    * and the events come from one snapshot.
    */
@@ -221,22 +248,18 @@ export class IncidentEventService {
     callerId: string,
   ): Promise<Record<string, unknown>[] | undefined> {
     const incident = incidentAlias('rec');
-    const hidden = sql.raw(`array[${RESIDENT_ONLY_DETAIL_KEYS.map((k) => `'${k}'`).join(', ')}]`);
-    const result = await tx.execute<{ body: Record<string, unknown>[]; is_resident: boolean }>(sql`
-      select ${incidentResident.where({ callerId, incident })} as is_resident,
-             coalesce(
+    const hidden = sql.raw(`array[${HIDDEN_DETAIL_KEYS.map((k) => `'${k}'`).join(', ')}]`);
+    const result = await tx.execute<{ body: Record<string, unknown>[] }>(sql`
+      select coalesce(
                (select jsonb_agg(
                          jsonb_build_object(
                            'id', e.id,
                            'event_type', e.event_type,
                            'occurred_at', e.occurred_at,
                            'actor_id', e.actor_id,
+                           'actor_handle', ${eventActorHandleSql('e')},
                            'actor_name', ${eventActorNameSql('e', 'rec')},
-                           'detail', case
-                                       when ${incidentResident.where({ callerId, incident })}
-                                         then e.detail
-                                       else e.detail - ${hidden}::text[]
-                                     end
+                           'detail', e.detail - ${hidden}::text[]
                          )
                          order by e.occurred_at, e.id
                        )
@@ -246,10 +269,9 @@ export class IncidentEventService {
              ) as body
         from public.incidents rec
        where rec.id = ${incidentId}::uuid
-         and ${incidentEventsView.where({ callerId, incident })}`);
+         and ${incidentEventsHistoryView.where({ callerId, incident })}`);
     const row = result.rows[0];
     if (!row) return undefined;
-    if (row.is_resident === true) return row.body;
-    return row.body.map((event) => ({ ...event, actor_id: maskActorId(event.actor_id, callerId) }));
+    return row.body.map((event) => ({ ...event, actor_id: actorIdFor(event.actor_id, callerId) }));
   }
 }

@@ -1,8 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 
-import { maskActorId } from '../modules/incidents/incident-actor-mask';
 import { type ResponderViewer, responderView } from '../modules/incidents/incident-responder-view';
-import { RESIDENT_ONLY_DETAIL_KEYS } from '../modules/incidents/incident-events.service';
+import { actorIdFor, HIDDEN_DETAIL_KEYS } from '../modules/incidents/incident-events.service';
 import type { MemberDeliveryFailedReason } from '../modules/incidents/incident-delivery-status';
 import type {
   IncidentClosedEvent,
@@ -53,6 +52,8 @@ export function locationPayload(state: IncidentBroadcastState) {
     location_accuracy_m: state.location_accuracy_m,
     location_captured_at: state.location_captured_at,
     location_unavailable_since: state.location_unavailable_since,
+    place_name: state.place_name,
+    country_code: state.country_code,
     updated_at: state.updated_at,
     occurred_at: state.occurred_at,
   };
@@ -158,7 +159,10 @@ export function respondersPayload(state: IncidentResponderState, viewer: Respond
 export interface IncidentDeliveryFailedEvent {
   incident_id: string;
   resident_id: string;
+  /** Internal only (never sent, D79). */
   member_user_id: string;
+  /** D79: the member's membership row id (the responder row's `handle`). */
+  member_handle: string;
   display_name: string;
   reason: MemberDeliveryFailedReason;
   occurred_at: string;
@@ -166,22 +170,24 @@ export interface IncidentDeliveryFailedEvent {
 
 /**
  * `incident.delivery_failed` (SCRUM-71, D73), to the resident only: which member did not receive the
- * alert (full user id, as on the resident's responder list, and the display name) and why.
+ * alert (D79: its `handle`, as on the resident's responder list, never a user id; and the display
+ * name) and why.
  */
 export function deliveryFailedPayload(event: IncidentDeliveryFailedEvent) {
   return {
     incident_id: event.incident_id,
-    member: { user_id: event.member_user_id, display_name: event.display_name },
+    member: { handle: event.member_handle, display_name: event.display_name },
     reason: event.reason,
     occurred_at: event.occurred_at,
   };
 }
 
 /**
- * `incident.event` as one receiver sees it, with the rules of `GET /v1/incidents/{id}/events`:
- * the resident gets the row as stored; anyone else never gets `recipient_ids` (D3) and gets
- * `actor_id` masked (D11) unless it is their own id (`viewerId`; null = a member who is not the
- * actor). `actor_name` (D71) is the same for every receiver. Keys in the contract's order.
+ * `incident.event` as one receiver sees it, with the rules of `GET /v1/incidents/{id}/events`
+ * (D79): nobody gets `recipient_ids`; `actor_id` is the receiver's own id when they are the actor
+ * (the resident's sockets: the resident; `viewerId` for a member's own sockets, null for any other
+ * member), else null; `actor_handle` (the actor member's handle) and `actor_name` (D71) are the
+ * same for every receiver. Keys in the contract's order.
  */
 export function eventPayload(
   row: IncidentEventRow,
@@ -189,14 +195,16 @@ export function eventPayload(
 ) {
   const { event } = row;
   const detail = { ...event.detail };
-  if (!view.resident) for (const key of RESIDENT_ONLY_DETAIL_KEYS) delete detail[key];
+  for (const key of HIDDEN_DETAIL_KEYS) delete detail[key];
+  const viewerId = view.resident ? row.resident_id : view.viewerId;
   return {
     incident_id: row.incident_id,
     event: {
       id: event.id,
       event_type: event.event_type,
       occurred_at: event.occurred_at,
-      actor_id: view.resident ? event.actor_id : maskActorId(event.actor_id, view.viewerId ?? ''),
+      actor_id: actorIdFor(event.actor_id, viewerId),
+      actor_handle: event.actor_handle ?? null,
       actor_name: event.actor_name,
       detail,
     },

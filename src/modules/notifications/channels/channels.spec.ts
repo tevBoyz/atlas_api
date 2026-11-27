@@ -21,6 +21,7 @@ import {
   ANDROID_TEST_CHANNEL_ID,
   pushData,
   pushMessageOf,
+  pushNotificationTag,
   pushText,
   pushTime,
   pushTtlSeconds,
@@ -94,7 +95,8 @@ describe('push content (API-100-46 AC3)', () => {
       location_lat: 13.4,
       incident_notes: 'note',
     });
-    expect(message).toEqual(MESSAGE);
+    // Stage 2 [B6]: an alert notice carries its place (null here: not in the payload).
+    expect(message).toEqual({ ...MESSAGE, place_name: null });
     expect(Object.keys(pushData(message!)).sort()).toEqual([
       'emergency_type',
       'incident_id',
@@ -117,10 +119,40 @@ describe('push content (API-100-46 AC3)', () => {
       title: 'Atlas',
       body: 'Alert sent again: Medical · 10:00 AM',
     });
+    // Stage 2 [B8]: Resolved (Safe) is not Closed.
     expect(pushText({ ...MESSAGE, topic: 'incident.resolved' }).body).toBe(
-      'Marked safe. The alert is closed. · 10:00 AM',
+      'Ada Example is safe · 10:00 AM',
     );
+    expect(pushText({ ...MESSAGE, topic: 'incident.resolved', resident_name: null })).toEqual({
+      title: 'Atlas',
+      body: 'Your Safety Circle contact is safe · 10:00 AM',
+    });
     expect(pushText({ ...MESSAGE, occurred_at: null }).body).toBe('Emergency alert: Medical');
+  });
+
+  it('Stage 2 [B6]: the alert names its place, else "Location unavailable"; never coordinates', () => {
+    const payload = {
+      incident_id: MESSAGE.incident_id,
+      emergency_type: 'medical',
+      resident_name: 'Ada Example',
+      occurred_at: MESSAGE.occurred_at,
+      location_lat: 13.45,
+      location_lng: -16.58,
+    };
+    const near = pushMessageOf('incident.created', { ...payload, place_name: 'Serrekunda' })!;
+    expect(pushText(near).body).toBe('Emergency alert: Medical · near Serrekunda · 10:00 AM');
+    const again = pushMessageOf('incident.renotified', { ...payload, place_name: 'Bakau' })!;
+    expect(pushText(again).body).toBe('Alert sent again: Medical · near Bakau · 10:00 AM');
+    const unknown = pushMessageOf('incident.created', { ...payload, place_name: null })!;
+    expect(pushText(unknown).body).toBe(
+      'Emergency alert: Medical · Location unavailable · 10:00 AM',
+    );
+    expect(JSON.stringify(pushText(near))).not.toMatch(/13\.45|16\.58/);
+    // The place is text only: never a data key; other notices never name it.
+    expect(pushData(near)).not.toHaveProperty('place_name');
+    const safe = pushMessageOf('incident.resolved', { ...payload, place_name: 'Serrekunda' })!;
+    expect(safe).not.toHaveProperty('place_name');
+    expect(pushText(safe).body).toBe('Ada Example is safe · 10:00 AM');
   });
 
   it('D54: the time is in the recipient time zone, 12-hour h:mm AM/PM (gap 62); default Africa/Banjul', () => {
@@ -165,6 +197,27 @@ describe('push content (API-100-46 AC3)', () => {
 describe('D55: provider message shape', () => {
   const NOW = Date.parse('2026-11-20T10:00:01Z');
 
+  it('Stage 2 [N]/[B7]: tag = incident id, PUBLIC; the receipt token is a data key only when given', () => {
+    const plain = fcmMessage({ provider: 'fcm', token: DEVICE_TOKEN }, MESSAGE, NOW) as {
+      data: Record<string, string>;
+      android: { notification: Record<string, unknown> };
+      apns: { payload: Record<string, unknown> };
+    };
+    expect(plain.android.notification).toMatchObject({
+      tag: MESSAGE.incident_id,
+      visibility: 'PUBLIC',
+    });
+    expect(plain.data).toEqual(pushData(MESSAGE));
+    expect(plain.data).not.toHaveProperty('receipt_token');
+    const withReceipt = fcmMessage(
+      { provider: 'fcm', token: DEVICE_TOKEN, receipt_token: 'rt-1' },
+      MESSAGE,
+      NOW,
+    ) as { data: Record<string, string> };
+    expect(withReceipt.data).toEqual({ ...pushData(MESSAGE), receipt_token: 'rt-1' });
+    expect(pushNotificationTag(MESSAGE)).toBe(MESSAGE.incident_id);
+  });
+
   it('FCM: emergency channel, high / max priority, default sound, TTL, five data keys, no click_action', () => {
     const target = { provider: 'fcm' as const, token: DEVICE_TOKEN, time_zone: 'Africa/Banjul' };
     expect(fcmMessage(target, MESSAGE, NOW)).toEqual({
@@ -178,6 +231,8 @@ describe('D55: provider message shape', () => {
           channel_id: ANDROID_CHANNEL_ID,
           notification_priority: 'PRIORITY_MAX',
           sound: 'default',
+          tag: MESSAGE.incident_id,
+          visibility: 'PUBLIC',
         },
       },
       apns: {
@@ -277,6 +332,8 @@ describe('SCRUM-35 (D67): test alert notices', () => {
           channel_id: 'atlas_test',
           notification_priority: 'PRIORITY_DEFAULT',
           sound: 'default',
+          tag: TEST.test_alert_id,
+          visibility: 'PUBLIC',
         },
       },
       apns: {
@@ -821,6 +878,8 @@ describe('SCRUM-44/59 (D70): status update notices', () => {
           channel_id: ANDROID_CHANNEL_ID,
           notification_priority: 'PRIORITY_MAX',
           sound: 'default',
+          tag: INCIDENT_ID,
+          visibility: 'PUBLIC',
         },
       },
       apns: {

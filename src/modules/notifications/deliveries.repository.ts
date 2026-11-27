@@ -12,7 +12,7 @@ import { pushTokenHash } from './device-input';
  * The columns of a {@link DeliveryFinalRow}, returned by the status writes: the outcome
  * ({@link DeliveryFinalOutcome}) plus the incident and the outbox topic of the row (SCRUM-74 audit).
  */
-const FINAL_RETURNING = sql`returning id::text as delivery_id,
+export const FINAL_RETURNING = sql`returning id::text as delivery_id,
                                       recipient_user_id::text as recipient_user_id, channel,
                                       status, error_code, attempts,
                                       incident_id::text as incident_id,
@@ -65,7 +65,14 @@ export interface DeliveryToSend extends Record<string, unknown> {
   push_token: string | null;
   phone: string | null;
   email: string | null;
-  /** The recipient's `profiles.timezone` (D54: the time in the push text). */
+  /** Stage 2 [B7] (D77): set when the phone already confirmed receipt (a retried row). */
+  delivered_at: string | null;
+  /** Stage 2 [B6]: the incident's place now (null for a test alert or when not known). */
+  place_name: string | null;
+  /**
+   * The time zone of the push text (D54, Stage 2 [TZ]): the receiving device's `time_zone` (push
+   * rows), else the recipient's `profiles.timezone`; Africa/Banjul when both are missing.
+   */
   time_zone: string | null;
 }
 
@@ -258,13 +265,16 @@ export class DeliveriesRepository {
   async loadForSend(id: string): Promise<DeliveryToSend | undefined> {
     const result = await this.database.db.execute<DeliveryToSend>(sql`
       select d.id::text as id, d.status, d.channel, d.device_id::text as device_id,
+             (to_jsonb(d.delivered_at) #>> '{}') as delivered_at,
              d.incident_id::text as incident_id, d.recipient_user_id::text as recipient_user_id,
              o.topic, o.payload,
              case when dv.revoked_at is null then dv.push_provider end as push_provider,
              case when dv.revoked_at is null then dv.push_token end as push_token,
              nullif(btrim(${callerPhoneSql(sql`d.recipient_user_id`)}), '') as phone,
              nullif(btrim(u.email::text), '') as email,
-             p.timezone as time_zone
+             coalesce(case when dv.revoked_at is null then dv.time_zone end, p.timezone)
+               as time_zone,
+             (select i.place_name from public.incidents i where i.id = d.incident_id) as place_name
         from public.notification_deliveries d
         join public.notification_outbox o on o.id = d.outbox_id
         left join public.user_devices dv on dv.id = d.device_id
@@ -277,6 +287,9 @@ export class DeliveriesRepository {
   /**
    * `sent` / `delivered` with the provider's message id; `final_at` = `sent_at` (SCRUM-67). Returns
    * the final row, or undefined when it was not `queued` any more (nothing written).
+   *
+   * Stage 2 [B7] (D77): a row whose phone already confirmed receipt (`delivered_at` set while it was
+   * still `queued`) is written `delivered`, so its one audit row says `delivered`.
    */
   async markSent(
     id: string,
@@ -285,7 +298,7 @@ export class DeliveriesRepository {
   ): Promise<DeliveryFinalOutcome | undefined> {
     const rows = await this.writeFinal(sql`
       update public.notification_deliveries
-         set status = ${status}::text,
+         set status = case when delivered_at is not null then 'delivered' else ${status}::text end,
              provider_message_id = ${providerMessageId}::text,
              error_code = null,
              attempts = attempts + 1,
@@ -301,6 +314,10 @@ export class DeliveriesRepository {
   /**
    * A failed attempt. `final` writes `failed` with `final_at` = now (SCRUM-67); otherwise the row
    * stays `queued` (to be retried). Returns the row when it became final now.
+   *
+   * Stage 2 [B7] (D77): when the phone confirmed receipt meanwhile (`delivered_at` set, e.g. the
+   * provider's answer timed out after it delivered), the row is `delivered` instead (final, no
+   * error code, `sent_at` = now) and no retry follows.
    */
   async recordFailure(
     id: string,
@@ -309,15 +326,18 @@ export class DeliveriesRepository {
   ): Promise<DeliveryFinalOutcome | undefined> {
     const rows = await this.writeFinal(sql`
       update public.notification_deliveries
-         set status = case when ${final}::boolean then 'failed' else 'queued' end,
-             error_code = ${errorCode}::text,
+         set status = case when delivered_at is not null then 'delivered'
+                           when ${final}::boolean then 'failed'
+                           else 'queued' end,
+             error_code = case when delivered_at is not null then null else ${errorCode}::text end,
              attempts = attempts + 1,
-             final_at = case when ${final}::boolean then now() end,
+             sent_at = case when delivered_at is not null then coalesce(sent_at, now()) else sent_at end,
+             final_at = case when delivered_at is not null or ${final}::boolean then now() end,
              updated_at = now()
        where id = ${id}::uuid
          and status = 'queued'
       ${FINAL_RETURNING}`);
-    return rows.find((row) => row.status === 'failed');
+    return rows.find((row) => row.status === 'failed' || row.status === 'delivered');
   }
 
   /** `skipped` with its reason and `final_at` = now (SCRUM-67); the row, when written now. */

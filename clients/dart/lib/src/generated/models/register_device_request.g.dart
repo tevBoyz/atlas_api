@@ -15,6 +15,7 @@ RegisterDeviceRequest _$RegisterDeviceRequestFromJson(
       ? null
       : PushProvider.fromJson(json['push_provider'] as String),
   pushToken: json['push_token'] as String?,
+  timeZone: json['time_zone'] as String?,
 );
 
 Map<String, dynamic> _$RegisterDeviceRequestToJson(
@@ -24,4 +25,5 @@ Map<String, dynamic> _$RegisterDeviceRequestToJson(
   'platform': instance.platform,
   'push_provider': instance.pushProvider,
   'push_token': instance.pushToken,
+  'time_zone': instance.timeZone,
 };

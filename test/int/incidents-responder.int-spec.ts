@@ -61,6 +61,9 @@ const DETAIL_KEYS = [
   'location_source',
   // SCRUM-68 (D74): since when live location is reported unavailable.
   'location_unavailable_since',
+  // Stage 2 [B6] / [B9]: the place and country of the alert.
+  'place_name',
+  'country_code',
   'share_payload',
   // SCRUM-21 (D53): the activation snapshot and when the live view last changed.
   'share_payload_at_activation',

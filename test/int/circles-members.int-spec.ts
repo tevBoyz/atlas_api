@@ -33,6 +33,7 @@ const MEMBER_KEYS = [
   'is_owner',
   'invited_at',
   'user_id',
+  'handle',
   'avatar_url',
 ];
 const OWNER_ONLY_KEYS = [
@@ -93,12 +94,12 @@ describe('circle member list (API-100-25)', () => {
     // A pending invite claimed by a user keeps the invite name (not the profile name).
     await inviteMember(client, circle, { displayName: 'Dan Pending', claimedBy: claimant });
     await inviteMember(client, circle, { displayName: 'Eve Expired', expiresInDays: -1 });
-    // A declined invite, as decline leaves it (user set, canceled).
+    // A declined invite, as decline leaves it (user set, canceled, Stage 3 [B10b] declined_at).
     await client.query(
       `insert into public.safety_circle_members (circle_id, role, status, display_name, phone,
-         user_id, invite_token, invited_at, invite_expires_at, invite_canceled_at)
+         user_id, invite_token, invited_at, invite_expires_at, invite_canceled_at, declined_at)
        values ($1, 'member', 'declined', 'Fay Declined', $2, $3, $4, now(),
-               now() + interval '7 days', now())`,
+               now() + interval '7 days', now(), now())`,
       [circle.id, decliner.phone, decliner.id, fakeInviteToken()],
     );
     // Avatars: Ben with spaces around a path, Cara with an absolute URL in capitals.
@@ -191,7 +192,7 @@ describe('circle member list (API-100-25)', () => {
       rows = reply.json<Member[]>();
     });
 
-    it('every row, 14 keys each (the 8 common + 6 owner-only), never invite_token', () => {
+    it('every row, 15 keys each (the 9 common + 6 owner-only), never invite_token', () => {
       expect(rows).toHaveLength(7);
       for (const row of rows) {
         expect(Object.keys(row).sort()).toEqual([...MEMBER_KEYS, ...OWNER_ONLY_KEYS].sort());
@@ -215,10 +216,14 @@ describe('circle member list (API-100-25)', () => {
       const byName: Record<string, Member> = Object.fromEntries(
         rows.map((r) => [r.display_name as string, r]),
       );
-      expect(byName['Ben Profile'].user_id).toBe(ben.id);
+      // D79: no other user's id (the owner's own row only); rows are matched by handle = member_id.
+      expect(byName['Ben Profile'].user_id).toBeNull();
       expect(byName['Stored Ghost']).toBeDefined();
-      expect(byName['Dan Pending'].user_id).toBe(claimant.id);
-      expect(byName['Fay Declined'].user_id).toBe(decliner.id);
+      expect(byName['Dan Pending'].user_id).toBeNull();
+      expect(byName['Fay Declined'].user_id).toBeNull();
+      expect(byName['Ada Owner'].user_id).toBe(owner.id);
+      for (const row of rows) expect(row.handle).toBe(row.member_id);
+      for (const other of [ben, claimant, decliner]) expect(body).not.toContain(other.id);
       expect(body).not.toContain('Claimant Profile');
       expect(body).not.toContain('Decliner Profile');
     });
@@ -261,7 +266,7 @@ describe('circle member list (API-100-25)', () => {
   });
 
   describe('member view', () => {
-    it('active rows only, 8 keys each; never phone, email, relationship or invite timestamps', async () => {
+    it('active rows only, 9 keys each; never phone, email, relationship or invite timestamps', async () => {
       const reply = await listMembers(app, ben.id, circle.id);
       expect(reply.statusCode).toBe(200);
       const rows = reply.json<Member[]>();

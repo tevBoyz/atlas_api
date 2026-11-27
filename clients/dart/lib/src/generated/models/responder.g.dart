@@ -10,10 +10,11 @@ Responder _$ResponderFromJson(Map<String, dynamic> json) => Responder(
   acknowledgedAt: json['acknowledged_at'] as String?,
   avatarUrl: json['avatar_url'] as String?,
   displayName: json['display_name'] as String,
+  handle: json['handle'] as String,
   isMe: json['is_me'] as bool,
   status: ResponderStatus.fromJson(json['status'] as String),
   statusAt: json['status_at'] as String?,
-  userId: json['user_id'] as String,
+  userId: json['user_id'] as String?,
   deliveryAt: json['delivery_at'] as String?,
   deliveryFailedReason: json['delivery_failed_reason'] == null
       ? null
@@ -32,6 +33,7 @@ Map<String, dynamic> _$ResponderToJson(Responder instance) => <String, dynamic>{
   'delivery_failed_reason': instance.deliveryFailedReason,
   'delivery_status': instance.deliveryStatus,
   'display_name': instance.displayName,
+  'handle': instance.handle,
   'is_me': instance.isMe,
   'status': instance.status,
   'status_at': instance.statusAt,

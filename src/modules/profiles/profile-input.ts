@@ -133,27 +133,32 @@ export type Keep<T> = T | undefined;
 /** `PUT /v1/me/profile/personal-info` (P2). */
 export interface PersonalInfoInput {
   fullName: string;
-  dateOfBirth: string;
+  /** Stage 3 [B2] (SCRUM-17): optional. Left out = keep (null on a new profile); null / blank = clear. */
+  dateOfBirth: Keep<string | null>;
   gender: Keep<string | null>;
   avatarPath: Keep<string | null>;
 }
 
 /**
- * P2 in field order: `full_name` (trimmed, not blank), `date_of_birth` (a real `YYYY-MM-DD` not
- * after `today`, the database's current date in UTC = Africa/Banjul), `gender` (left out = keep,
- * null = clear, else one of 3 values), `avatar_path` (left out = keep, null = clear, else a path in
- * the caller's own folder).
+ * P2 in field order: `full_name` (trimmed, not blank), `date_of_birth` (optional since Stage 3 [B2]:
+ * left out = keep, null or blank = clear, else a real `YYYY-MM-DD` not after `today`, the
+ * database's current date in UTC = Africa/Banjul), `gender` (left out = keep,
+ * null = clear, else one of 3 values), `avatar_path` (left out = keep, null = clear, else a path
+ * `acceptAvatarPath` allows).
+ * D79: `acceptAvatarPath` decides the path: a random name the API issued to the caller, or the
+ * caller's currently stored path (sent back unchanged).
  */
 export function personalInfoFromBody(
   raw: unknown,
-  callerId: string,
+  acceptAvatarPath: (path: string) => boolean,
   today: string,
 ): PersonalInfoInput {
   const body = requireJsonObject(raw);
   const fullName = requiredText(body, 'full_name', 'profiles:invalid_full_name');
 
-  const dob = text(body, 'date_of_birth');
-  if (!dob || !isCalendarDate(dob) || dob > today) {
+  const rawDob = text(body, 'date_of_birth');
+  const dob = typeof rawDob === 'string' && rawDob.trim() === '' ? null : rawDob;
+  if (typeof dob === 'string' && (!isCalendarDate(dob) || dob > today)) {
     throw fail('profiles:invalid_date_of_birth', 'date_of_birth');
   }
 
@@ -163,12 +168,15 @@ export function personalInfoFromBody(
   }
 
   const avatarPath = text(body, 'avatar_path');
-  if (typeof avatarPath === 'string' && !isOwnAvatarPath(avatarPath, callerId)) {
+  if (typeof avatarPath === 'string' && !acceptAvatarPath(avatarPath)) {
     throw fail('profiles:invalid_avatar_path', 'avatar_path');
   }
 
   return { fullName, dateOfBirth: dob, gender, avatarPath };
 }
+
+/** Stage 3 [B5]: the key a second contact would come in (`emergency_contacts: [...]`): refused. */
+export const SECOND_CONTACT_KEY = 'emergency_contacts';
 
 /** `PUT /v1/me/profile/emergency-info` (P3). Column name → value, in the body's order. */
 export type EmergencyInfoInput = Record<string, string | boolean | null>;
@@ -184,6 +192,9 @@ export type EmergencyInfoInput = Record<string, string | boolean | null>;
 export function emergencyInfoFromBody(raw: unknown): EmergencyInfoInput {
   const body = requireJsonObject(raw);
   const values: EmergencyInfoInput = {};
+  // Stage 3 [B5] (SCRUM-79): exactly ONE emergency contact (the emergency_contact_* fields). A list
+  // of contacts is refused, never partly stored.
+  if (body[SECOND_CONTACT_KEY] !== undefined) throw invalidRequest(SECOND_CONTACT_KEY);
 
   values.emergency_contact_full_name = requiredText(
     body,

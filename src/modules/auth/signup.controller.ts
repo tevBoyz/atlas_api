@@ -33,20 +33,21 @@ import { type SignupAccepted, SignupService } from './signup.service';
 export class SignupController {
   constructor(private readonly signups: SignupService) {}
 
-  /** A1. Always 202 "check your email" (D5b): never says whether the email or phone exists. */
+  /** A1 (D78): email OR phone; 202, or 409 `signup:already_registered` for a duplicate. */
   @Post('signup')
   @HttpCode(202)
   @RateLimit(SIGN_UP_LIMIT)
   @ApiContract({
     operationId: 'signUp',
-    summary: 'Create an account (email, password, phone, name); a confirmation link is emailed',
+    summary:
+      'Create an account (email or phone, password, name); a link is emailed and/or a code texted',
     tag: 'auth',
     headers: [INSTALLATION_ID_HEADER_OPTIONAL],
     body: { name: 'SignupRequest', schema: signupRequestSchema },
     responses: {
       202: {
         description:
-          'Check your email. The same answer whether or not the address (or phone) already has an account (D5b): an unconfirmed account gets a new link, a confirmed one gets nothing. No session until the email is confirmed.',
+          'Verify the contact(s) given (D78): an emailed link and/or a texted code. A duplicate email or phone is 409 signup:already_registered (details.field email | phone): prompt to sign in or reset the password. No session until a contact is confirmed.',
         name: 'SignupAccepted',
         schema: signupAcceptedSchema,
       },
@@ -56,9 +57,12 @@ export class SignupController {
       'auth:invalid_email',
       'auth:weak_password',
       'auth:invalid_phone',
+      'signup:contact_required',
       'auth:invalid_full_name',
       'auth:invalid_device',
       'auth:over_email_send_rate_limit',
+      'signup:already_registered',
+      'auth:sms_unavailable',
     ],
   })
   signup(

@@ -85,6 +85,25 @@ export class SupabaseAvatarStorage implements AvatarStorage {
     throw new AvatarStorageUnavailableError(`exists answered ${res.status}`);
   }
 
+  /** `POST {project}/storage/v1/object/copy` `{bucketId, sourceKey, destinationKey}` (D79). */
+  async copy(from: string, to: string): Promise<void> {
+    const { base, headers } = this.endpoint();
+    const res = await this.call(
+      `${base}/object/copy`,
+      {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          bucketId: this.settings.bucket,
+          sourceKey: from,
+          destinationKey: to,
+        }),
+      },
+      'copy',
+    );
+    if (!res.ok) throw new AvatarStorageUnavailableError(`copy answered ${res.status}`);
+  }
+
   async remove(objectPath: string): Promise<void> {
     const { base, headers } = this.endpoint();
     const res = await this.call(

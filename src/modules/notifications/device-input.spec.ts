@@ -3,11 +3,13 @@ import { scrub } from '../../observability/scrubber';
 import {
   APP_VERSION_MAX,
   deviceRegistrationFromBody,
+  knownTimeZone,
   PUSH_TOKEN_MAX,
   PUSH_TOKEN_STATUSES,
   pushTokenHash,
   pushTokenStatus,
   requireInstallationId,
+  TIME_ZONE_MAX,
 } from './device-input';
 
 const TOKEN = 'fcm-token-AbC123:xyz_-.';
@@ -220,5 +222,35 @@ describe('push_token_status and the dead-token hash (D69, gap 49)', () => {
   it('the log scrubber redacts the hash column too', () => {
     const hash = pushTokenHash(TOKEN);
     expect(JSON.stringify(scrub({ push_token_invalid_hash: hash }))).not.toContain(hash);
+  });
+});
+
+describe('device time zone (Stage 2 [TZ])', () => {
+  const body = { platform: 'android', app_version: '1.0.0' };
+
+  it('left out: undefined (keep the stored zone)', () => {
+    expect(deviceRegistrationFromBody(body).time_zone).toBeUndefined();
+  });
+
+  it('a known IANA zone is kept as sent (trimmed)', () => {
+    expect(deviceRegistrationFromBody({ ...body, time_zone: 'Africa/Addis_Ababa' }).time_zone).toBe(
+      'Africa/Addis_Ababa',
+    );
+    expect(knownTimeZone(' America/Argentina/Buenos_Aires ')).toBe(
+      'America/Argentina/Buenos_Aires',
+    );
+    expect(knownTimeZone('UTC')).toBe('UTC');
+  });
+
+  it.each([
+    ['null', null],
+    ['unknown zone', 'Mars/Olympus_Mons'],
+    ['offset', '+03:00'],
+    ['number', 3],
+    ['empty', ''],
+    ['too long', `Africa/${'x'.repeat(TIME_ZONE_MAX)}`],
+    ['path tricks', 'Africa/../Banjul'],
+  ])('%s: stored as null, never refused', (_label, value) => {
+    expect(deviceRegistrationFromBody({ ...body, time_zone: value }).time_zone).toBeNull();
   });
 });

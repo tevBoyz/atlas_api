@@ -47,6 +47,9 @@ describe('policy registry (API-100-09 AC1)', () => {
         'incident.memberView',
         'incident.eventsView',
         'incident.countsView',
+        // Stage 2 [B13]: the read-only history of an ended member.
+        'incident.historyView',
+        'incident.eventsHistoryView',
         'delivery.own',
         'invite.recipient',
         'membership.activate',

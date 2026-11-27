@@ -36,6 +36,8 @@ import {
 
 /** The incident columns a policy reads; defaults to the `incidents` table (Drizzle columns). */
 export interface IncidentRef {
+  /** Stage 2 [B13]: needed by the ended-member history rule; without it that rule is false. */
+  id?: SQLWrapper;
   residentId: SQLWrapper;
   circleId: SQLWrapper;
   status: SQLWrapper;
@@ -43,6 +45,7 @@ export interface IncidentRef {
 }
 
 export const INCIDENTS_TABLE: IncidentRef = {
+  id: incidents.id,
   residentId: incidents.residentId,
   circleId: incidents.circleId,
   status: incidents.status,
@@ -52,6 +55,7 @@ export const INCIDENTS_TABLE: IncidentRef = {
 /** The incident columns of a table alias, e.g. `incidentAlias('i')` for `from incidents i`. */
 export function incidentAlias(alias: string): IncidentRef {
   return {
+    id: aliasColumn(alias, 'id'),
     residentId: aliasColumn(alias, 'resident_id'),
     circleId: aliasColumn(alias, 'circle_id'),
     status: aliasColumn(alias, 'status'),
@@ -129,6 +133,63 @@ export const incidentCountsView = defineIncidentPolicy(
         and ${incident.status} = 'active'
         and ${insideWindow(incident, callerId)}))`,
 );
+
+/**
+ * Stage 2 [B13] (SCRUM-64 AC3): a member whose membership ENDED (removed or left, D44) keeps
+ * read-only access to a past incident of that circle when they had a delivery row for it created
+ * before the membership's `ended_at` (they were alerted while a member) and the incident is over
+ * (`resolved` / `closed`). While the incident is still active this is false ("not available").
+ * Never the resident. The delivery row is kept by remove / leave since Stage 2 (no longer deleted).
+ */
+export function incidentEndedMemberPastSql(incident: IncidentRef, callerId: UuidOperand): SQL {
+  if (!incident.id) return sql`false`;
+  const caller = uuidSql(callerId);
+  return sql`(${incident.circleId} is not null
+    and ${incident.status} in ('resolved', 'closed')
+    and ${incident.residentId} is distinct from ${caller}
+    and exists (
+      select 1
+        from public.incident_deliveries ph_d
+        join public.safety_circle_members ph_m on ph_m.id = ph_d.member_id
+       where ph_d.incident_id = ${incident.id}
+         and ph_d.member_user_id = ${caller}
+         and ph_m.circle_id = ${incident.circleId}
+         and ph_m.status in ('removed', 'left')
+         and ph_m.ended_at is not null
+         and ph_d.delivered_at < ph_m.ended_at))`;
+}
+
+/**
+ * Stage 2 [B13]: the READ-ONLY member reads of an incident (details, the responder incident list,
+ * Activity's circle category): `incident.memberView` OR {@link incidentEndedMemberPastSql}. Never used
+ * for a write, a room join, a fan-out or a count: those keep `incident.memberView`.
+ */
+export const incidentHistoryView = defineIncidentPolicy(
+  'incident.historyView',
+  (incident, _caller, callerId) => sql`(${incidentMemberView.where({ callerId, incident })}
+    or ${incidentEndedMemberPastSql(incident, callerId)})`,
+);
+
+/**
+ * Stage 2 [B13]: the READ-ONLY reads of an incident's events and responders:
+ * `incident.eventsView` OR {@link incidentEndedMemberPastSql}.
+ */
+export const incidentEventsHistoryView = defineIncidentPolicy(
+  'incident.eventsHistoryView',
+  (incident, _caller, callerId) => sql`(${incidentEventsView.where({ callerId, incident })}
+    or ${incidentEndedMemberPastSql(incident, callerId)})`,
+);
+
+/**
+ * Stage 2 [B13]: an `incident_deliveries` row (alias `alias`) of a CURRENT membership (its member row
+ * is `active`). Rows of an ended membership are kept as history (remove / leave no longer delete
+ * them) but never count, re-notify or receive anything.
+ */
+export function liveDeliverySql(alias: string): SQL {
+  // A primary-key lookup per delivery row (the counts poll stays on indexes only).
+  return sql`(select ld_m.status from public.safety_circle_members ld_m
+               where ld_m.id = ${aliasColumn(alias, 'member_id')}) = 'active'`;
+}
 
 /** Operations whose catalogue has a `not_found` code (hidden existence). */
 export type NotFoundOperation = {

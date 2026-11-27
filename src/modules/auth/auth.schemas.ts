@@ -95,20 +95,45 @@ export const loginRequestSchema = z.object({
 });
 
 export const signupRequestSchema = z.object({
-  email: z.string().max(254),
+  email: z
+    .string()
+    .max(254)
+    .nullable()
+    .optional()
+    .describe(
+      'D78: optional; at least one of `email` / `phone` (else 422 `signup:contact_required`).',
+    ),
   password: z.string().min(8).max(128).describe('8-128 characters: lowercase, uppercase, digit.'),
-  phone: z.string().describe('`+E.164`; stored unverified (verify it with the OTP routes).'),
+  phone: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      'D78: optional `+E.164`; stored unconfirmed, a code is texted to it (verify with `POST /v1/auth/otp/verify`, purpose `sign_in`).',
+    ),
   full_name: z.string().min(1).max(100),
   device: deviceInfoSchema,
 });
 
+export const signupVerificationSchema = componentSchema(
+  'SignupVerification',
+  z.object({
+    channel: z
+      .enum(['email', 'phone'])
+      .describe('email: a link was emailed; phone: a code was texted.'),
+    expires_in_seconds: z.number().int().describe('Lifetime of the link or the code.'),
+  }),
+);
+
 export const signupAcceptedSchema = componentSchema(
   'SignupAccepted',
   z.object({
-    verification: z.object({
-      channel: z.literal('email'),
-      expires_in_seconds: z.number().int().describe('Lifetime of the emailed link.'),
-    }),
+    verification: signupVerificationSchema.describe(
+      'The first of `verifications` (the email link when an email was given, else the phone code).',
+    ),
+    verifications: z
+      .array(signupVerificationSchema)
+      .describe('D78: every verification sent, email first (one per contact given).'),
   }),
 );
 

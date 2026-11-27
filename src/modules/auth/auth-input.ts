@@ -131,18 +131,35 @@ function opaqueToken(value: unknown, code: ErrorCode, field: string): string {
 // --- A1 sign-up -------------------------------------------------------------------------------
 
 export interface SignupInput {
-  email: string;
+  /** Null when not given (D78: email OR phone, at least one). */
+  email: string | null;
   password: string;
-  phone: string;
+  /** Null when not given (D78). */
+  phone: string | null;
   full_name: string;
   device: DeviceInput;
 }
 
+/** Left out, null or a blank string: not given (D78). */
+function given(value: unknown): boolean {
+  return !(
+    value === undefined ||
+    value === null ||
+    (typeof value === 'string' && value.trim() === '')
+  );
+}
+
+/**
+ * A1 in field order (D78, Stage 3 [B1]): `email` (optional), `password`, `phone` (optional), then
+ * at least one of the two (else 422 `signup:contact_required`, field `contact`), `full_name`,
+ * `device`. A given value must be valid (`auth:invalid_email` / `auth:invalid_phone`).
+ */
 export function signupFrom(body: unknown, installationId: string | null): SignupInput {
   const input = requireJsonObject(body);
-  const email = signupEmailFrom(input.email);
+  const email = given(input.email) ? signupEmailFrom(input.email) : null;
   const password = newPasswordFrom(input.password, 'password');
-  const phone = authPhoneFrom(input.phone);
+  const phone = given(input.phone) ? authPhoneFrom(input.phone) : null;
+  if (email === null && phone === null) throw fail('signup:contact_required', 'contact');
   const fullName = typeof input.full_name === 'string' ? input.full_name.trim() : '';
   if (!fullName || fullName.length > FULL_NAME_MAX || !PRINTABLE.test(fullName)) {
     throw fail('auth:invalid_full_name', 'full_name');

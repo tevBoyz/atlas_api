@@ -139,6 +139,13 @@ describe('POST /v1/me/profile/complete (API-100-36)', () => {
     });
   });
 
+  it('Stage 3 [B2] (SCRUM-17): a null date of birth does not block the set-up (only full name + contact are required)', async () => {
+    const { user } = await readyUser();
+    await client.query('update public.profiles set date_of_birth = null where id = $1', [user.id]);
+    const result = await compare(user);
+    expect(result.reply.statusCode).toBe(200);
+  });
+
   describe('AC2-AC5 completion, circle, owner row, contact row (rule 6)', () => {
     it('first completion: circle, owner row (activated_at from the trigger) and a pending 7-day contact invite', async () => {
       const { user, contactPhone } = await readyUser();

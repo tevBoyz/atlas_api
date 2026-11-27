@@ -63,7 +63,7 @@ export class CirclesService {
     return this.read(async (tx) => {
       const owned = await this.repository.ownedCircle(tx, user.id);
       if (!owned) return { circle: null, members: [], capacity: null };
-      const members = await this.repository.listMembers(tx, owned.id, true, this.avatars);
+      const members = await this.repository.listMembers(tx, owned.id, true, this.avatars, user.id);
       const capacity = await this.repository.capacity(tx, owned.id);
       return { circle: owned.circle, members, capacity };
     });
@@ -82,7 +82,7 @@ export class CirclesService {
       if (!access.is_owner && !access.is_active_member) {
         throw new DomainError('list_circle_members:not_authorized');
       }
-      return this.repository.listMembers(tx, circleId, access.is_owner, this.avatars);
+      return this.repository.listMembers(tx, circleId, access.is_owner, this.avatars, user.id);
     });
   }
 

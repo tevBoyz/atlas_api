@@ -11,7 +11,14 @@ import type {
 } from './channel.types';
 import { failed, isTestAlertMessage } from './channel.types';
 import type { HttpResponse, HttpTransport } from './http-transport';
-import { androidChannelId, isAlertTopic, pushData, pushText, pushTtlSeconds } from './push-content';
+import {
+  androidChannelId,
+  isAlertTopic,
+  pushNotificationTag,
+  pushTargetData,
+  pushText,
+  pushTtlSeconds,
+} from './push-content';
 
 /**
  * The real providers (API-100-46 AC2, D43): built only when CHANNEL_PUSH_ADAPTER=real /
@@ -83,6 +90,10 @@ function apnsExpiration(message: PushNotice, nowMs: number): string {
  * A test alert (SCRUM-35, D67) goes on the separate `atlas_test` channel with the default
  * notification priority (no Do Not Disturb bypass), a 1 h TTL and its three data keys; APNs
  * `passive`.
+ *
+ * Stage 2 [N]: `android.notification.tag` = the incident id (test alert: its id), so a newer push of
+ * the same alert replaces the older one, and `visibility` PUBLIC. [B7]: the data keys carry the
+ * delivery's `receipt_token` when the target has one.
  */
 export function fcmMessage(
   target: PushTarget,
@@ -92,7 +103,7 @@ export function fcmMessage(
   return {
     token: target.token,
     notification: pushText(message, target.time_zone),
-    data: pushData(message),
+    data: pushTargetData(target, message),
     android: {
       priority: 'high',
       ttl: `${pushTtlSeconds(message.topic)}s`,
@@ -100,6 +111,9 @@ export function fcmMessage(
         channel_id: androidChannelId(message.topic),
         notification_priority: isTestAlertMessage(message) ? 'PRIORITY_DEFAULT' : 'PRIORITY_MAX',
         sound: 'default',
+        // Stage 2 [N]: a newer push of the same alert replaces the older one; shown on the lock screen.
+        tag: pushNotificationTag(message),
+        visibility: 'PUBLIC',
       },
     },
     apns: {
@@ -255,7 +269,7 @@ export class ApnsPushSender implements PushSender {
           'apns-expiration': apnsExpiration(message, this.now()),
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ aps: apnsAps(target, message), ...pushData(message) }),
+        body: JSON.stringify({ aps: apnsAps(target, message), ...pushTargetData(target, message) }),
       });
     } catch (error) {
       return transportFailure(error);

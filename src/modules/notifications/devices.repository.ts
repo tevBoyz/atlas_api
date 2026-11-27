@@ -64,22 +64,27 @@ export class DevicesRepository {
     const given = push !== undefined;
     const provider = push?.provider ?? null;
     const token = push?.token ?? null;
+    // [TZ]: left out keeps the stored zone.
+    const zoneGiven = input.time_zone !== undefined;
+    const zone = input.time_zone ?? null;
     const result = await tx.execute<{ id: string; stored: boolean }>(sql`
       insert into public.user_devices as d (
         user_id, installation_id, platform, app_version,
-        push_provider, push_token, push_token_updated_at, last_seen_at
+        push_provider, push_token, push_token_updated_at, last_seen_at, time_zone
       )
       values (
         ${userId}::uuid, ${installationId}::text, ${input.platform}::text, ${input.app_version}::text,
         ${provider}::text, ${token}::text,
         case when ${token}::text is not null then now() end,
-        now()
+        now(), ${zone}::text
       )
       on conflict (user_id, installation_id) do update
          set platform = excluded.platform,
              app_version = excluded.app_version,
              last_seen_at = now(),
              revoked_at = null,
+             time_zone = case when ${zoneGiven}::boolean then excluded.time_zone
+                              else d.time_zone end,
              push_provider = case when ${given}::boolean then excluded.push_provider
                                   else d.push_provider end,
              push_token = case when ${given}::boolean then excluded.push_token

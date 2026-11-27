@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { Inject, Injectable } from '@nestjs/common';
 import type { Logger } from 'pino';
 
@@ -17,6 +15,7 @@ import {
   type AvatarStorage,
   AvatarStorageUnavailableError,
 } from './avatar-storage';
+import { AvatarNames } from './avatar-names';
 import { isOwnAvatarPath } from './profile-input';
 import { type ProfileJson, ProfilesRepository } from './profiles.repository';
 
@@ -58,16 +57,16 @@ export function uploadRequestFromBody(raw: unknown): {
 }
 
 /**
- * P9 body: `{object_path}` — a string (a path in the caller's own folder, else 422
- * `profiles:invalid_avatar_path`) or null (remove the photo). Missing or another JSON type → 422
- * `validation:invalid_request`.
+ * P9 body: `{object_path}` — a string accepted by `accept` (D79: a random name the API issued to the
+ * caller, or the caller's currently stored path; else 422 `profiles:invalid_avatar_path`) or null
+ * (remove the photo). Missing or another JSON type → 422 `validation:invalid_request`.
  */
-export function objectPathFromBody(raw: unknown, callerId: string): string | null {
+export function objectPathFromBody(raw: unknown, accept: (path: string) => boolean): string | null {
   const body = requireJsonObject(raw);
   const value = body.object_path;
   if (value === null) return null;
   if (typeof value !== 'string' || !isPostgresText(value)) throw invalidRequest('object_path');
-  if (!isOwnAvatarPath(value, callerId)) {
+  if (!accept(value)) {
     throw new DomainError('profiles:invalid_avatar_path', { details: { field: 'object_path' } });
   }
   return value;
@@ -76,14 +75,15 @@ export function objectPathFromBody(raw: unknown, callerId: string): string | nul
 /**
  * Profile photos through signed Storage URLs (API-100-37, spec §11.3 P8/P9), replacing the app's
  * direct `avatars.uploadBinary('{uid}/avatar.{ext}', upsert)` and `getPublicUrl`:
- * 1. `POST /v1/me/avatar/upload-url` → a single-use signed URL for a NEW object
- *    `{uid}/avatar-{uuid}.{ext}` (a new name per photo: no cache of the old photo is ever served);
+ * 1. `POST /v1/me/avatar/upload-url` → a single-use signed URL for a NEW object under a random name
+ *    `a/<nonce><tag>.<ext>` (D79, {@link AvatarNames}: no user id in the path, so no user id in any
+ *    `avatar_url`; a new name per photo: no cache of the old photo is ever served);
  * 2. the app `PUT`s the bytes there (the bucket enforces 5 MiB and the 3 types again);
  * 3. `PUT /v1/me/profile/avatar {object_path}` checks the object exists, points
  *    `profiles.avatar_path` at it and, after the commit, deletes the previous object of the caller's
  *    folder (best effort: a failure is logged without the path, the request still succeeds).
  * `avatar_url` everywhere stays `{SUPABASE_URL}/storage/v1/object/public/avatars/{avatar_path}`;
- * existing `{uid}/avatar.{ext}` paths stay valid (AC3/AC4). Storage calls happen outside the
+ * existing `{uid}/...` paths stay readable until `scripts/avatars-rename.ts` moves them (D79). Storage calls happen outside the
  * database transaction, so no row lock is held while Storage answers.
  */
 @Injectable()
@@ -95,6 +95,7 @@ export class AvatarsService {
     private readonly repository: ProfilesRepository,
     @Inject(AVATAR_STORAGE) private readonly storage: AvatarStorage,
     @Inject(ROOT_LOGGER) private readonly logger: Logger,
+    private readonly names: AvatarNames,
     config: ApiConfigService,
   ) {
     this.avatars = avatarUrlBase(config);
@@ -103,7 +104,7 @@ export class AvatarsService {
   /** P8. No profile needed (onboarding uploads the photo before the profile exists). */
   async createUploadUrl(user: AuthenticatedUser, body: unknown): Promise<AvatarUploadUrlJson> {
     const { contentType } = uploadRequestFromBody(body);
-    const objectPath = `${user.id.toLowerCase()}/avatar-${randomUUID()}.${AVATAR_CONTENT_TYPES[contentType]}`;
+    const objectPath = this.names.newPath(user.id, AVATAR_CONTENT_TYPES[contentType]);
     const signed = await this.storageCall(() =>
       this.storage.createSignedUpload(objectPath, contentType),
     );
@@ -122,13 +123,18 @@ export class AvatarsService {
    * caller's row, then the old object's deletion.
    */
   async setAvatar(user: AuthenticatedUser, body: unknown): Promise<ProfileJson> {
-    const objectPath = objectPathFromBody(body, user.id);
+    requireJsonObject(body);
     const current = await this.database.db.transaction(
       async (tx) => {
         await this.repository.useUtcTimestamps(tx);
         return this.repository.read(tx, user.id, this.avatars);
       },
       { accessMode: 'read only' },
+    );
+    const stored = (current as { avatar_path?: string | null } | undefined)?.avatar_path ?? null;
+    const objectPath = objectPathFromBody(
+      body,
+      (path) => path === stored || this.names.issuedTo(path, user.id),
     );
     if (!current) throw new DomainError('profiles:profile_not_found');
     if (objectPath !== null && !(await this.storageCall(() => this.storage.exists(objectPath)))) {
@@ -150,7 +156,11 @@ export class AvatarsService {
       return { profile: updated, previous: before };
     });
 
-    if (previous && previous !== objectPath && isOwnAvatarPath(previous, user.id)) {
+    if (
+      previous &&
+      previous !== objectPath &&
+      (isOwnAvatarPath(previous, user.id) || this.names.issuedTo(previous, user.id))
+    ) {
       await this.removeOld(previous);
     }
     return profile;

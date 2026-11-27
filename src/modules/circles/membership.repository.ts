@@ -105,10 +105,11 @@ export class MembershipRepository {
    * `not_found` and can never reactivate the row) and `invite_consumed_at` kept (or stamped when
    * missing). `activated_at` is cleared by its trigger (the row is no longer `active`). `user_id`,
    * `phone`, names and `invited_at` stay; a new invite of the same person releases `user_id` (claim,
-   * D41/D44) or `phone` (phone invite) later. The member's `incident_deliveries` rows are deleted,
-   * exactly what the SQL delete's `on delete cascade` did, so counts, responder lists and fan-out
-   * are as before. Touches the locked member row and its delivery rows only (the same rows, in the
-   * same order, as the delete and its cascade). Returns the stored `ended_at` as UTC JSON text
+   * D41/D44) or `phone` (phone invite) later. Stage 2 [B13] (SCRUM-64 AC3): the member's
+   * `incident_deliveries` rows are KEPT (no longer deleted): `ended_at` is the cut-off of their
+   * read-only history (`incident.historyView`); counts, re-notify and fan-out read only rows of an
+   * active membership (`liveDeliverySql`), so they are as before. Touches the locked member row only.
+   * Returns the stored `ended_at` as UTC JSON text
    * (`2026-11-23T10:00:00.123456+00:00`, the `occurred_at` of `circle.membership_ended`, D49) when
    * the row was ended, undefined otherwise.
    */
@@ -129,9 +130,6 @@ export class MembershipRepository {
          and role = 'member'
       returning (to_jsonb(ended_at at time zone 'UTC') #>> '{}') || '+00:00' as ended_at`);
     if (result.rows.length !== 1) return undefined;
-    await tx.execute(sql`
-      delete from public.incident_deliveries
-       where member_id = ${memberId}::uuid`);
     return result.rows[0].ended_at;
   }
 

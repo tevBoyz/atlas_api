@@ -40,6 +40,8 @@ export const FULL_CODE_STATUS: Readonly<Record<string, number>> = {
   'auth:session_expired': 401,
   'auth:refresh_token_reused': 401,
   'auth:session_not_found': 404,
+  'signup:contact_required': 422,
+  'signup:already_registered': 409,
   'idempotency:key_mismatch': 422,
   'idempotency:in_progress': 409,
   'idempotency:key_required': 400,
@@ -63,7 +65,11 @@ export const FULL_CODE_STATUS: Readonly<Record<string, number>> = {
   'http:client_error': 400,
   'rate_limit:exceeded': 429,
 } satisfies Record<
-  GenericErrorCode | `idempotency:${string}` | 'login_lockout:locked' | `auth:${string}`,
+  | GenericErrorCode
+  | `idempotency:${string}`
+  | 'login_lockout:locked'
+  | `auth:${string}`
+  | `signup:${string}`,
   number
 >;
 

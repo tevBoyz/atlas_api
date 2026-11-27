@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { componentSchema } from '../../openapi/component-schema';
 import { emergencyServicesSchema } from '../config/emergency-numbers.schemas';
+import { PLACE_NAME_MAX } from './incident-place';
 import {
   emergencyTypeSchema,
   incidentStatusSchema,
@@ -25,6 +26,47 @@ export const submitEmergencyAlertRequestSchema = z.object({
 });
 
 /**
+ * Stage 2 [B6] / [B9]: the optional place keys of the SOS and of a location report, for the
+ * documentation and the Dart client. The routes read them leniently (`incident-place.ts`): a value
+ * that is not valid is ignored, never an error.
+ */
+export const incidentPlaceRequestShape = {
+  place_name: z
+    .string()
+    .min(1)
+    .max(PLACE_NAME_MAX)
+    .optional()
+    .describe(
+      'Stage 2 [B6]: the place reverse-geocoded on the phone from the current or last known fix (e.g. `Serrekunda`); trimmed, 1-120 characters. The alert push says "near <place_name>". Left out keeps the stored place; a value that is not valid is ignored (never an error).',
+    ),
+  country_code: z
+    .string()
+    .length(2)
+    .optional()
+    .describe(
+      "Stage 2 [B9]: ISO 3166-1 alpha-2 country of that place (e.g. `GM`; stored uppercase). Chooses the incident's `emergency_services`. Left out keeps the stored country; a value that is not two letters is ignored.",
+    ),
+};
+
+/** The documented body of `POST /v1/incidents`: the type plus the optional place (Stage 2). */
+export const submitEmergencyAlertRequestContractSchema = submitEmergencyAlertRequestSchema.extend({
+  ...incidentPlaceRequestShape,
+});
+
+const placeNameSchema = z
+  .string()
+  .nullable()
+  .describe(
+    "Stage 2 [B6]: the reverse-geocoded place of the alert (the latest the resident's phone sent); null = not known. Never coordinates.",
+  );
+const countryCodeSchema = z
+  .string()
+  .nullable()
+  .describe(
+    'Stage 2 [B9]: ISO 3166-1 alpha-2 country of the alert (uppercase); null = not known. `emergency_services` are those of this country, else The Gambia.',
+  );
+
+/**
  * A share payload (spec §6.5): what the resident chose to share, by field. Every value is a string,
  * except `allergies` and `medical_conditions`, which are arrays of strings in payloads written since
  * SCRUM-21 (D52) and a single string in older incidents: clients accept both.
@@ -33,7 +75,7 @@ const sharePayloadSchema = () =>
   z
     .record(z.string(), z.unknown())
     .describe(
-      "Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59): the resident's confirmed phone (E.164) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.",
+      "Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59; Stage 2 [39]): the resident's phone (E.164; confirmed, else the stored unconfirmed one) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.",
     );
 
 export const SUBMIT_OUTCOMES = ['created', 'promoted', 'renotified'] as const;
@@ -71,6 +113,8 @@ export const incidentSharedSchema = componentSchema(
     location_captured_at: z.string().nullable(),
     location_source: locationSourceSchema.nullable(),
     location_unavailable_since: locationUnavailableSinceSchema,
+    place_name: placeNameSchema,
+    country_code: countryCodeSchema,
     cancelled_at: z.string().nullable(),
     sent_at: z.string().nullable(),
     share_payload: sharePayloadSchema().nullable(),
@@ -243,6 +287,8 @@ export const incidentDetailsSchema = componentSchema(
     location_captured_at: z.string().nullable(),
     location_source: locationSourceSchema.nullable(),
     location_unavailable_since: locationUnavailableSinceSchema,
+    place_name: placeNameSchema,
+    country_code: countryCodeSchema,
     location_sharing_ended_at: z.string().nullable(),
     incident_notes: z.string().nullable(),
     incident_notes_updated_at: z.string().nullable(),
@@ -263,9 +309,8 @@ export const incidentDetailsSchema = componentSchema(
 );
 
 /**
- * One entry of `GET /v1/incidents/{id}/events` (spec §4.7, §11.3 E11). `detail` per spec §5.6; for a
- * caller who is not the resident, `recipient_ids` is left out (epic §18 D3) and `actor_id` is
- * obscured (epic §18 D11, `maskActorId`).
+ * One entry of `GET /v1/incidents/{id}/events` (spec §4.7, §11.3 E11). `detail` per spec §5.6 without
+ * `recipient_ids` for every caller (D79); `actor_id` only the caller's own id (D79, replaces D11).
  */
 export const incidentEventSchema = componentSchema(
   'IncidentEvent',
@@ -285,11 +330,16 @@ export const incidentEventSchema = componentSchema(
       .string()
       .nullable()
       .describe(
-        'Who caused the event (null when no user did). The resident of the incident gets the full ' +
-          'UUID. Any other caller gets it obscured: the first 4 and the last 4 hex characters are ' +
-          'kept, every other hex character is replaced by "*", and the hyphens and 36-character ' +
-          'shape stay (e.g. "4f3a****-****-****-****-********9c2d"), unless the actor is the ' +
-          'caller, whose own id is always shown in full. Not a usable UUID when obscured.',
+        "D79: the caller's own user id when the caller caused the event, else null (also when " +
+          'another user or no user caused it). No other user id is ever sent: use actor_handle / ' +
+          'actor_name.',
+      ),
+    actor_handle: z
+      .string()
+      .nullable()
+      .describe(
+        "D79: the actor member's handle (their membership row id, the Responder handle) when a " +
+          'member caused the event; null when the resident or no user did.',
       ),
     actor_name: z
       .string()
@@ -320,7 +370,7 @@ export const incidentResponseRequestSchema = z.object({
 
 /**
  * One notified member on the responder list (SCRUM-49/50/51/55, D56), and the body of
- * `POST /v1/incidents/{id}/response` (the caller's own row). A member gets exactly the 7 keys; the
+ * `POST /v1/incidents/{id}/response` (the caller's own row). A member gets exactly the 8 keys; the
  * resident also gets the 3 delivery keys (SCRUM-65, D73). Never a phone, email or other profile
  * field.
  */
@@ -329,11 +379,16 @@ export const responderSchema = componentSchema(
   z.object({
     user_id: z
       .string()
+      .nullable()
       .describe(
-        'The member. The resident gets the full UUID. A member gets the ids of other members obscured as ' +
-          'incident event actor ids (D11): the first 4 and the last 4 hex characters kept, every ' +
-          'other hex character "*", hyphens kept (e.g. "4f3a****-****-****-****-********9c2d"); ' +
-          'their own id in full. Not a usable UUID when obscured.',
+        "D79: the caller's own user id on their own row (is_me true), null on every other row (the " +
+          'resident gets null on all rows). No other user id is ever sent: match rows by handle.',
+      ),
+    handle: z
+      .string()
+      .describe(
+        "D79: the member's opaque key (their membership row id, the same for every viewer and for " +
+          'the incident.responders / incident.delivery_failed events and IncidentEvent.actor_handle).',
       ),
     display_name: z
       .string()
@@ -365,8 +420,9 @@ export const responderSchema = componentSchema(
       .optional()
       .describe(
         "RESIDENT ONLY (SCRUM-65, D73; absent on a member's rows): the alert's delivery to this member. " +
-          'delivered = the push service accepted the alert (or a re-notify) for at least one of their ' +
-          'devices; sent = still being sent or retried; failed = every attempt failed after its retries, ' +
+          'delivered (D77) = at least one of their phones confirmed it received the alert (or a ' +
+          're-notify); sent = accepted by the push service but no receipt yet, or still being sent or ' +
+          'retried; failed = every attempt failed after its retries, ' +
           'or nothing could be sent (no device with notifications, push switched off). A re-notify ' +
           'recomputes it (failed can become delivered).',
       ),
@@ -375,7 +431,7 @@ export const responderSchema = componentSchema(
       .nullable()
       .optional()
       .describe(
-        'RESIDENT ONLY (D73): delivered = the first acceptance; failed = when the last attempt became final (null when nothing was ever sent); sent = null.',
+        'RESIDENT ONLY (D73): delivered = the first receipt confirmed by a phone (D77); failed = when the last attempt became final (null when nothing was ever sent); sent = null.',
       ),
     delivery_failed_reason: z
       .enum(['no_device', 'failed'])

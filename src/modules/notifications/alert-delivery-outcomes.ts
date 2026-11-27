@@ -109,7 +109,11 @@ export class AlertDeliveryOutcomes {
         callerId: sql`d.member_user_id`,
         incident: incidentAlias('rec'),
       });
-      const marked = await tx.execute<{ display_name: string; occurred_at: string }>(sql`
+      const marked = await tx.execute<{
+        display_name: string;
+        handle: string;
+        occurred_at: string;
+      }>(sql`
         update public.incident_deliveries d
            set delivery_failed_notified_at = now()
           from public.incidents rec
@@ -127,6 +131,7 @@ export class AlertDeliveryOutcomes {
                       where m.id = d.member_id),
                     ''
                   ) as display_name,
+                  d.member_id::text as handle,
                   (to_jsonb(d.delivery_failed_notified_at) #>> '{}') as occurred_at`);
       const row = marked.rows[0];
       if (!row) return undefined;
@@ -156,6 +161,7 @@ export class AlertDeliveryOutcomes {
         incident_id: incidentId,
         resident_id: residentId,
         member_user_id: memberUserId,
+        member_handle: row.handle,
         display_name: row.display_name,
         reason,
         occurred_at: row.occurred_at,

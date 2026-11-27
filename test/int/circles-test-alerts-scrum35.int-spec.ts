@@ -333,7 +333,7 @@ describe('SCRUM-35 test alerts (D66-D68)', () => {
       ['Zed Member', 'failed', 'no_device'],
     ]);
     expect(Object.keys(recipients[0])).toEqual([
-      'user_id',
+      'handle',
       'display_name',
       'status',
       'failure_reason',
@@ -341,6 +341,11 @@ describe('SCRUM-35 test alerts (D66-D68)', () => {
       'seen_at',
     ]);
     expect(recipients[1].delivered_at).toEqual(expect.any(String));
+    // D79: a member row id per recipient, never a user id.
+    for (const r of recipients) expect(r.handle).toEqual(expect.any(String));
+    for (const u of [s.reachable, s.unreachable, s.noDevice]) {
+      expect(JSON.stringify(status)).not.toContain(u.id);
+    }
 
     // Member read: the recipient only; everyone else 404.
     const read = await get(s.reachable.id, `/v1/test-alerts/${id}`);

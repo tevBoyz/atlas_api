@@ -4,6 +4,7 @@ import { ApiConfigService } from '../../config';
 import { AuditModule } from '../audit/audit.module';
 import { IncidentsModule } from '../incidents/incidents.module';
 import { AVATAR_STORAGE, type AvatarStorage } from './avatar-storage';
+import { AvatarNames } from './avatar-names';
 import { AvatarsService } from './avatars.service';
 import { FakeStorageRoute } from './fake-storage.route';
 import { MeAvatarController } from './me-avatar.controller';
@@ -45,6 +46,7 @@ export function avatarStorageFor(config: ApiConfigService): AvatarStorage {
     ProfileSetupRepository,
     ProfileSetupService,
     AvatarsService,
+    AvatarNames,
     { provide: AVATAR_STORAGE, inject: [ApiConfigService], useFactory: avatarStorageFor },
     FakeStorageRoute,
   ],

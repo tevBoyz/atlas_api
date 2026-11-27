@@ -6,6 +6,7 @@ import { RateLimit } from '../../common/rate-limit';
 import { ApiContract } from '../../openapi/api-contract.decorator';
 import { requireIncidentId } from '../incidents/incident-input';
 import { incidentIdParamsSchema, incidentSharedSchema } from '../incidents/incident.schemas';
+import { placeFromBody } from '../incidents/incident-place';
 import { parseAttachLocationBody } from './location-input';
 import { attachIncidentLocationRequestSchema } from './location.schemas';
 import { LocationsService } from './locations.service';
@@ -53,6 +54,12 @@ export class LocationsController {
     @Body() body: unknown,
   ): Promise<Record<string, unknown>> {
     const incidentId = requireIncidentId(id);
-    return this.locations.attach(user, incidentId, parseAttachLocationBody(body));
+    // Stage 2 [B6] / [B9]: the optional place keys, read leniently (never refuse the fix).
+    return this.locations.attach(
+      user,
+      incidentId,
+      parseAttachLocationBody(body),
+      placeFromBody(body),
+    );
   }
 }

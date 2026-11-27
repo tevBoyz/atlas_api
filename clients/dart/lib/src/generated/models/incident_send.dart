@@ -21,6 +21,7 @@ class IncidentSend {
     required this.autoClosed,
     required this.cancelledAt,
     required this.circleId,
+    required this.countryCode,
     required this.deliveredCount,
     required this.emergencyType,
     required this.id,
@@ -33,6 +34,7 @@ class IncidentSend {
     required this.locationSharingEndedAt,
     required this.locationSource,
     required this.locationUnavailableSince,
+    required this.placeName,
     required this.renotifiedAt,
     required this.residentId,
     required this.resolvedAt,
@@ -57,6 +59,10 @@ class IncidentSend {
   final String? cancelledAt;
   @JsonKey(name: 'circle_id')
   final String? circleId;
+
+  /// Stage 2 [B9]: ISO 3166-1 alpha-2 country of the alert (uppercase); null = not known. `emergency_services` are those of this country, else The Gambia.
+  @JsonKey(name: 'country_code')
+  final String? countryCode;
   @JsonKey(name: 'delivered_count')
   final int deliveredCount;
   @JsonKey(name: 'emergency_type')
@@ -82,6 +88,10 @@ class IncidentSend {
   /// SCRUM-68 (D74): since when the phone of the resident reports live location unavailable; null = live location is not reported unavailable. The location keys keep the last known fix (location_captured_at = when it was taken), so show it labelled "Last known · N min ago" with "Location unavailable". With no fix ever stored, location_source is unavailable and the position keys are null. The next fix clears it.
   @JsonKey(name: 'location_unavailable_since')
   final String? locationUnavailableSince;
+
+  /// Stage 2 [B6]: the reverse-geocoded place of the alert (the latest the resident's phone sent); null = not known. Never coordinates.
+  @JsonKey(name: 'place_name')
+  final String? placeName;
   @JsonKey(name: 'renotified_at')
   final String? renotifiedAt;
   @JsonKey(name: 'resident_id')
@@ -93,7 +103,7 @@ class IncidentSend {
   @JsonKey(name: 'sent_at')
   final String? sentAt;
 
-  /// Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59): the resident's confirmed phone (E.164) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.
+  /// Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59; Stage 2 [39]): the resident's phone (E.164; confirmed, else the stored unconfirmed one) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.
   @JsonKey(name: 'share_payload')
   final Map<String, dynamic>? sharePayload;
   final IncidentSendStatus status;

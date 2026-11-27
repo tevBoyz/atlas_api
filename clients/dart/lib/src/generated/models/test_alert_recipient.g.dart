@@ -13,9 +13,9 @@ TestAlertRecipient _$TestAlertRecipientFromJson(Map<String, dynamic> json) =>
       failureReason: json['failure_reason'] == null
           ? null
           : TestAlertFailureReason.fromJson(json['failure_reason'] as String),
+      handle: json['handle'] as String?,
       seenAt: json['seen_at'] as String?,
       status: TestAlertMemberState.fromJson(json['status'] as String),
-      userId: json['user_id'] as String,
     );
 
 Map<String, dynamic> _$TestAlertRecipientToJson(TestAlertRecipient instance) =>
@@ -23,7 +23,7 @@ Map<String, dynamic> _$TestAlertRecipientToJson(TestAlertRecipient instance) =>
       'delivered_at': instance.deliveredAt,
       'display_name': instance.displayName,
       'failure_reason': instance.failureReason,
+      'handle': instance.handle,
       'seen_at': instance.seenAt,
       'status': instance.status,
-      'user_id': instance.userId,
     };

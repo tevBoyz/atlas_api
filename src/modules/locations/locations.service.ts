@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../../common/auth';
 import { DomainError } from '../../common/errors';
 import { DatabaseService } from '../../db/database.service';
 import { IncidentPostCommitRunner } from '../incidents/incident-post-commit';
+import type { IncidentPlace } from '../incidents/incident-place';
 import { IncidentsRepository } from '../incidents/incidents.repository';
 import {
   IncidentOperationFailedError,
@@ -36,6 +37,7 @@ export class LocationsService {
     user: AuthenticatedUser,
     incidentId: string,
     input: ParsedAttachLocation,
+    place: IncidentPlace = {},
   ): Promise<Record<string, unknown>> {
     const result = await runIncidentTransaction(
       this.database,
@@ -55,6 +57,8 @@ export class LocationsService {
           throw new DomainError('attach_incident_location:not_open');
         }
 
+        // Stage 2 [B6] / [B9]: a place sent with the report replaces the stored one (latest wins).
+        await this.incidents.writePlace(tx, incident.id, place);
         const written = await this.locations.writeLocation(tx, incident.id, input.args);
         if (written) return { incidentId: incident.id, body: written, applied: true };
         // An older fix: keep the newer one and answer with the current row (rule 34).

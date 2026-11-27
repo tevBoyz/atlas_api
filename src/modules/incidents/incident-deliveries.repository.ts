@@ -1,7 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { type SQL, sql } from 'drizzle-orm';
 
-import { circleActiveMemberSince, incidentAlias, incidentCountsView } from '../../common/policies';
+import {
+  circleActiveMemberSince,
+  incidentAlias,
+  incidentCountsView,
+  liveDeliverySql,
+} from '../../common/policies';
 import type { IncidentTransaction } from './incidents.repository';
 
 /** DeliveryCounts (spec §7.4): `{incident_id, delivered_count, acknowledged_count, status}`. */
@@ -47,6 +52,7 @@ const COUNTS_LATERAL = sql`cross join lateral (
            count(*) filter (where d.acknowledged_at is not null)::int as acknowledged_count
       from public.incident_deliveries d
      where d.incident_id = rec.id
+       and ${liveDeliverySql('d')}
   ) c`;
 
 /**

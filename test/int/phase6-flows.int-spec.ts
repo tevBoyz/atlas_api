@@ -54,7 +54,13 @@ describe('Phase 6 gate: the auth flows of spec §8 against the API (API-100-59 A
     });
     expect([res.statusCode, res.json()]).toEqual([
       202,
-      { verification: { channel: 'email', expires_in_seconds: 300 } },
+      {
+        verification: { channel: 'email', expires_in_seconds: 300 },
+        verifications: [
+          { channel: 'email', expires_in_seconds: 300 },
+          { channel: 'phone', expires_in_seconds: 600 },
+        ],
+      },
     ]);
     const { rows } = await client.query<{ phone: string; confirmed: boolean }>(
       'select phone, phone_confirmed_at is not null as confirmed from public.users where email = $1',

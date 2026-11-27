@@ -45,6 +45,7 @@ const INCIDENT_SHARED_KEYS = [
   'auto_closed',
   'cancelled_at',
   'circle_id',
+  'country_code', // Stage 2 [B9]
   'emergency_type',
   'id',
   'incident_notes',
@@ -56,6 +57,7 @@ const INCIDENT_SHARED_KEYS = [
   'location_sharing_ended_at',
   'location_source',
   'location_unavailable_since',
+  'place_name', // Stage 2 [B6]
   'renotified_at',
   'resident_id',
   'resolved_at',

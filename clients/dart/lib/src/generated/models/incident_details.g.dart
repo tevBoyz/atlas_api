@@ -11,6 +11,7 @@ IncidentDetails _$IncidentDetailsFromJson(Map<String, dynamic> json) =>
       activatedAt: json['activated_at'] as String,
       autoClosed: json['auto_closed'] as bool,
       closedAt: json['closed_at'] as String?,
+      countryCode: json['country_code'] as String?,
       emergencyServices: (json['emergency_services'] as List<dynamic>)
           .map((e) => EmergencyService.fromJson(e as Map<String, dynamic>))
           .toList(),
@@ -31,6 +32,7 @@ IncidentDetails _$IncidentDetailsFromJson(Map<String, dynamic> json) =>
               json['location_source'] as String,
             ),
       locationUnavailableSince: json['location_unavailable_since'] as String?,
+      placeName: json['place_name'] as String?,
       renotifiedAt: json['renotified_at'] as String?,
       residentName: json['resident_name'] as String,
       resolvedAt: json['resolved_at'] as String?,
@@ -48,6 +50,7 @@ Map<String, dynamic> _$IncidentDetailsToJson(IncidentDetails instance) =>
       'activated_at': instance.activatedAt,
       'auto_closed': instance.autoClosed,
       'closed_at': instance.closedAt,
+      'country_code': instance.countryCode,
       'emergency_services': instance.emergencyServices,
       'emergency_type': instance.emergencyType,
       'id': instance.id,
@@ -60,6 +63,7 @@ Map<String, dynamic> _$IncidentDetailsToJson(IncidentDetails instance) =>
       'location_sharing_ended_at': instance.locationSharingEndedAt,
       'location_source': instance.locationSource,
       'location_unavailable_since': instance.locationUnavailableSince,
+      'place_name': instance.placeName,
       'renotified_at': instance.renotifiedAt,
       'resident_name': instance.residentName,
       'resolved_at': instance.resolvedAt,

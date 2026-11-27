@@ -15,8 +15,10 @@ const OTHER = '4f3a1c2d-9e8b-4a7c-b6d5-1234567f9c2d';
 const USER = { id: ME } as AuthenticatedUser;
 const T = '2026-11-23T10:00:00+00:00';
 
+const HANDLE = 'bbbbbbbb-0000-4000-8000-000000000002';
 const row = (userId: string, status: ResponderRow['status'] = 'responding'): ResponderRow => ({
   user_id: userId,
+  handle: HANDLE,
   display_name: 'Milo',
   avatar_url: null,
   status,
@@ -29,6 +31,7 @@ const row = (userId: string, status: ResponderRow['status'] = 'responding'): Res
 
 const MEMBER_KEYS = [
   'user_id',
+  'handle',
   'display_name',
   'avatar_url',
   'status',
@@ -64,10 +67,10 @@ describe('responseStatusFromBody (D56)', () => {
   });
 });
 
-describe('responderView (D56 masking, as D11)', () => {
-  it('the resident sees full ids, is_me false and (D73) the 3 delivery keys after is_me', () => {
+describe('responderView (D56, D79: no other user id)', () => {
+  it('the resident sees no user id (null), the handle, is_me false and (D73) the 3 delivery keys after is_me', () => {
     const view = responderView(row(OTHER), { resident: true });
-    expect(view).toEqual({ ...row(OTHER), is_me: false });
+    expect(view).toEqual({ ...row(OTHER), user_id: null, is_me: false });
     expect(Object.keys(view)).toEqual([
       ...MEMBER_KEYS,
       'delivery_status',
@@ -76,13 +79,14 @@ describe('responderView (D56 masking, as D11)', () => {
     ]);
   });
 
-  it('a member sees another member masked; exactly the 7 keys in order (no delivery keys, D73)', () => {
+  it('a member sees another member without a user id (null, never masked); exactly the 8 keys in order (no delivery keys, D73)', () => {
     const view = responderView(row(OTHER), { resident: false, viewerId: ME });
     expect(Object.keys(view)).toEqual(MEMBER_KEYS);
     expect(Object.keys(responderView(row(ME), { resident: false, viewerId: ME }))).toEqual(
       MEMBER_KEYS,
     );
-    expect(view.user_id).toBe('4f3a****-****-****-****-********9c2d');
+    expect(view.user_id).toBeNull();
+    expect(view.handle).toBe(HANDLE);
     expect(view.is_me).toBe(false);
   });
 
@@ -309,7 +313,7 @@ describe('IncidentRespondersService.list (D56)', () => {
     });
   });
 
-  it('a member: others masked, own row full', async () => {
+  it('a member (D79): others null, own row with their own id', async () => {
     const { service } = serviceWith({
       visibleResponders: jest
         .fn()
@@ -317,17 +321,18 @@ describe('IncidentRespondersService.list (D56)', () => {
     });
     const list = await service.list(USER, INCIDENT_ID);
     expect(list.map((r) => [r.user_id, r.is_me])).toEqual([
-      ['4f3a****-****-****-****-********9c2d', false],
+      [null, false],
       [ME, true],
     ]);
   });
 
-  it('the resident: full ids', async () => {
+  it('the resident (D79): no user ids, the handle', async () => {
     const { service } = serviceWith({
       visibleResponders: jest.fn().mockResolvedValue({ is_resident: true, rows: [row(OTHER)] }),
     });
     expect((await service.list({ id: OTHER } as AuthenticatedUser, INCIDENT_ID))[0]).toMatchObject({
-      user_id: OTHER,
+      user_id: null,
+      handle: HANDLE,
       is_me: false,
     });
   });

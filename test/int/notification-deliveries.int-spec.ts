@@ -223,6 +223,7 @@ describe('notification deliveries and retries (API-100-47)', () => {
         'emergency_type',
         'incident_id',
         'occurred_at',
+        'place_name', // Stage 2 [B6]: visible text only, never a data key
         'resident_name',
         'topic',
       ]);

@@ -12,8 +12,14 @@ SubmitEmergencyAlertRequest _$SubmitEmergencyAlertRequestFromJson(
   emergencyType: SubmitEmergencyAlertRequestEmergencyType.fromJson(
     json['emergency_type'] as String,
   ),
+  countryCode: json['country_code'] as String?,
+  placeName: json['place_name'] as String?,
 );
 
 Map<String, dynamic> _$SubmitEmergencyAlertRequestToJson(
   SubmitEmergencyAlertRequest instance,
-) => <String, dynamic>{'emergency_type': instance.emergencyType};
+) => <String, dynamic>{
+  'country_code': instance.countryCode,
+  'emergency_type': instance.emergencyType,
+  'place_name': instance.placeName,
+};

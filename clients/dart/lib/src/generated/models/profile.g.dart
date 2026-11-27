@@ -21,7 +21,7 @@ Profile _$ProfileFromJson(Map<String, dynamic> json) => Profile(
       ? null
       : BloodType.fromJson(json['blood_type'] as String),
   createdAt: json['created_at'] as String,
-  dateOfBirth: json['date_of_birth'] as String,
+  dateOfBirth: json['date_of_birth'] as String?,
   emergencyContactEmail: json['emergency_contact_email'] as String?,
   emergencyContactFullName: json['emergency_contact_full_name'] as String?,
   alertEmailEnabled: json['alert_email_enabled'] as bool,

@@ -9,6 +9,7 @@ import {
   errorOf,
   fakeEmail,
   GOOD_PASSWORD,
+  latestCode,
   latestLink,
   mailbox,
   post,
@@ -18,8 +19,8 @@ import {
 import { openTestClient } from '../support/database';
 
 /**
- * API-100-52: sign-up (A1), email verification (A2) and resend (A3). D5a password policy, D5b no
- * enumeration of emails (and phones), argon2id, the link scheme and its 300 s single use, the fake
+ * API-100-52: sign-up (A1), email verification (A2) and resend (A3). D5a password policy, D78
+ * (Stage 3 [B1], replaces D5b): email OR phone, a duplicate is 409 `signup:already_registered`, argon2id, the link scheme and its 300 s single use, the fake
  * email channel, audit `auth.signup` / `auth.email_verified`, and nothing secret in the logs.
  */
 describe('sign-up and email verification (API-100-52)', () => {
@@ -68,15 +69,22 @@ describe('sign-up and email verification (API-100-52)', () => {
       const phone = authFakePhone();
       const res = await signup({ email: `  ${email.toUpperCase()} `, phone });
       expect(res.statusCode).toBe(202);
-      expect(res.json()).toEqual({ verification: { channel: 'email', expires_in_seconds: 300 } });
+      expect(res.json()).toEqual({
+        verification: { channel: 'email', expires_in_seconds: 300 },
+        verifications: [
+          { channel: 'email', expires_in_seconds: 300 },
+          { channel: 'phone', expires_in_seconds: 600 },
+        ],
+      });
       const [user] = await userRow(email);
       expect(user).toMatchObject({
         email,
         phone,
         email_confirmed_at: null,
         phone_confirmed_at: null,
-        metadata: { full_name: 'Signup Example', signup_phone: phone },
+        metadata: { full_name: 'Signup Example' },
       });
+      expect(latestCode(app, phone)).toMatch(/^\d{6}$/);
       const { rows: creds } = await client.query<{ hash_algo: string; password_hash: string }>(
         'select hash_algo, password_hash from public.user_credentials where user_id = $1',
         [user.id],
@@ -115,40 +123,99 @@ describe('sign-up and email verification (API-100-52)', () => {
       ]);
     });
 
-    it('D5b: an existing confirmed email gets the same 202 and nothing else (no user, no email)', async () => {
-      const { email } = await signedUpUser(app);
-      const before = mailbox(app, email).length;
-      const res = await signup({ email });
-      expect(res.statusCode).toBe(202);
-      expect(res.json()).toEqual({ verification: { channel: 'email', expires_in_seconds: 300 } });
-      expect(await userRow(email)).toHaveLength(1);
-      expect(mailbox(app, email)).toHaveLength(before);
-    });
-
-    it('D5b: an existing unconfirmed email gets the same 202 and a new link; the old link stops working', async () => {
+    it('D78: email only → 202, an emailed link only, no phone stored', async () => {
       const email = fakeEmail();
-      await signup({ email });
-      const first = latestLink(app, email)!;
-      const res = await signup({ email: email.toUpperCase(), password: 'Other1234x' });
+      const res = await signup({ email, phone: undefined });
       expect(res.statusCode).toBe(202);
-      const second = latestLink(app, email)!;
-      expect(second.token).not.toBe(first.token);
-      expect(await userRow(email)).toHaveLength(1);
-      const old = await post(app, '/v1/auth/email/verify', { token: first.token, device: DEVICE });
-      expect(old.statusCode).toBe(400);
-      expect(errorOf(old).code).toBe('auth:link_invalid');
-    });
-
-    it('no phone enumeration: a phone held by another user gives the same 202; the new user keeps it in metadata only', async () => {
-      const phone = authFakePhone();
-      await signup({ phone });
-      const email = fakeEmail();
-      const res = await signup({ email, phone });
-      expect(res.statusCode).toBe(202);
-      expect(res.json()).toEqual({ verification: { channel: 'email', expires_in_seconds: 300 } });
+      expect(res.json()).toEqual({
+        verification: { channel: 'email', expires_in_seconds: 300 },
+        verifications: [{ channel: 'email', expires_in_seconds: 300 }],
+      });
       const [user] = await userRow(email);
       expect(user.phone).toBeNull();
-      expect(user.metadata).toMatchObject({ signup_phone: phone });
+      expect(latestLink(app, email)?.type).toBe('signup');
+    });
+
+    it('D78: phone only → 202, a texted code; verifying it signs in and confirms the phone; then phone + password signs in', async () => {
+      const phone = authFakePhone();
+      const res = await signup({ email: null, phone });
+      expect(res.statusCode).toBe(202);
+      expect(res.json()).toEqual({
+        verification: { channel: 'phone', expires_in_seconds: 600 },
+        verifications: [{ channel: 'phone', expires_in_seconds: 600 }],
+      });
+      const { rows } = await client.query<{ id: string; email: string | null }>(
+        'select id, email::text from public.users where phone = $1',
+        [phone],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].email).toBeNull();
+      const { rows: identities } = await client.query(
+        'select provider from public.user_identities where user_id = $1',
+        [rows[0].id],
+      );
+      expect(identities).toEqual([]);
+      const code = latestCode(app, phone)!;
+      const verified = await post(app, '/v1/auth/otp/verify', {
+        phone,
+        code,
+        purpose: 'sign_in',
+        device: DEVICE,
+      });
+      expect(verified.statusCode).toBe(200);
+      expect(verified.json<SessionBody>().user.phone_confirmed_at).toEqual(expect.any(String));
+      const login = await post(app, '/v1/auth/login', {
+        phone,
+        password: GOOD_PASSWORD,
+        device: DEVICE,
+      });
+      expect(login.statusCode).toBe(200);
+    });
+
+    it.each([
+      ['both missing', { email: undefined, phone: undefined }],
+      ['both null', { email: null, phone: null }],
+      ['both blank', { email: '  ', phone: '' }],
+    ])('D78: %s → 422 signup:contact_required (field contact)', async (_label, body) => {
+      const res = await signup(body);
+      expect(res.statusCode).toBe(422);
+      expect(errorOf(res)).toMatchObject({
+        code: 'signup:contact_required',
+        details: { field: 'contact' },
+      });
+    });
+
+    it('D78: an existing email (confirmed or not) → 409 signup:already_registered field email; nothing written or sent', async () => {
+      const { email } = await signedUpUser(app);
+      const before = mailbox(app, email).length;
+      const res = await signup({ email: email.toUpperCase() });
+      expect(res.statusCode).toBe(409);
+      expect(errorOf(res)).toMatchObject({
+        code: 'signup:already_registered',
+        details: { field: 'email' },
+      });
+      expect(await userRow(email)).toHaveLength(1);
+      expect(mailbox(app, email)).toHaveLength(before);
+
+      const unconfirmed = fakeEmail();
+      expect((await signup({ email: unconfirmed })).statusCode).toBe(202);
+      const again = await signup({ email: unconfirmed });
+      expect([again.statusCode, errorOf(again).details]).toEqual([409, { field: 'email' }]);
+    });
+
+    it('D78: an existing phone → 409 signup:already_registered field phone; no user is created', async () => {
+      const phone = authFakePhone();
+      expect((await signup({ phone })).statusCode).toBe(202);
+      const email = fakeEmail();
+      const res = await signup({ email, phone });
+      expect(res.statusCode).toBe(409);
+      expect(errorOf(res)).toMatchObject({
+        code: 'signup:already_registered',
+        details: { field: 'phone' },
+      });
+      expect(await userRow(email)).toHaveLength(0);
+      const phoneOnly = await signup({ email: null, phone });
+      expect([phoneOnly.statusCode, errorOf(phoneOnly).details]).toEqual([409, { field: 'phone' }]);
     });
 
     it.each([
@@ -205,7 +272,8 @@ describe('sign-up and email verification (API-100-52)', () => {
       const replies = await Promise.all(Array.from({ length: 8 }, () => signup({ email })));
       const statuses = replies.map((r) => r.statusCode).sort();
       // 4 emails per address per 15 minutes: the other 4 are refused before any write.
-      expect(statuses).toEqual([202, 202, 202, 202, 429, 429, 429, 429]);
+      // D78: of the 4 sent through, one creates the user and 3 are duplicates (409).
+      expect(statuses).toEqual([202, 409, 409, 409, 429, 429, 429, 429]);
       expect(await userRow(email)).toHaveLength(1);
     });
 

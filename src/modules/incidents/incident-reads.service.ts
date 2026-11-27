@@ -24,7 +24,10 @@ export class IncidentReadsService {
   async openIncident(user: AuthenticatedUser): Promise<{ open_incident: unknown }> {
     const body = await this.read(async (tx) => {
       const open = await this.repository.openIncident(tx, user.id);
-      return open && { ...open, emergency_services: await this.repository.emergencyServices(tx) };
+      if (!open) return open;
+      // Stage 2 [B9]: the numbers of the incident's country (else The Gambia).
+      const country = (open as { country_code?: string | null }).country_code;
+      return { ...open, emergency_services: await this.repository.emergencyServices(tx, country) };
     });
     return { open_incident: body };
   }

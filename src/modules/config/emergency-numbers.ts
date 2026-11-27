@@ -6,6 +6,7 @@ import {
   EMERGENCY_SERVICE_KINDS,
   type EmergencyService,
   type EmergencyServiceKind,
+  INCIDENT_REGION,
 } from './emergency-numbers.schemas';
 
 /** Anything that runs SQL: the pool or an open transaction. */
@@ -59,6 +60,32 @@ export function emergencyServicesFrom(config: unknown, country: string): Emergen
     const found = byKind.get(kind);
     return found ? [found] : [];
   });
+}
+
+/**
+ * Stage 2 [B9]: the services of an incident's country: those of `countryCode` when the config has
+ * a usable entry for it, else (no country, an unknown country, or no usable number for it) those of
+ * The Gambia ({@link INCIDENT_REGION}, D60). Countries are added by configuration only.
+ */
+export function emergencyServicesForCountry(
+  config: unknown,
+  countryCode: string | null | undefined,
+): EmergencyService[] {
+  if (countryCode && countryCode !== INCIDENT_REGION) {
+    const services = emergencyServicesFrom(config, countryCode);
+    if (services.length > 0) return services;
+  }
+  return emergencyServicesFrom(config, INCIDENT_REGION);
+}
+
+/** Stage 2 [B9]: {@link emergencyServicesForCountry} with the stored config, read now. */
+export async function readIncidentEmergencyServices(
+  executor: ConfigExecutor,
+  countryCode: string | null | undefined,
+): Promise<EmergencyService[]> {
+  const result = await executor.execute<{ value: unknown }>(sql`
+    select c.value from public.app_config c where c.key = ${EMERGENCY_NUMBERS_CONFIG_KEY}`);
+  return emergencyServicesForCountry(result.rows[0]?.value, countryCode);
 }
 
 /**

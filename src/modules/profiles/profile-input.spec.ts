@@ -84,7 +84,9 @@ describe('profile request parsing (API-100-35)', () => {
   });
 
   describe('personal info (P2)', () => {
-    const parse = (body: unknown) => personalInfoFromBody(body, UID, TODAY);
+    // D79: the route decides the photo path (issued to the caller, or the stored one); here: own folder.
+    const parse = (body: unknown) =>
+      personalInfoFromBody(body, (path) => isOwnAvatarPath(path, UID), TODAY);
 
     it('trims the name; left-out gender and avatar_path keep the stored values', () => {
       expect(parse({ full_name: '  Awa \n', date_of_birth: '1990-01-15' })).toEqual({
@@ -117,11 +119,14 @@ describe('profile request parsing (API-100-35)', () => {
       ).toEqual({ code: 'profiles:invalid_avatar_path', field: 'avatar_path' });
     });
 
-    it('missing name or date → the field code; wrong JSON type → validation', () => {
+    it('missing name → the field code; a bad date → its code; wrong JSON type → validation', () => {
       expect(failure(() => parse({ date_of_birth: TODAY })).code).toBe(
         'profiles:invalid_full_name',
       );
-      expect(failure(() => parse({ full_name: 'A' })).code).toBe('profiles:invalid_date_of_birth');
+      // Stage 3 [B2]: the date of birth is optional (left out = keep, null / blank = clear).
+      expect(parse({ full_name: 'A' }).dateOfBirth).toBeUndefined();
+      expect(parse({ full_name: 'A', date_of_birth: null }).dateOfBirth).toBeNull();
+      expect(parse({ full_name: 'A', date_of_birth: ' ' }).dateOfBirth).toBeNull();
       expect(failure(() => parse({ full_name: 'A', date_of_birth: '2026-11-21' })).code).toBe(
         'profiles:invalid_date_of_birth',
       );

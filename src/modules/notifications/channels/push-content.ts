@@ -6,6 +6,7 @@ import {
   isTestAlertMessage,
   type PushMessage,
   type PushNotice,
+  type PushTarget,
   STATUS_UPDATE_PRESETS,
   STATUS_UPDATE_TOPIC,
   type StatusUpdatePreset,
@@ -63,13 +64,27 @@ export function pushMessageOf(
       text: updateText,
     };
   }
-  return {
+  const message: PushMessage = {
     topic,
     incident_id: incidentId,
     emergency_type: text(payload.emergency_type),
     resident_name: text(payload.resident_name),
     occurred_at: text(payload.occurred_at),
   };
+  // Stage 2 [B6]: the place of an alert notice (the sender adds it at send time).
+  if (PLACE_TOPICS.includes(topic)) message.place_name = text(payload.place_name);
+  return message;
+}
+
+/** Stage 2 [B6]: the notices whose text names the place: the alert and its re-notify. */
+const PLACE_TOPICS: readonly string[] = ['incident.created', 'incident.renotified'];
+
+/** Stage 2 [B6]: the text when the place of the alert is not known at send time. */
+export const LOCATION_UNAVAILABLE_TEXT = 'Location unavailable';
+
+/** Stage 2 [B6]: `near <place>`, or {@link LOCATION_UNAVAILABLE_TEXT}; never coordinates. */
+export function placeText(placeName: string | null | undefined): string {
+  return placeName ? `near ${placeName}` : LOCATION_UNAVAILABLE_TEXT;
 }
 
 /** Spec §5.2 emergency types (`unspecified` on legacy rows only). */
@@ -137,7 +152,8 @@ export function pushText(
   let body: string;
   switch (message.topic) {
     case 'incident.resolved':
-      body = 'Marked safe. The alert is closed.';
+      // Stage 2 [B8]: Resolved (Safe) is not Closed: "<Name> is safe", never "closed".
+      body = `${message.resident_name ?? MARKED_SAFE_FALLBACK_NAME} is safe`;
       break;
     case 'incident.renotified':
       body = `Alert sent again: ${type}`;
@@ -145,9 +161,14 @@ export function pushText(
     default:
       body = `Emergency alert: ${type}`;
   }
+  // Stage 2 [B6]: the alert names its place, or says the location is unavailable.
+  if (message.place_name !== undefined) body = `${body} · ${placeText(message.place_name)}`;
   const time = pushTime(message.occurred_at, timeZone);
   return { title, body: time ? `${body} · ${time}` : body };
 }
+
+/** Stage 2 [B8]: the name in "<Name> is safe" when the resident's display name is blank. */
+export const MARKED_SAFE_FALLBACK_NAME = 'Your Safety Circle contact';
 
 /** SCRUM-44/59 (D70): the visible text of each preset. */
 export const STATUS_UPDATE_PRESET_TEXT: Readonly<Record<StatusUpdatePreset, string>> = {
@@ -280,6 +301,23 @@ export function pushData(message: PushNotice): Record<string, string> {
     return { topic: message.topic, incident_id: message.incident_id };
   }
   return incidentData(message);
+}
+
+/**
+ * Stage 2 [N]: the Android notification tag: the alert's `incident_id` (a test alert: its
+ * `test_alert_id`), so a newer push of the same alert replaces the older one instead of stacking.
+ */
+export function pushNotificationTag(message: PushNotice): string {
+  return isTestAlertMessage(message) ? message.test_alert_id : message.incident_id;
+}
+
+/**
+ * The data keys of one push to one device: {@link pushData} plus, when the push has a delivery row,
+ * its `receipt_token` (Stage 2 [B7], D77: the phone reports receipt with it).
+ */
+export function pushTargetData(target: PushTarget, message: PushNotice): Record<string, string> {
+  const data = pushData(message);
+  return target.receipt_token ? { ...data, receipt_token: target.receipt_token } : data;
 }
 
 function incidentData(message: PushMessage): Record<string, string> {

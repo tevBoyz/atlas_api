@@ -13,9 +13,9 @@ part 'personal_info_request.g.dart';
 @JsonSerializable()
 class PersonalInfoRequest {
   const PersonalInfoRequest({
-    required this.dateOfBirth,
     required this.fullName,
     this.avatarPath,
+    this.dateOfBirth,
     this.gender,
   });
 
@@ -26,9 +26,9 @@ class PersonalInfoRequest {
   @JsonKey(name: 'avatar_path')
   final String? avatarPath;
 
-  /// `YYYY-MM-DD`, a real date not after today (Africa/Banjul = UTC) (`profiles:invalid_date_of_birth`).
+  /// Optional (Stage 3 [B2], SCRUM-17): left out keeps the stored value, null or blank clears it; else `YYYY-MM-DD`, a real date not after today (Africa/Banjul = UTC) (`profiles:invalid_date_of_birth`).
   @JsonKey(name: 'date_of_birth')
-  final String dateOfBirth;
+  final String? dateOfBirth;
 
   /// Trimmed; must not be empty (`profiles:invalid_full_name`).
   @JsonKey(name: 'full_name')

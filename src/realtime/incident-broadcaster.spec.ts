@@ -26,6 +26,7 @@ import type {
 const INCIDENT = 'aaaaaaaa-0000-4000-8000-000000000001';
 const RESIDENT = '4f3a1c2d-9e8b-4a7c-b6d5-1234567f9c2d';
 const MEMBER = '5e4b2d3c-0f9a-4b8d-a7c6-2345678a0d3e';
+const HANDLE = 'bbbbbbbb-0000-4000-8000-000000000002';
 const CIRCLE = 'cccccccc-0000-4000-8000-000000000001';
 const T = '2026-11-20T10:00:00.123456+00:00';
 
@@ -53,6 +54,8 @@ function state(): IncidentBroadcastState {
     location_accuracy_m: 3,
     location_captured_at: T,
     location_unavailable_since: null,
+    place_name: null,
+    country_code: null,
     incident_notes: null,
     incident_notes_updated_at: null,
     updated_at: T,
@@ -78,6 +81,7 @@ function responderState(): IncidentResponderState {
     resident_id: RESIDENT,
     responder: {
       user_id: MEMBER,
+      handle: HANDLE,
       display_name: 'Milo',
       avatar_url: null,
       status: 'responding',
@@ -100,6 +104,7 @@ function eventRow(actor: string | null, detail: Record<string, unknown> = {}): I
       event_type: 'closure_notified',
       occurred_at: T,
       actor_id: actor,
+      actor_handle: actor === null || actor === RESIDENT ? null : HANDLE,
       actor_name: actor === null ? null : actor === RESIDENT ? 'Rita' : 'Milo',
       detail,
     },
@@ -128,21 +133,24 @@ function setup(row?: IncidentEventRow) {
   return { broadcaster, emit, reads, calls, payload };
 }
 
-describe('eventPayload (D3, D11 per receiver)', () => {
+describe('eventPayload (D79 per receiver)', () => {
   const detail = { recipient_count: 2, recipient_ids: [MEMBER, RESIDENT] };
 
-  it('the resident gets the row as stored', () => {
+  it('the resident gets no recipient_ids; their own id as actor; a member actor as null + handle', () => {
     expect(eventPayload(eventRow(RESIDENT, detail), { resident: true })).toEqual({
       incident_id: INCIDENT,
-      event: eventRow(RESIDENT, detail).event,
+      event: { ...eventRow(RESIDENT, detail).event, detail: { recipient_count: 2 } },
       occurred_at: T,
     });
+    const byMember = eventPayload(eventRow(MEMBER, detail), { resident: true }).event;
+    expect([byMember.actor_id, byMember.actor_handle]).toEqual([null, HANDLE]);
   });
 
-  it('a member gets no recipient_ids and the actor masked', () => {
+  it('a member gets no recipient_ids and no other user id (null, never masked)', () => {
     const payload = eventPayload(eventRow(RESIDENT, detail), { resident: false, viewerId: null });
     expect(payload.event.detail).toEqual({ recipient_count: 2 });
-    expect(payload.event.actor_id).toBe('4f3a****-****-****-****-********9c2d');
+    expect(payload.event.actor_id).toBeNull();
+    expect(payload.event.actor_handle).toBeNull();
   });
 
   it('a member who is the actor sees their own id; null stays null', () => {
@@ -172,6 +180,7 @@ describe('eventPayload (D3, D11 per receiver)', () => {
       'event_type',
       'occurred_at',
       'actor_id',
+      'actor_handle',
       'actor_name',
       'detail',
     ]);
@@ -273,7 +282,7 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
     ]);
   });
 
-  it('an event by the resident: full to the resident room, masked to the rest', async () => {
+  it('an event by the resident: own id to the resident room, null to the rest', async () => {
     const { broadcaster, calls, payload } = setup(eventRow(RESIDENT, { recipient_ids: [MEMBER] }));
     await broadcaster.afterEvent({ ...ref, event_id: 'x', event_type: 'closure_notified' });
     expect(calls()).toEqual([
@@ -283,7 +292,7 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
     expect(payload(1).event.detail).toEqual({});
   });
 
-  it('an event by a member: that member sees their own id, others masked', async () => {
+  it('an event by a member: that member sees their own id, others null + the handle', async () => {
     const { broadcaster, calls, payload } = setup(eventRow(MEMBER));
     await broadcaster.afterEvent({ ...ref, event_id: 'x', event_type: 'closure_notified' });
     const own = `incident:${INCIDENT}:user:${MEMBER}`;
@@ -292,8 +301,9 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
       [[`incident:${INCIDENT}`], 'incident.event', [`incident:${INCIDENT}:resident`, own]],
       [[own], 'incident.event', [`incident:${INCIDENT}:resident`]],
     ]);
-    expect(payload(1).event.actor_id).toBe('5e4b****-****-****-****-********0d3e');
+    expect(payload(1).event.actor_id).toBeNull();
     expect(payload(2).event.actor_id).toBe(MEMBER);
+    expect(payload(0).event.actor_id).toBeNull();
   });
 
   it('created submit: incident.incoming to each recipient user room, updated, counts', async () => {
@@ -355,7 +365,7 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
     expect(emit).not.toHaveBeenCalled();
   });
 
-  it('responders (D56): resident full, the member their own row, every other member masked', async () => {
+  it('responders (D56, D79): the member their own id, everyone else null; the handle for all', async () => {
     const { broadcaster, calls, emit, reads } = setup();
     await broadcaster.afterResponders({ ...ref, member_user_id: MEMBER });
     expect(reads.responder).toHaveBeenCalledWith(INCIDENT, MEMBER);
@@ -369,12 +379,9 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
     const sent = (n: number) =>
       (emit.mock.calls[n] as [string[], string, { responder: Record<string, unknown> }])[2]
         .responder;
-    expect(sent(0)).toMatchObject({ user_id: MEMBER, is_me: false });
-    expect(sent(1)).toMatchObject({
-      user_id: '5e4b****-****-****-****-********0d3e',
-      is_me: false,
-    });
-    expect(sent(2)).toMatchObject({ user_id: MEMBER, is_me: true });
+    expect(sent(0)).toMatchObject({ user_id: null, handle: HANDLE, is_me: false });
+    expect(sent(1)).toMatchObject({ user_id: null, handle: HANDLE, is_me: false });
+    expect(sent(2)).toMatchObject({ user_id: MEMBER, handle: HANDLE, is_me: true });
     // D73: only the resident's copy carries the delivery keys.
     expect(sent(0)).toMatchObject({ delivery_status: 'delivered', delivery_at: T });
     expect(sent(1)).not.toHaveProperty('delivery_status');
@@ -389,7 +396,8 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
     expect((emit.mock.calls[0] as [string[], string, unknown])[2]).toEqual({
       incident_id: INCIDENT,
       responder: {
-        user_id: MEMBER,
+        user_id: null,
+        handle: HANDLE,
         display_name: 'Milo',
         avatar_url: null,
         status: 'responding',
@@ -414,6 +422,7 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
       incident_id: INCIDENT,
       resident_id: RESIDENT,
       member_user_id: MEMBER,
+      member_handle: HANDLE,
       display_name: 'Milo',
       reason: 'failed',
       occurred_at: T,
@@ -421,7 +430,7 @@ describe('IncidentBroadcaster rooms (API-100-41)', () => {
     expect(calls()).toEqual([[[`incident:${INCIDENT}:resident`], 'incident.delivery_failed', []]]);
     expect((emit.mock.calls[0] as [string[], string, unknown])[2]).toEqual({
       incident_id: INCIDENT,
-      member: { user_id: MEMBER, display_name: 'Milo' },
+      member: { handle: HANDLE, display_name: 'Milo' },
       reason: 'failed',
       occurred_at: T,
     });
@@ -520,6 +529,7 @@ describe('the published contract (x-realtime) matches the payloads', () => {
       incident_id: INCIDENT,
       resident_id: RESIDENT,
       member_user_id: MEMBER,
+      member_handle: HANDLE,
       display_name: 'Milo',
       reason: 'no_device',
       occurred_at: T,

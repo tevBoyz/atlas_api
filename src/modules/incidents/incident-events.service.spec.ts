@@ -10,7 +10,7 @@ import {
   IncidentEventService,
   isKnownIncidentEventType,
   ONCE_PER_INCIDENT_EVENT_TYPES,
-  RESIDENT_ONLY_DETAIL_KEYS,
+  HIDDEN_DETAIL_KEYS,
   UnknownIncidentEventTypeError,
 } from './incident-events.service';
 import type { IncidentTransaction } from './incidents.repository';
@@ -65,7 +65,7 @@ describe('IncidentEventService (API-100-22)', () => {
     expect([...(index ?? '').matchAll(/'(\w+)'/g)].map((m) => m[1])).toEqual([
       ...ONCE_PER_INCIDENT_EVENT_TYPES,
     ]);
-    expect(RESIDENT_ONLY_DETAIL_KEYS).toEqual(['recipient_ids']);
+    expect(HIDDEN_DETAIL_KEYS).toEqual(['recipient_ids']);
   });
 
   it('AC2: an unknown type is refused in code, before any SQL', async () => {

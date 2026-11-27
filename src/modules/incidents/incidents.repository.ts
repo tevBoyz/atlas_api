@@ -3,8 +3,10 @@ import { sql } from 'drizzle-orm';
 
 import { incidentAlias, incidentResident } from '../../common/policies';
 import type { Database } from '../../db';
-import { readEmergencyServices } from '../config/emergency-numbers';
-import { type EmergencyService, INCIDENT_REGION } from '../config/emergency-numbers.schemas';
+import { readIncidentEmergencyServices } from '../config/emergency-numbers';
+import type { EmergencyService } from '../config/emergency-numbers.schemas';
+import { liveDeliverySql } from '../../common/policies';
+import { hasPlace, type IncidentPlace } from './incident-place';
 import { IncidentEventService } from './incident-events.service';
 import { INCIDENT_SEND_JSON, INCIDENT_SHARED_JSON } from './incident-json';
 import type { SubmitOutcome, SubmittableEmergencyType } from './incident.schemas';
@@ -248,7 +250,8 @@ export class IncidentsRepository {
     const deliveries = await tx.execute(sql`
       update public.incident_deliveries
          set delivered_at = now()
-       where incident_id = ${incidentId}::uuid`);
+       where incident_id = ${incidentId}::uuid
+         and ${liveDeliverySql('incident_deliveries')}`);
     const refreshed = deliveries.rowCount ?? 0;
 
     await this.events.record(
@@ -323,11 +326,31 @@ export class IncidentsRepository {
 
   /**
    * SCRUM-54 (D60): the local emergency numbers of an incident's region, read from `app_config`
-   * `emergency_numbers` now (no restart needed after a change). V1 region rule: every incident is in
-   * The Gambia (`GM`); the lookup is by country so another region is configuration only.
+   * `emergency_numbers` now (no restart needed after a change). Stage 2 [B9]: the region is the
+   * incident's `country_code` when the config has numbers for it, else The Gambia (`GM`).
    */
-  emergencyServices(tx: IncidentTransaction): Promise<EmergencyService[]> {
-    return readEmergencyServices(tx, INCIDENT_REGION);
+  emergencyServices(
+    tx: IncidentTransaction,
+    countryCode: string | null | undefined,
+  ): Promise<EmergencyService[]> {
+    return readIncidentEmergencyServices(tx, countryCode);
+  }
+
+  /**
+   * Stage 2 [B6] / [B9]: the place keys sent with the SOS or a location report replace the stored
+   * ones (latest wins); a key left out keeps its value. Nothing is written when neither was sent.
+   */
+  async writePlace(
+    tx: IncidentTransaction,
+    incidentId: string,
+    place: IncidentPlace,
+  ): Promise<void> {
+    if (!hasPlace(place)) return;
+    await tx.execute(sql`
+      update public.incidents
+         set place_name = coalesce(${place.place_name ?? null}::text, place_name),
+             country_code = coalesce(${place.country_code ?? null}::text, country_code)
+       where id = ${incidentId}::uuid`);
   }
 
   /** `_incident_send_json(rec)` of one incident (IncidentSend). */

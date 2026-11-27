@@ -49,7 +49,10 @@ export const profileSchema = componentSchema(
   z.object({
     id: z.uuid(),
     full_name: z.string(),
-    date_of_birth: z.string().describe('`YYYY-MM-DD`.'),
+    date_of_birth: z
+      .string()
+      .nullable()
+      .describe('`YYYY-MM-DD`; null = not given (optional since Stage 3 [B2], SCRUM-17).'),
     gender: genderSchema.nullable(),
     avatar_path: z
       .string()
@@ -109,7 +112,7 @@ export const profileSchema = componentSchema(
     share_phone: z
       .boolean()
       .describe(
-        "Share my phone number (SCRUM-52, D59): when on, members of an alert get the account's confirmed phone as `resident_phone` in the shared info. On by default.",
+        "Share my phone number (SCRUM-52, D59): when on, members of an alert get the account's phone (confirmed, else the stored unconfirmed one; Stage 2 [39]) as `resident_phone` in the shared info. On by default.",
       ),
     avatar_url: z
       .string()
@@ -131,8 +134,10 @@ export const personalInfoRequestSchema = z.object({
   full_name: z.string().describe('Trimmed; must not be empty (`profiles:invalid_full_name`).'),
   date_of_birth: z
     .string()
+    .nullable()
+    .optional()
     .describe(
-      '`YYYY-MM-DD`, a real date not after today (Africa/Banjul = UTC) (`profiles:invalid_date_of_birth`).',
+      'Optional (Stage 3 [B2], SCRUM-17): left out keeps the stored value, null or blank clears it; else `YYYY-MM-DD`, a real date not after today (Africa/Banjul = UTC) (`profiles:invalid_date_of_birth`).',
     ),
   gender: genderSchema
     .nullable()

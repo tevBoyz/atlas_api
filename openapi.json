@@ -249,6 +249,12 @@
       },
       "AttachIncidentLocationRequest": {
         "properties": {
+          "country_code": {
+            "description": "Stage 2 [B9]: ISO 3166-1 alpha-2 country of that place (e.g. `GM`; stored uppercase). Chooses the incident's `emergency_services`. Left out keeps the stored country; a value that is not two letters is ignored.",
+            "maxLength": 2,
+            "minLength": 2,
+            "type": "string"
+          },
           "location_accuracy_m": {
             "anyOf": [
               {
@@ -298,6 +304,12 @@
               "last_known",
               "unavailable"
             ],
+            "type": "string"
+          },
+          "place_name": {
+            "description": "Stage 2 [B6]: the place reverse-geocoded on the phone from the current or last known fix (e.g. `Serrekunda`); trimmed, 1-120 characters. The alert push says \"near <place_name>\". Left out keeps the stored place; a value that is not valid is ignored (never an error).",
+            "maxLength": 120,
+            "minLength": 1,
             "type": "string"
           }
         },
@@ -611,6 +623,12 @@
               "null"
             ]
           },
+          "handle": {
+            "description": "D79: the row's opaque key: the member row id (the same as member_id).",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
           "invite_canceled_at": {
             "description": "Owner view only.",
             "type": [
@@ -683,7 +701,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "D79: the caller's own user id on their own row; null on every other row (no other user's id is ever sent)."
           }
         },
         "required": [
@@ -694,6 +713,7 @@
           "is_owner",
           "invited_at",
           "user_id",
+          "handle",
           "avatar_url"
         ],
         "type": "object"
@@ -1178,6 +1198,13 @@
               "null"
             ]
           },
+          "country_code": {
+            "description": "Stage 2 [B9]: ISO 3166-1 alpha-2 country of the alert (uppercase); null = not known. `emergency_services` are those of this country, else The Gambia.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "emergency_services": {
             "description": "The local emergency numbers of the incident's region (SCRUM-54, D60), always in the order ambulance, police, fire_rescue; a service without a number is left out; `[]` when the region has none configured.",
             "items": {
@@ -1260,6 +1287,13 @@
           },
           "location_unavailable_since": {
             "description": "SCRUM-68 (D74): since when the phone of the resident reports live location unavailable; null = live location is not reported unavailable. The location keys keep the last known fix (location_captured_at = when it was taken), so show it labelled \"Last known · N min ago\" with \"Location unavailable\". With no fix ever stored, location_source is unavailable and the position keys are null. The next fix clears it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "place_name": {
+            "description": "Stage 2 [B6]: the reverse-geocoded place of the alert (the latest the resident's phone sent); null = not known. Never coordinates.",
             "type": [
               "string",
               "null"
@@ -1345,6 +1379,8 @@
           "location_captured_at",
           "location_source",
           "location_unavailable_since",
+          "place_name",
+          "country_code",
           "location_sharing_ended_at",
           "incident_notes",
           "incident_notes_updated_at",
@@ -1358,8 +1394,15 @@
       "IncidentEvent": {
         "additionalProperties": false,
         "properties": {
+          "actor_handle": {
+            "description": "D79: the actor member's handle (their membership row id, the Responder handle) when a member caused the event; null when the resident or no user did.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "actor_id": {
-            "description": "Who caused the event (null when no user did). The resident of the incident gets the full UUID. Any other caller gets it obscured: the first 4 and the last 4 hex characters are kept, every other hex character is replaced by \"*\", and the hyphens and 36-character shape stay (e.g. \"4f3a****-****-****-****-********9c2d\"), unless the actor is the caller, whose own id is always shown in full. Not a usable UUID when obscured.",
+            "description": "D79: the caller's own user id when the caller caused the event, else null (also when another user or no user caused it). No other user id is ever sent: use actor_handle / actor_name.",
             "type": [
               "string",
               "null"
@@ -1397,6 +1440,7 @@
           "event_type",
           "occurred_at",
           "actor_id",
+          "actor_handle",
           "actor_name",
           "detail"
         ],
@@ -1442,6 +1486,13 @@
           },
           "closed_at": {
             "description": "SCRUM-63 (D61): when the incident became Closed; always null on the live bodies (only an active incident is open, re-notified or submitted; resolved and closed incidents never block a new SOS).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "country_code": {
+            "description": "Stage 2 [B9]: ISO 3166-1 alpha-2 country of the alert (uppercase); null = not known. `emergency_services` are those of this country, else The Gambia.",
             "type": [
               "string",
               "null"
@@ -1539,6 +1590,13 @@
               "null"
             ]
           },
+          "place_name": {
+            "description": "Stage 2 [B6]: the reverse-geocoded place of the alert (the latest the resident's phone sent); null = not known. Never coordinates.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "renotified_at": {
             "type": [
               "string",
@@ -1572,7 +1630,7 @@
             "anyOf": [
               {
                 "additionalProperties": {},
-                "description": "Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59): the resident's confirmed phone (E.164) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.",
+                "description": "Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59; Stage 2 [39]): the resident's phone (E.164; confirmed, else the stored unconfirmed one) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.",
                 "propertyNames": {
                   "type": "string"
                 },
@@ -1607,6 +1665,8 @@
           "location_captured_at",
           "location_source",
           "location_unavailable_since",
+          "place_name",
+          "country_code",
           "cancelled_at",
           "sent_at",
           "share_payload",
@@ -1679,6 +1739,13 @@
               }
             ]
           },
+          "country_code": {
+            "description": "Stage 2 [B9]: ISO 3166-1 alpha-2 country of the alert (uppercase); null = not known. `emergency_services` are those of this country, else The Gambia.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "delivered_count": {
             "maximum": 9007199254740991,
             "minimum": -9007199254740991,
@@ -1764,6 +1831,13 @@
               "null"
             ]
           },
+          "place_name": {
+            "description": "Stage 2 [B6]: the reverse-geocoded place of the alert (the latest the resident's phone sent); null = not known. Never coordinates.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "renotified_at": {
             "type": [
               "string",
@@ -1797,7 +1871,7 @@
             "anyOf": [
               {
                 "additionalProperties": {},
-                "description": "Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59): the resident's confirmed phone (E.164) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.",
+                "description": "Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59; Stage 2 [39]): the resident's phone (E.164; confirmed, else the stored unconfirmed one) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.",
                 "propertyNames": {
                   "type": "string"
                 },
@@ -1832,6 +1906,8 @@
           "location_captured_at",
           "location_source",
           "location_unavailable_since",
+          "place_name",
+          "country_code",
           "cancelled_at",
           "sent_at",
           "share_payload",
@@ -1879,6 +1955,13 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "country_code": {
+            "description": "Stage 2 [B9]: ISO 3166-1 alpha-2 country of the alert (uppercase); null = not known. `emergency_services` are those of this country, else The Gambia.",
+            "type": [
+              "string",
+              "null"
             ]
           },
           "emergency_type": {
@@ -1961,6 +2044,13 @@
               "null"
             ]
           },
+          "place_name": {
+            "description": "Stage 2 [B6]: the reverse-geocoded place of the alert (the latest the resident's phone sent); null = not known. Never coordinates.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "renotified_at": {
             "type": [
               "string",
@@ -1994,7 +2084,7 @@
             "anyOf": [
               {
                 "additionalProperties": {},
-                "description": "Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59): the resident's confirmed phone (E.164) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.",
+                "description": "Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59; Stage 2 [39]): the resident's phone (E.164; confirmed, else the stored unconfirmed one) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.",
                 "propertyNames": {
                   "type": "string"
                 },
@@ -2029,6 +2119,8 @@
           "location_captured_at",
           "location_source",
           "location_unavailable_since",
+          "place_name",
+          "country_code",
           "cancelled_at",
           "sent_at",
           "share_payload",
@@ -2093,6 +2185,13 @@
           },
           "closed_at": {
             "description": "SCRUM-63 (D61): when the incident became Closed; always null on the live bodies (only an active incident is open, re-notified or submitted; resolved and closed incidents never block a new SOS).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "country_code": {
+            "description": "Stage 2 [B9]: ISO 3166-1 alpha-2 country of the alert (uppercase); null = not known. `emergency_services` are those of this country, else The Gambia.",
             "type": [
               "string",
               "null"
@@ -2190,6 +2289,13 @@
               "null"
             ]
           },
+          "place_name": {
+            "description": "Stage 2 [B6]: the reverse-geocoded place of the alert (the latest the resident's phone sent); null = not known. Never coordinates.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "renotified_at": {
             "type": [
               "string",
@@ -2223,7 +2329,7 @@
             "anyOf": [
               {
                 "additionalProperties": {},
-                "description": "Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59): the resident's confirmed phone (E.164) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.",
+                "description": "Shared fields by key. Values are strings, except `allergies` / `medical_conditions`: arrays of strings since SCRUM-21 (D52), a single string in older incidents. `resident_phone` (SCRUM-52, D59; Stage 2 [39]): the resident's phone (E.164; confirmed, else the stored unconfirmed one) when they share it; absent otherwise (show Call only when present). Keys not shared are left out.",
                 "propertyNames": {
                   "type": "string"
                 },
@@ -2266,6 +2372,8 @@
           "location_captured_at",
           "location_source",
           "location_unavailable_since",
+          "place_name",
+          "country_code",
           "cancelled_at",
           "sent_at",
           "share_payload",
@@ -2970,6 +3078,18 @@
         ],
         "type": "object"
       },
+      "NotificationReceiptRequest": {
+        "properties": {
+          "receipt_token": {
+            "description": "The `receipt_token` data key of the push, exactly as received (opaque).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt_token"
+        ],
+        "type": "object"
+      },
       "OAuthSession": {
         "additionalProperties": false,
         "properties": {
@@ -3243,8 +3363,11 @@
             ]
           },
           "date_of_birth": {
-            "description": "`YYYY-MM-DD`, a real date not after today (Africa/Banjul = UTC) (`profiles:invalid_date_of_birth`).",
-            "type": "string"
+            "description": "Optional (Stage 3 [B2], SCRUM-17): left out keeps the stored value, null or blank clears it; else `YYYY-MM-DD`, a real date not after today (Africa/Banjul = UTC) (`profiles:invalid_date_of_birth`).",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "full_name": {
             "description": "Trimmed; must not be empty (`profiles:invalid_full_name`).",
@@ -3263,8 +3386,7 @@
           }
         },
         "required": [
-          "full_name",
-          "date_of_birth"
+          "full_name"
         ],
         "type": "object"
       },
@@ -3495,8 +3617,11 @@
             "type": "string"
           },
           "date_of_birth": {
-            "description": "`YYYY-MM-DD`.",
-            "type": "string"
+            "description": "`YYYY-MM-DD`; null = not given (optional since Stage 3 [B2], SCRUM-17).",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "emergency_contact_email": {
             "type": [
@@ -3642,7 +3767,7 @@
             "type": "boolean"
           },
           "share_phone": {
-            "description": "Share my phone number (SCRUM-52, D59): when on, members of an alert get the account's confirmed phone as `resident_phone` in the shared info. On by default.",
+            "description": "Share my phone number (SCRUM-52, D59): when on, members of an alert get the account's phone (confirmed, else the stored unconfirmed one; Stage 2 [39]) as `resident_phone` in the shared info. On by default.",
             "type": "boolean"
           },
           "timezone": {
@@ -3923,6 +4048,18 @@
               }
             ],
             "description": "The device push token. Left out (with `push_provider`): the stored token is kept. `null`: the stored token is cleared. A token is on one device only: registering it here clears it from any other device."
+          },
+          "time_zone": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The phone's current IANA time zone, e.g. `Africa/Addis_Ababa` (Stage 2 [TZ]); sent on every registration. Push times for this installation are shown in it (else the profile time zone, else Africa/Banjul). Left out: the stored zone is kept. A value that is not a known IANA zone is stored as null (never an error)."
           }
         },
         "required": [
@@ -3986,7 +4123,7 @@
             ]
           },
           "delivery_at": {
-            "description": "RESIDENT ONLY (D73): delivered = the first acceptance; failed = when the last attempt became final (null when nothing was ever sent); sent = null.",
+            "description": "RESIDENT ONLY (D73): delivered = the first receipt confirmed by a phone (D77); failed = when the last attempt became final (null when nothing was ever sent); sent = null.",
             "type": [
               "string",
               "null"
@@ -4008,7 +4145,7 @@
             "description": "RESIDENT ONLY (D73): failed = the push service did not accept it after the retries; no_device = nothing could be sent (no device with notifications or push switched off); null unless delivery_status is failed."
           },
           "delivery_status": {
-            "description": "RESIDENT ONLY (SCRUM-65, D73; absent on a member's rows): the alert's delivery to this member. delivered = the push service accepted the alert (or a re-notify) for at least one of their devices; sent = still being sent or retried; failed = every attempt failed after its retries, or nothing could be sent (no device with notifications, push switched off). A re-notify recomputes it (failed can become delivered).",
+            "description": "RESIDENT ONLY (SCRUM-65, D73; absent on a member's rows): the alert's delivery to this member. delivered (D77) = at least one of their phones confirmed it received the alert (or a re-notify); sent = accepted by the push service but no receipt yet, or still being sent or retried; failed = every attempt failed after its retries, or nothing could be sent (no device with notifications, push switched off). A re-notify recomputes it (failed can become delivered).",
             "enum": [
               "sent",
               "delivered",
@@ -4018,6 +4155,10 @@
           },
           "display_name": {
             "description": "The member's profile name (trimmed), else the name stored on their membership.",
+            "type": "string"
+          },
+          "handle": {
+            "description": "D79: the member's opaque key (their membership row id, the same for every viewer and for the incident.responders / incident.delivery_failed events and IncidentEvent.actor_handle).",
             "type": "string"
           },
           "is_me": {
@@ -4042,12 +4183,16 @@
             ]
           },
           "user_id": {
-            "description": "The member. The resident gets the full UUID. A member gets the ids of other members obscured as incident event actor ids (D11): the first 4 and the last 4 hex characters kept, every other hex character \"*\", hyphens kept (e.g. \"4f3a****-****-****-****-********9c2d\"); their own id in full. Not a usable UUID when obscured.",
-            "type": "string"
+            "description": "D79: the caller's own user id on their own row (is_me true), null on every other row (the resident gets null on all rows). No other user id is ever sent: match rows by handle.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
           "user_id",
+          "handle",
           "display_name",
           "avatar_url",
           "status",
@@ -4305,14 +4450,20 @@
         "additionalProperties": false,
         "properties": {
           "verification": {
+            "$ref": "#/components/schemas/SignupVerification",
             "additionalProperties": false,
+            "description": "The first of `verifications` (the email link when an email was given, else the phone code).",
             "properties": {
               "channel": {
-                "const": "email",
+                "description": "email: a link was emailed; phone: a code was texted.",
+                "enum": [
+                  "email",
+                  "phone"
+                ],
                 "type": "string"
               },
               "expires_in_seconds": {
-                "description": "Lifetime of the emailed link.",
+                "description": "Lifetime of the link or the code.",
                 "maximum": 9007199254740991,
                 "minimum": -9007199254740991,
                 "type": "integer"
@@ -4323,10 +4474,18 @@
               "expires_in_seconds"
             ],
             "type": "object"
+          },
+          "verifications": {
+            "description": "D78: every verification sent, email first (one per contact given).",
+            "items": {
+              "$ref": "#/components/schemas/SignupVerification"
+            },
+            "type": "array"
           }
         },
         "required": [
-          "verification"
+          "verification",
+          "verifications"
         ],
         "type": "object"
       },
@@ -4336,8 +4495,16 @@
             "$ref": "#/components/schemas/DeviceInfo"
           },
           "email": {
-            "maxLength": 254,
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 254,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D78: optional; at least one of `email` / `phone` (else 422 `signup:contact_required`)."
           },
           "full_name": {
             "maxLength": 100,
@@ -4351,21 +4518,52 @@
             "type": "string"
           },
           "phone": {
-            "description": "`+E.164`; stored unverified (verify it with the OTP routes).",
-            "type": "string"
+            "description": "D78: optional `+E.164`; stored unconfirmed, a code is texted to it (verify with `POST /v1/auth/otp/verify`, purpose `sign_in`).",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "email",
           "password",
-          "phone",
           "full_name",
           "device"
         ],
         "type": "object"
       },
+      "SignupVerification": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "description": "email: a link was emailed; phone: a code was texted.",
+            "enum": [
+              "email",
+              "phone"
+            ],
+            "type": "string"
+          },
+          "expires_in_seconds": {
+            "description": "Lifetime of the link or the code.",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "channel",
+          "expires_in_seconds"
+        ],
+        "type": "object"
+      },
       "SubmitEmergencyAlertRequest": {
         "properties": {
+          "country_code": {
+            "description": "Stage 2 [B9]: ISO 3166-1 alpha-2 country of that place (e.g. `GM`; stored uppercase). Chooses the incident's `emergency_services`. Left out keeps the stored country; a value that is not two letters is ignored.",
+            "maxLength": 2,
+            "minLength": 2,
+            "type": "string"
+          },
           "emergency_type": {
             "enum": [
               "medical",
@@ -4374,6 +4572,12 @@
               "burglary",
               "other"
             ],
+            "type": "string"
+          },
+          "place_name": {
+            "description": "Stage 2 [B6]: the place reverse-geocoded on the phone from the current or last known fix (e.g. `Serrekunda`); trimmed, 1-120 characters. The alert push says \"near <place_name>\". Left out keeps the stored place; a value that is not valid is ignored (never an error).",
+            "maxLength": 120,
+            "minLength": 1,
             "type": "string"
           }
         },
@@ -4429,6 +4633,19 @@
             ],
             "description": "Set only when `status` is `failed`: `no_device`, `invalid_token`, `provider_error`, `channel_disabled` or `not_eligible`."
           },
+          "handle": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "D79 (replaces user_id): the recipient's member row id in the circle (CircleMember.handle); null once they hold no row there."
+          },
           "seen_at": {
             "description": "When the member opened it in Atlas.",
             "type": [
@@ -4438,15 +4655,10 @@
           },
           "status": {
             "$ref": "#/components/schemas/TestAlertMemberState"
-          },
-          "user_id": {
-            "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-            "type": "string"
           }
         },
         "required": [
-          "user_id",
+          "handle",
           "display_name",
           "status",
           "failure_reason",
@@ -6995,7 +7207,27 @@
                 }
               }
             },
-            "description": "Check your email. The same answer whether or not the address (or phone) already has an account (D5b): an unconfirmed account gets a new link, a confirmed one gets nothing. No session until the email is confirmed."
+            "description": "Verify the contact(s) given (D78): an emailed link and/or a texted code. A duplicate email or phone is 409 signup:already_registered (details.field email | phone): prompt to sign in or reset the password. No session until a contact is confirmed."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "signup:already_registered",
+                    "details": {},
+                    "message": "This email or phone number already has an account. Sign in or reset your password."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict",
+            "x-error-codes": [
+              "signup:already_registered"
+            ]
           },
           "422": {
             "content": {
@@ -7019,6 +7251,7 @@
               "auth:invalid_full_name",
               "auth:invalid_phone",
               "auth:weak_password",
+              "signup:contact_required",
               "validation:invalid_request"
             ]
           },
@@ -7071,10 +7304,30 @@
             "x-error-codes": [
               "internal:error"
             ]
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "auth:sms_unavailable",
+                    "details": {},
+                    "message": "Text messages cannot be sent right now. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error",
+            "x-error-codes": [
+              "auth:sms_unavailable"
+            ]
           }
         },
         "security": [],
-        "summary": "Create an account (email, password, phone, name); a confirmation link is emailed",
+        "summary": "Create an account (email or phone, password, name); a link is emailed and/or a code texted",
         "tags": [
           "auth"
         ]
@@ -16162,6 +16415,80 @@
         ]
       }
     },
+    "/v1/notifications/receipts": {
+      "post": {
+        "operationId": "reportNotificationReceipt",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationReceiptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Always, also for a repeated, unknown or forged token (it then has no effect). Send it from the foreground and the background push handler, without an Authorization header; on a network failure retry once at the next app start. The delivery then shows as Delivered on the resident's responder list (D77)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "rate_limit:exceeded",
+                    "details": {},
+                    "message": "Too many requests. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too many requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            },
+            "x-error-codes": [
+              "rate_limit:exceeded"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal:error",
+                    "details": {},
+                    "message": "Something went wrong. Try again later."
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected error",
+            "x-error-codes": [
+              "internal:error"
+            ]
+          }
+        },
+        "security": [],
+        "summary": "Report that this phone received a push (no sign-in needed)",
+        "tags": [
+          "devices"
+        ]
+      }
+    },
     "/v1/openapi.json": {
       "get": {
         "operationId": "getOpenApiDocument",
@@ -16734,10 +17061,10 @@
       },
       "incident.delivery_failed": {
         "member_keys": [
-          "user_id",
+          "handle",
           "display_name"
         ],
-        "note": "SCRUM-71 (D73): a member did not receive the alert: every push attempt failed after the retries (reason \"failed\"), or nothing could be sent (reason \"no_device\": no device with notifications, or push switched off). Sent once per member per incident (a later failure after a re-notify is not reported again), only while the incident is active. member.user_id is the full id (as on the resident's responder list). The resident also gets a push (topic incident.delivery_failed, title \"Alert not delivered\", body \"<display name> didn't receive your alert\"). Not replayed after a reconnect: the responder list (delivery_status) is the state.",
+        "note": "SCRUM-71 (D73): a member did not receive the alert: every push attempt failed after the retries (reason \"failed\"), or nothing could be sent (reason \"no_device\": no device with notifications, or push switched off). Sent once per member per incident (a later failure after a re-notify is not reported again), only while the incident is active. member.handle is the member's handle (D79, as on the resident's responder list; no user id). The resident also gets a push (topic incident.delivery_failed, title \"Alert not delivered\", body \"<display name> didn't receive your alert\"). Not replayed after a reconnect: the responder list (delivery_status) is the state.",
         "payload": [
           "incident_id",
           "member",
@@ -16752,16 +17079,17 @@
           "event_type",
           "occurred_at",
           "actor_id",
+          "actor_handle",
           "actor_name",
           "detail"
         ],
-        "note": "One per inserted incident_events row, as GET /v1/incidents/{id}/events shows it to that receiver. actor_name (D71) is the display name of the actor (null when actor_id is null), the same for every receiver: show it instead of any id. SCRUM-60/61 (D71) event types responder_acknowledged (detail {}) and responder_status (detail {status: \"responding\" | \"unable\"}) are sent when a member acknowledges or changes their response; no push.",
+        "note": "One per inserted incident_events row, as GET /v1/incidents/{id}/events shows it to that receiver. D79: no other user id is sent; actor_handle is the actor member handle (null for the resident or no actor). actor_name (D71) is the display name of the actor (null when actor_id is null), the same for every receiver: show it instead of any id. SCRUM-60/61 (D71) event types responder_acknowledged (detail {}) and responder_status (detail {status: \"responding\" | \"unable\"}) are sent when a member acknowledges or changes their response; no push.",
         "payload": [
           "incident_id",
           "event",
           "occurred_at"
         ],
-        "room": "incident:{id} (per receiver: recipient_ids only for the resident, actor_id masked for others except their own id)"
+        "room": "incident:{id} (per receiver, D79: recipient_ids never; actor_id only the receiver's own id, else null)"
       },
       "incident.incoming": {
         "payload": [
@@ -16785,6 +17113,8 @@
           "location_accuracy_m",
           "location_captured_at",
           "location_unavailable_since",
+          "place_name",
+          "country_code",
           "updated_at",
           "occurred_at"
         ],
@@ -16822,7 +17152,7 @@
         "room": "incident:{id}, user:{id} of each delivery recipient and user:{resident_id} (D48; once per socket)"
       },
       "incident.responders": {
-        "note": "SCRUM-49/50/51/55 (D56): sent after a member acknowledged for the first time or set or changed their response (responding / unable). responder is the row of that member exactly as GET /v1/incidents/{id}/responders shows it to the receiver; replace the row with the same user_id (the masked id is stable per member). Not sent for a repeat that changed nothing. After a reconnect, re-fetch the list over REST. SCRUM-65 (D73): the resident's copy (room incident:{id}:resident) has resident_responder_keys (the 3 delivery keys after is_me); members get exactly responder_keys. The resident also gets it (alone) whenever a member's delivery status of the alert may have changed (sent / delivered / failed).",
+        "note": "SCRUM-49/50/51/55 (D56): sent after a member acknowledged for the first time or set or changed their response (responding / unable). responder is the row of that member exactly as GET /v1/incidents/{id}/responders shows it to the receiver; replace the row with the same handle (D79: the member row id, stable per member). Not sent for a repeat that changed nothing. After a reconnect, re-fetch the list over REST. SCRUM-65 (D73): the resident's copy (room incident:{id}:resident) has resident_responder_keys (the 3 delivery keys after is_me); members get exactly responder_keys. The resident also gets it (alone) whenever a member's delivery status of the alert may have changed (sent / delivered / failed).",
         "payload": [
           "incident_id",
           "responder",
@@ -16830,6 +17160,7 @@
         ],
         "resident_responder_keys": [
           "user_id",
+          "handle",
           "display_name",
           "avatar_url",
           "status",
@@ -16842,6 +17173,7 @@
         ],
         "responder_keys": [
           "user_id",
+          "handle",
           "display_name",
           "avatar_url",
           "status",
@@ -16849,7 +17181,7 @@
           "status_at",
           "is_me"
         ],
-        "room": "incident:{id} (per receiver: user_id in full for the resident and for the member whose row it is, masked as incident.event actor_id for other members)"
+        "room": "incident:{id} (per receiver, D79: user_id only on the receiver's own row, else null; handle for everyone)"
       },
       "incident.shared_info_updated": {
         "note": "SCRUM-21 (D53): sent after the resident changed their shared emergency info during an active incident. share_payload is the live view (only what is shared now; allergies and medical_conditions are arrays of strings); updated_at = when it last changed (live_share_updated_at). The activation snapshot never changes. SCRUM-52 (D59): turning share_phone on or off adds or removes resident_phone here.",
@@ -16895,7 +17227,9 @@
           "incident_notes_updated_at",
           "share_payload",
           "closed_at",
-          "location_unavailable_since"
+          "location_unavailable_since",
+          "place_name",
+          "country_code"
         ],
         "payload": [
           "incident_id",

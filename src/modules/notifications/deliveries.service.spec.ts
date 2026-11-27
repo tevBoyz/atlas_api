@@ -7,6 +7,7 @@ import type { SendResult } from './channels/channel.types';
 import type { DeliveriesRepository, DeliveryToSend } from './deliveries.repository';
 import type { AlertDeliveryOutcomes } from './alert-delivery-outcomes';
 import { DeliverySender } from './deliveries.service';
+import type { ReceiptTokens } from './receipt-token';
 
 const ID = '33333333-3333-4333-8333-333333333333';
 const DEVICE = '44444444-4444-4444-8444-444444444444';
@@ -37,6 +38,8 @@ function delivery(overrides: Partial<DeliveryToSend> = {}): DeliveryToSend {
     payload: { incident_id: 'i-1', emergency_type: 'fire', resident_name: 'R', occurred_at: 't' },
     push_provider: 'fcm',
     push_token: TOKEN,
+    place_name: null,
+    delivered_at: null,
     phone: '12015550123',
     email: 'member@example.test',
     time_zone: 'Africa/Banjul',
@@ -74,6 +77,7 @@ function setup(row: DeliveryToSend | undefined, answer: SendResult | Error, enab
     channels as unknown as ChannelSenders,
     logger as unknown as Logger,
     alerts as unknown as AlertDeliveryOutcomes,
+    { sign: (id: string) => `rt-${id}` } as unknown as ReceiptTokens,
   );
   const job = (attemptsMade = 0, attempts = 4) =>
     ({ data: { delivery_id: ID }, attemptsMade, opts: { attempts } }) as unknown as Job;
@@ -126,10 +130,31 @@ describe('DeliverySender (API-100-47)', () => {
   it('push: the recipient time zone goes with the target (D54)', async () => {
     const { sender, send, job } = setup(delivery({ time_zone: 'America/Chicago' }), SENT);
     await sender.process(job());
+    // Stage 2 [B7]: the push carries the signed receipt token of its delivery row.
     expect(send).toHaveBeenCalledWith(
-      { provider: 'fcm', token: TOKEN, time_zone: 'America/Chicago' },
+      { provider: 'fcm', token: TOKEN, time_zone: 'America/Chicago', receipt_token: `rt-${ID}` },
       expect.objectContaining({ incident_id: 'i-1' }),
     );
+  });
+
+  it('Stage 2 [B7]: a row the phone already confirmed is written delivered without sending again', async () => {
+    const { sender, send, repository, job } = setup(
+      delivery({ delivered_at: '2026-11-26T10:00:00+00:00' }),
+      SENT,
+    );
+    await sender.process(job());
+    expect(send).not.toHaveBeenCalled();
+    expect(repository.markSent).toHaveBeenCalledWith(ID, 'delivered', null);
+  });
+
+  it('Stage 2 [B7]: a failed answer after the phone confirmed receipt is delivered: no retry', async () => {
+    const { sender, repository, job } = setup(delivery(), {
+      provider_message_id: null,
+      status: 'failed',
+      error_code: 'timeout',
+    });
+    repository.recordFailure.mockResolvedValue(outcome('delivered', null, 1));
+    await expect(sender.process(job())).resolves.toBeUndefined();
   });
 
   it('sms text carries the time in the recipient time zone (D54)', async () => {
@@ -149,7 +174,11 @@ describe('DeliverySender (API-100-47)', () => {
       SENT,
     );
     await sender.process(job());
-    expect(send).toHaveBeenCalledWith('+12015550123', 'R: Emergency alert: Fire · 7:48 AM');
+    // Stage 2 [B6]: no place known at send time.
+    expect(send).toHaveBeenCalledWith(
+      '+12015550123',
+      'R: Emergency alert: Fire · Location unavailable · 7:48 AM',
+    );
   });
 
   it('SCRUM-47 latency line: occurred_at to provider acceptance in ms, ids only (no personal data)', async () => {

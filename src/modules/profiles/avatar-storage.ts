@@ -38,6 +38,8 @@ export interface AvatarStorage {
   exists(objectPath: string): Promise<boolean>;
   /** Deletes `objectPath` (no error when it is already gone). */
   remove(objectPath: string): Promise<void>;
+  /** D79 (`scripts/avatars-rename.ts`): copies `from` to the NEW object `to` (no overwrite). */
+  copy(from: string, to: string): Promise<void>;
 }
 
 /** Nest injection token of the {@link AvatarStorage} in use. */

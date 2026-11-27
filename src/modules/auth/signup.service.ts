@@ -8,15 +8,27 @@ import type { DeviceInput, EmailPurpose, SignupInput } from './auth-input';
 import { AuthLimits } from './auth-limits';
 import { AuthLinksRepository } from './auth-links.repository';
 import { AuthMessenger, type LinkKind } from './auth-messenger';
+import { OtpService } from './otp.service';
+import { OTP_TTL_SECONDS } from './phone-verification';
 import { type AuthTx, runAuthTransaction } from './auth-transaction';
 import { PASSWORD_HASHER, type PasswordHasher } from './password-hasher';
 import type { ClientContext } from './sessions.repository';
 import { type SessionJson, SessionsService } from './sessions.service';
 import { UsersRepository } from './users.repository';
 
-/** A1's answer: the same for a new and an existing address (D5b). */
+/** One verification sent by A1 (D78): an emailed link or a texted code. */
+export interface SignupVerification {
+  channel: 'email' | 'phone';
+  expires_in_seconds: number;
+}
+
+/**
+ * A1's answer (D78): `verification` = the first of `verifications` (the email link when an email
+ * was given, else the phone code); `verifications` = every verification sent, email first.
+ */
 export interface SignupAccepted {
-  verification: { channel: 'email'; expires_in_seconds: number };
+  verification: SignupVerification;
+  verifications: SignupVerification[];
 }
 
 interface QueuedLink {
@@ -26,13 +38,11 @@ interface QueuedLink {
 }
 
 /**
- * Sign-up and email verification (API-100-52, spec §8.1/§8.2, D5a, D5b).
+ * Sign-up and email verification (API-100-52, spec §8.1/§8.2, D5a; D78 replaces D5b and D28's
+ * "all three" for A1).
  *
- * - A1: the password is hashed (argon2id) whatever happens, so every answer takes the same time.
- *   A new address gets a user (phone stored unverified; a phone already held by another user is kept
- *   in metadata only), its credential, an `email` identity and a verification link. An existing
- *   address gets nothing new: an unconfirmed one a fresh link, a confirmed one no email. The answer
- *   is always 202 "check your email" (no enumeration of emails or phones).
+ * - A1: email OR phone (at least one) + full name + password. A duplicate email / phone is 409
+ *   `signup:already_registered` (`details.field`). Verification goes to the contacts given.
  * - A2: a single-use link (300 s) confirms the email and opens a session.
  * - A3: always 202; a new link for an unconfirmed account (signup) or a sign-in link for any
  *   account (magic_link); nothing for an unknown address. 4 sends per address per 15 minutes.
@@ -48,6 +58,7 @@ export class SignupService {
     private readonly limits: AuthLimits,
     private readonly audit: AuditService,
     private readonly config: ApiConfigService,
+    private readonly otp: OtpService,
     @Inject(PASSWORD_HASHER) private readonly hasher: PasswordHasher,
   ) {}
 
@@ -55,36 +66,41 @@ export class SignupService {
     return this.config.get('AUTH_EMAIL_LINK_TTL_SECONDS');
   }
 
-  private accepted(): SignupAccepted {
-    return { verification: { channel: 'email', expires_in_seconds: this.linkTtl } };
-  }
-
+  /**
+   * A1 (D78, Stage 3 [B1]): email OR phone (at least one). A duplicate email or phone is 409
+   * `signup:already_registered` with `details.field` "email" | "phone" (email checked first); this
+   * replaces D5b's neutral answer, as SCRUM-14 asks. A new account gets its credential, an `email`
+   * identity when an email was given, an emailed link (email) and a texted code (phone, through the
+   * existing OTP channel: verify it with `POST /v1/auth/otp/verify` purpose `sign_in`, which opens a
+   * session and confirms the phone). A phone-only sign-up while SMS is off is 503
+   * `auth:sms_unavailable` before anything is written. A code that could not be sent (rate limit,
+   * provider down) leaves the account in place; the app resends with `/v1/auth/otp/send`.
+   */
   async signup(input: SignupInput): Promise<SignupAccepted> {
-    await this.limits.takeSend('email', input.email, 'auth:over_email_send_rate_limit');
+    if (input.email === null && !this.messenger.smsEnabled) {
+      throw new DomainError('auth:sms_unavailable');
+    }
+    if (input.email !== null) {
+      await this.limits.takeSend('email', input.email, 'auth:over_email_send_rate_limit');
+    }
     const credential = await this.hasher.hash(input.password);
     const queued = await runAuthTransaction(this.database, async (tx) => {
-      const existing = await this.users.byEmail(tx, input.email);
-      if (existing) {
-        if (existing.email_confirmed || existing.disabled) return undefined;
-        const token = await this.links.create(tx, existing.id, 'email_verify', this.linkTtl);
-        return { to: input.email, kind: 'signup', token } satisfies QueuedLink;
-      }
-      const metadata = { full_name: input.full_name, signup_phone: input.phone };
-      const phoneFree = !(await this.users.phoneTaken(tx, input.phone));
-      let id = await this.users.insert(tx, {
-        email: input.email,
-        phone: phoneFree ? input.phone : null,
-        metadata,
-      });
+      await this.refuseDuplicate(tx, input);
+      const metadata = { full_name: input.full_name };
+      const id = await this.users.insert(tx, { email: input.email, phone: input.phone, metadata });
       if (!id) {
-        // A concurrent sign-up took the email (neutral answer) or the phone (store it in metadata).
-        if (await this.users.byEmail(tx, input.email)) return undefined;
-        id = await this.users.insert(tx, { email: input.email, phone: null, metadata });
-        if (!id) return undefined;
+        // A concurrent sign-up took the email or the phone meanwhile.
+        await this.refuseDuplicate(tx, input);
+        throw new DomainError('signup:already_registered', {
+          details: { field: input.email !== null ? 'email' : 'phone' },
+        });
       }
       await this.users.setCredential(tx, id, credential);
-      await this.users.addIdentity(tx, id, 'email', id, input.email);
-      const token = await this.links.create(tx, id, 'email_verify', this.linkTtl);
+      if (input.email !== null) await this.users.addIdentity(tx, id, 'email', id, input.email);
+      const token =
+        input.email !== null
+          ? await this.links.create(tx, id, 'email_verify', this.linkTtl)
+          : undefined;
       await this.audit.record(
         {
           action: 'auth.signup',
@@ -95,10 +111,35 @@ export class SignupService {
         },
         tx,
       );
-      return { to: input.email, kind: 'signup', token } satisfies QueuedLink;
+      return input.email !== null && token
+        ? ({ to: input.email, kind: 'signup', token } satisfies QueuedLink)
+        : undefined;
     });
-    if (queued) this.messenger.emailLink(queued.to, queued.kind, queued.token);
-    return this.accepted();
+    const verifications: SignupVerification[] = [];
+    if (queued) {
+      this.messenger.emailLink(queued.to, queued.kind, queued.token);
+      verifications.push({ channel: 'email', expires_in_seconds: this.linkTtl });
+    }
+    if (input.phone !== null && this.messenger.smsEnabled) {
+      let expires = OTP_TTL_SECONDS;
+      try {
+        expires = (await this.otp.send(input.phone, 'sign_in', null)).expires_in_seconds;
+      } catch {
+        // The account exists; the app asks for a new code (A4/A5) when this one never arrives.
+      }
+      verifications.push({ channel: 'phone', expires_in_seconds: expires });
+    }
+    return { verification: verifications[0], verifications };
+  }
+
+  /** 409 `signup:already_registered` naming the field of an existing account (email first). */
+  private async refuseDuplicate(tx: AuthTx, input: SignupInput): Promise<void> {
+    if (input.email !== null && (await this.users.byEmail(tx, input.email))) {
+      throw new DomainError('signup:already_registered', { details: { field: 'email' } });
+    }
+    if (input.phone !== null && (await this.users.phoneTaken(tx, input.phone))) {
+      throw new DomainError('signup:already_registered', { details: { field: 'phone' } });
+    }
   }
 
   /** A2: the token of a `type=signup` or `type=magiclink` link → a session. */

@@ -19,6 +19,7 @@ class IncidentDetails {
     required this.activatedAt,
     required this.autoClosed,
     required this.closedAt,
+    required this.countryCode,
     required this.emergencyServices,
     required this.emergencyType,
     required this.id,
@@ -31,6 +32,7 @@ class IncidentDetails {
     required this.locationSharingEndedAt,
     required this.locationSource,
     required this.locationUnavailableSince,
+    required this.placeName,
     required this.renotifiedAt,
     required this.residentName,
     required this.resolvedAt,
@@ -53,6 +55,10 @@ class IncidentDetails {
   /// SCRUM-63 (D61): when the incident became Closed (final, read-only); null until then. With status closed: resolved_reason safe = closed after the wrap-up following mark safe; ended with auto_closed true = closed automatically after inactivity.
   @JsonKey(name: 'closed_at')
   final String? closedAt;
+
+  /// Stage 2 [B9]: ISO 3166-1 alpha-2 country of the alert (uppercase); null = not known. `emergency_services` are those of this country, else The Gambia.
+  @JsonKey(name: 'country_code')
+  final String? countryCode;
 
   /// The local emergency numbers of the incident's region (SCRUM-54, D60), always in the order ambulance, police, fire_rescue; a service without a number is left out; `[]` when the region has none configured.
   @JsonKey(name: 'emergency_services')
@@ -80,6 +86,10 @@ class IncidentDetails {
   /// SCRUM-68 (D74): since when the phone of the resident reports live location unavailable; null = live location is not reported unavailable. The location keys keep the last known fix (location_captured_at = when it was taken), so show it labelled "Last known · N min ago" with "Location unavailable". With no fix ever stored, location_source is unavailable and the position keys are null. The next fix clears it.
   @JsonKey(name: 'location_unavailable_since')
   final String? locationUnavailableSince;
+
+  /// Stage 2 [B6]: the reverse-geocoded place of the alert (the latest the resident's phone sent); null = not known. Never coordinates.
+  @JsonKey(name: 'place_name')
+  final String? placeName;
   @JsonKey(name: 'renotified_at')
   final String? renotifiedAt;
 

@@ -611,6 +611,8 @@ export class InviteeInvitesRepository {
     const set: Record<string, SQL> = {
       ...(withUser ? { user_id: sql`${callerId}::uuid` } : {}),
       status: sql`'declined'`,
+      // Stage 3 [B10b]: the invitee said no (the owner's list shows "declined" only for these).
+      declined_at: sql`now()`,
       invite_canceled_at: sql`now()`,
       invite_consumed_at: sql`null`,
       updated_at: sql`now()`,
