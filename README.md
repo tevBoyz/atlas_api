@@ -661,6 +661,28 @@ Needs Docker running. No suite uses the compose stack or reads `.env`.
 - Both start in `observability/boot-observability.ts`, imported by `main.ts` right after the config
   and before Nest, so instrumentation is in place before Fastify, pg and ioredis load.
 
+## Render single service (D82, `Dockerfile.render`, test hosting only)
+
+One container = the HTTP API **and** the job workers in one process (`RUN_WORKERS=true`) **and**
+Redis on 127.0.0.1 inside the container, without persistence: queued jobs, rate-limit counters,
+lockouts and the location cache are lost when the container restarts, and it runs as ONE instance
+only. Production keeps `Dockerfile` (API) plus `WORKER=1` processes on a shared Redis (D23).
+
+- Process modes (`src/process-mode.ts`, `src/bootstrap.ts`): default = HTTP only; `WORKER=1` =
+  workers only; `RUN_WORKERS=true` = both, one SIGTERM / SIGINT handler closing the HTTP API, then
+  the workers. `WORKER=1` with `RUN_WORKERS=true` is refused at start-up.
+- Start script `scripts/render-start.sh` (under `tini`): starts `redis-server` (127.0.0.1:6379,
+  `--save ""`, `--appendonly no`, `maxmemory` 64mb, `noeviction`), waits for PING, then `exec node
+dist/main.js` with `REDIS_URL` defaulting to `redis://127.0.0.1:6379` and `RUN_WORKERS` to
+  `true`. If Redis exits the API is stopped, so the container exits and the host restarts it. The
+  API listens on `$PORT` (3000 when unset). Runs as the non-root `node` user; no `.env` in the image.
+- Build: `docker build -f Dockerfile.render --build-arg GIT_COMMIT=$(git rev-parse HEAD) -t atlas-api-render .`
+- Environment: the same keys as any API process (`.env.example`), in the host's secret store. The
+  image sets `NODE_ENV=production`, which requires `DATABASE_URL`, `SUPABASE_URL`,
+  `SUPABASE_STORAGE_SERVICE_KEY`, `AUTH_JWT_KEYS` and `AUTH_JWT_ACTIVE_KID` (`REDIS_URL` comes from
+  the start script) and refuses fake channel adapters that are enabled and the in-memory avatar store.
+- Health: `GET /healthz` (liveness) and `GET /readyz` (database, migrations, Redis, realtime, jobs).
+
 ## CI (`.github/workflows/ci.yml`)
 
 GitHub Actions runs on every push and pull request (all branches); any failing step fails the run.

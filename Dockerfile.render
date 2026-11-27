@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1
+
+# Single-service test hosting (D82), e.g. Render: the HTTP API and the job workers in ONE process
+# (RUN_WORKERS=true), with Redis running inside the same container on 127.0.0.1, no persistence.
+# Queued jobs are lost on a container restart (accepted for testing). Production uses `Dockerfile`
+# (unchanged) with separate API and WORKER=1 processes on a shared Redis.
+#
+#   docker build -f Dockerfile.render -t atlas-api-render .
+#
+# The build stages are the same as in `Dockerfile`.
+
+# Node version must match .nvmrc and package.json "engines".
+ARG NODE_VERSION=24.19.0
+
+# ---- build: install all deps and compile TypeScript ----
+FROM node:${NODE_VERSION}-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY tsconfig.json tsconfig.build.json nest-cli.json ./
+COPY src ./src
+# API migration ids are recorded in dist/migrations-manifest.json for the readiness check (API-100-07).
+COPY db/migrations ./db/migrations
+# Git commit for the Sentry release (API-100-06), recorded in dist/build-info.json by postbuild.
+# Pass it with `--build-arg GIT_COMMIT=$(git rev-parse HEAD)`; without it the release is unset.
+ARG GIT_COMMIT=
+RUN npm run build
+
+# ---- deps: production dependencies only ----
+FROM node:${NODE_VERSION}-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+
+# ---- runtime: minimal image, non-root, plus Redis and an init process ----
+FROM node:${NODE_VERSION}-alpine AS runtime
+# redis: the in-container Redis (redis-server, redis-cli). tini: PID 1, forwards SIGTERM to the
+# API and reaps the Redis process.
+RUN apk add --no-cache redis tini
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=deps --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --chown=node:node package.json ./
+COPY --chown=node:node --chmod=0755 scripts/render-start.sh ./scripts/render-start.sh
+# A Windows checkout may have turned the script's line endings into CRLF.
+RUN sed -i 's/\r$//' ./scripts/render-start.sh
+# The official Node image ships an unprivileged "node" user (uid 1000).
+USER node
+# The API listens on $PORT (Render sets it; 3000 when unset).
+EXPOSE 3000
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["/app/scripts/render-start.sh"]

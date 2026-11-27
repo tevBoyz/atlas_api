@@ -34,6 +34,7 @@ const RATE_LIMIT_DEFAULTS = {
   REALTIME_ADAPTER_KEY: 'atlas:realtime',
   // Jobs and channels (API-100-45 to 47).
   WORKER: false,
+  RUN_WORKERS: false,
   JOBS_QUEUE_PREFIX: 'atlas:jobs',
   JOBS_WORKER_CONCURRENCY: 10,
   OUTBOX_RELAY_INTERVAL_MS: 1000,

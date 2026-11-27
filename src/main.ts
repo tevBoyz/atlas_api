@@ -5,34 +5,20 @@ import { bootConfig } from './config/boot-config';
 // pg or ioredis are loaded, so their instrumentations apply.
 import './observability/boot-observability';
 
-import { NestFactory } from '@nestjs/core';
-import type { NestFastifyApplication } from '@nestjs/platform-fastify';
-import { Logger } from 'nestjs-pino';
+import { bootstrapHttp, bootstrapWorker, startHttpAndWorkers } from './bootstrap';
+import { processMode } from './process-mode';
 
-import { AppModule } from './app.module';
-import { configureApp, createFastifyAdapter } from './app.setup';
-import { ApiConfigService } from './config';
-import { WorkerModule } from './worker.module';
-
-async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule,
-    createFastifyAdapter({ trustProxy: bootConfig.TRUST_PROXY }),
-    // Nest's startup logs are held until the JSON logger (LOG_LEVEL) takes over.
-    { bufferLogs: true },
-  );
-  app.useLogger(app.get(Logger));
-  configureApp(app);
-  app.enableShutdownHooks();
-  await app.listen({ port: app.get(ApiConfigService).get('PORT'), host: '0.0.0.0' });
+/**
+ * One build, three modes (API-100-45 AC3, D82): the HTTP API (default), the job workers only
+ * (`WORKER=1`), or both in one process (`RUN_WORKERS=true`, single-process test hosting).
+ */
+switch (processMode(bootConfig)) {
+  case 'worker':
+    void bootstrapWorker();
+    break;
+  case 'http+workers':
+    void startHttpAndWorkers(bootConfig);
+    break;
+  default:
+    void bootstrapHttp(bootConfig);
 }
-
-/** `WORKER=1` (API-100-45 AC3): the job workers, no HTTP server. Same build, same image. */
-async function bootstrapWorker(): Promise<void> {
-  const worker = await NestFactory.createApplicationContext(WorkerModule, { bufferLogs: true });
-  worker.useLogger(worker.get(Logger));
-  worker.enableShutdownHooks();
-  await worker.init();
-}
-
-void (bootConfig.WORKER ? bootstrapWorker() : bootstrap());

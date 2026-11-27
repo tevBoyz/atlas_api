@@ -148,6 +148,9 @@ export const configSchema = z.object({
 
   // Jobs (API-100-45): `WORKER=1` runs the BullMQ workers instead of the HTTP server (same image).
   WORKER: z.stringbool({ truthy: ['1', 'true'], falsy: ['0', 'false'] }).default(false),
+  // Single-process mode for test hosting (D82): the HTTP server AND the job workers in one process.
+  // Never together with WORKER.
+  RUN_WORKERS: flag(),
   // Key prefix of the BullMQ queues in Redis. Every API and worker process of one environment uses
   // the same value.
   JOBS_QUEUE_PREFIX: z
@@ -277,6 +280,7 @@ const RULES: Record<ConfigKey, string> = {
   OTEL_EXPORTER_OTLP_ENDPOINT: 'must be an http(s) URL',
   GIT_COMMIT: 'must be a git commit hash (7-40 hex characters)',
   WORKER: 'must be 1, 0, true or false',
+  RUN_WORKERS: 'must be true or false',
   JOBS_QUEUE_PREFIX: 'must be 1-64 letters, digits, ":", ".", "_" or "-"',
   JOBS_WORKER_CONCURRENCY: 'must be an integer from 1 to 100',
   OUTBOX_RELAY_INTERVAL_MS: 'must be an integer from 50 to 60000',
@@ -442,6 +446,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
     for (const problem of dataStoreProblems(result.data)) {
       problems.push({ keys: [problem.key], reason: problem.reason });
     }
+    problems.push(...processModeProblems(result.data));
     problems.push(...channelProblems(result.data));
     problems.push(...authProblems(result.data));
   }
@@ -450,6 +455,22 @@ export function parseConfig(env: Record<string, unknown>): Config {
     throw new ConfigValidationError(problems);
   }
   return result.data;
+}
+
+/**
+ * Process mode (D82): WORKER=1 runs the workers only, RUN_WORKERS=true runs the HTTP server and the
+ * workers together. Both at once is a contradiction, refused.
+ */
+function processModeProblems(config: Config): ConfigProblem[] {
+  if (!config.WORKER || !config.RUN_WORKERS) return [];
+  return [
+    {
+      keys: ['RUN_WORKERS'],
+      reason:
+        'must not be true together with WORKER=1 (WORKER=1 runs the job workers only, ' +
+        'RUN_WORKERS=true runs the HTTP server and the job workers in one process): set one of them',
+    },
+  ];
 }
 
 /**

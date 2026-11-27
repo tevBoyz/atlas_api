@@ -2,3 +2,5 @@
 # checkout, including Windows with core.autocrlf=true (API-100-12).
 openapi.json text eol=lf
 clients/dart/** text eol=lf
+# Shell scripts run in Linux containers (Dockerfile.render, D82): always LF.
+*.sh text eol=lf
